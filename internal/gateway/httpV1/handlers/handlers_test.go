@@ -13,8 +13,8 @@ import (
 
 	"github.com/seilbekskindirov/monitor/internal"
 	"github.com/seilbekskindirov/monitor/internal/domain"
-	"github.com/seilbekskindirov/monitor/internal/gateway/httpV1/dto"
 	"github.com/seilbekskindirov/monitor/internal/repository"
+	"github.com/seilbekskindirov/monitor/pkg/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -50,7 +50,7 @@ func TestListSources(t *testing.T) {
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 
-		var body []dto.SourceResponse
+		var body []api.SourceResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Len(t, body, 2)
 		require.Equal(t, "src1", body[0].Name)
@@ -68,7 +68,7 @@ func TestListSources(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, rr.Code)
 
-		var body []dto.SourceResponse
+		var body []api.SourceResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Empty(t, body)
 	})
@@ -110,7 +110,7 @@ func TestListRates(t *testing.T) {
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 
-		var body []dto.RateResponse
+		var body []api.RateResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Len(t, body, 2)
 	})
@@ -129,7 +129,7 @@ func TestListRates(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, rr.Code)
 
-		var body []dto.RateResponse
+		var body []api.RateResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Empty(t, body)
 	})
@@ -186,7 +186,7 @@ func TestListHistory(t *testing.T) {
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 
-		var body []dto.HistoryResponse
+		var body []api.HistoryResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Len(t, body, 3)
 	})
@@ -229,7 +229,7 @@ func TestListNotifications(t *testing.T) {
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 
-		var body []dto.NotificationResponse
+		var body []api.NotificationResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Len(t, body, 2)
 		require.NotEmpty(t, body[0].ID)
@@ -272,7 +272,7 @@ func TestListFailedNotifications(t *testing.T) {
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 
-		var body []dto.NotificationResponse
+		var body []api.NotificationResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Len(t, body, 1)
 	})
@@ -324,7 +324,7 @@ func TestListPendingEvents(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, rr.Code)
 
-		var body []dto.NotificationResponse
+		var body []api.NotificationResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Len(t, body, 1)
 		require.Empty(t, body[0].UserID, "user_id must be omitted")
@@ -379,7 +379,7 @@ func TestGetRatesChart(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, rr.Code)
 
-		var body []dto.ChartPointResponse
+		var body []api.ChartPointResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Len(t, body, 2)
 		require.Equal(t, "2026-04-01", body[0].Label)
@@ -435,7 +435,7 @@ func TestListSourceFailedEvents(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, rr.Code)
 
-		var body []dto.NotificationResponse
+		var body []api.NotificationResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Len(t, body, 1)
 		require.Empty(t, body[0].UserID, "user_id must not be present")
@@ -496,7 +496,7 @@ func TestListSourceSubscriptions(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, rr.Code)
 
-		var body []dto.SubscriptionSummaryResponse
+		var body []api.SubscriptionSummaryResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Len(t, body, 1)
 		require.Equal(t, "src1", body[0].SourceName)
@@ -615,7 +615,7 @@ func TestHandler_ListStats(t *testing.T) {
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 
-		var body dto.StatsResponse
+		var body api.StatsResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Equal(t, int64(5), body.SourcesTotal)
 		require.Equal(t, int64(3), body.SourcesActive)
@@ -658,7 +658,7 @@ func TestHandler_ListSourceSubscriptionDetails(t *testing.T) {
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 
-		var body []dto.SubscriptionDetailResponse
+		var body []api.SubscriptionDetailResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Len(t, body, 2)
 		require.Equal(t, "sub1", body[0].ID)
@@ -714,7 +714,7 @@ func TestHandler_ListSourceDailyEvents(t *testing.T) {
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 
-		var body []dto.DailyEventResponse
+		var body []api.DailyEventResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Len(t, body, 2)
 		require.Equal(t, "2026-04-12", body[0].Date)
@@ -768,7 +768,7 @@ func TestHandler_ListExecutionErrors(t *testing.T) {
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 
-		var body []dto.ExecutionErrorResponse
+		var body []api.ExecutionErrorResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Len(t, body, 2)
 		require.Equal(t, "h1", body[0].ID)
@@ -787,7 +787,7 @@ func TestHandler_ListExecutionErrors(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, rr.Code)
 
-		var body []dto.ExecutionErrorResponse
+		var body []api.ExecutionErrorResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Empty(t, body)
 	})
@@ -1007,7 +1007,7 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, rr.Code)
 
-		var body dto.MeSubscriptionsResponse
+		var body api.MeSubscriptionsResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Equal(t, int64(1), body.Total)
 		require.Len(t, body.Items, 1)
@@ -1047,7 +1047,7 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, rr.Code)
 
-		var body dto.MeSubscriptionsResponse
+		var body api.MeSubscriptionsResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Equal(t, int64(1), body.Total)
 		require.Len(t, body.Items, 1)
@@ -1082,7 +1082,7 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, rr.Code)
 
-		var body dto.MeSubscriptionsResponse
+		var body api.MeSubscriptionsResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Equal(t, int64(12), body.Total)
 		require.Len(t, body.Items, 2, "page 2 of 10-per-page with 12 items should return 2")

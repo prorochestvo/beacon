@@ -29,352 +29,55 @@
     .toggle-btn { padding: .2rem .55rem; font-size: .75rem; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; background: #fff; }
     .toggle-btn.active-on  { background: #dcfce7; color: #166534; border-color: #86efac; }
     .toggle-btn.active-off { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+    .error-msg { color: #dc2626; text-align: center; padding: 20px; }
     #app { max-width: 1200px; margin: 0 auto; }
   </style>
 </head>
 <body>
 <div id="app"><p>Loading…</p></div>
 
+<script src="/wasm_exec.js"></script>
 <script>
 'use strict';
 
-// ── shared helpers ────────────────────────────────────────────────────────────
-function esc(s) {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
+var wasmReady = new Promise(function(resolve, reject) {
+  var go = new Go();
+  WebAssembly.instantiateStreaming(fetch('/app.wasm'), go.importObject).then(function(result) {
+    go.run(result.instance);
+    resolve();
+  }).catch(function(err) {
+    console.error('WASM init failed (did you run make build?):', err);
+    reject(err);
+  });
+});
 
-function fmtDate(iso) {
-  return iso ? new Date(iso).toLocaleString() : '—';
-}
-
-function fmtDateOnly(iso) {
-  return iso ? new Date(iso).toLocaleDateString('en-CA') : '—';
-}
-
-async function apiFetch(url) {
-  try { return await (await fetch(url)).json(); } catch { return null; }
-}
-
-// ── routing ───────────────────────────────────────────────────────────────────
 window.addEventListener('hashchange', route);
-window.addEventListener('load', route);
+wasmReady.then(route).catch(function(err) {
+  document.getElementById('app').innerHTML =
+    '<p class="error-msg">Failed to load app. Did you run <code>make build</code>?</p>';
+});
 
 function route() {
-  const h = location.hash;
+  var h = location.hash;
   if (h.startsWith('#/sources/')) {
-    renderSourceDetail(decodeURIComponent(h.slice('#/sources/'.length)));
-  } else if (h === '#/errors') {
-    renderErrors();
-  } else {
-    renderSources();
-  }
-}
-
-// ── PAGE: Sources List (#/) ───────────────────────────────────────────────────
-async function renderSources() {
-  const app = document.getElementById('app');
-  app.innerHTML = '<p>Loading…</p>';
-
-  const [sources, stats] = await Promise.all([
-    apiFetch('/api/sources?limit=100'),
-    apiFetch('/api/stats'),
-  ]);
-
-  const allSources = Array.isArray(sources) ? sources : [];
-  const s = stats || { sources_total: 0, sources_active: 0, errors_total: 0 };
-
-  const errLink = s.errors_total > 0
-    ? ` · <a href="#/errors">${s.errors_total} error(s)</a>`
-    : '';
-
-  // client-side state
-  let filterTitle = '', filterPair = '', filterStatus = 'all', filterActive = 'all';
-  let sortDir = 'desc'; // last_run_at
-
-  function applyFilters(list) {
-    return list.filter(src => {
-      if (filterTitle && !src.title.toLowerCase().includes(filterTitle.toLowerCase()) &&
-          !src.name.toLowerCase().includes(filterTitle.toLowerCase())) return false;
-      const pair = (src.base_currency + '/' + src.quote_currency).toLowerCase();
-      if (filterPair && !pair.includes(filterPair.toLowerCase())) return false;
-      if (filterStatus === 'ok'    && !src.last_success) return false;
-      if (filterStatus === 'error' &&  src.last_success) return false;
-      if (filterActive === 'yes'   && !src.active) return false;
-      if (filterActive === 'no'    &&  src.active) return false;
-      return true;
-    }).sort((a, b) => {
-      const ta = new Date(a.last_run_at || 0).getTime();
-      const tb = new Date(b.last_run_at || 0).getTime();
-      return sortDir === 'desc' ? tb - ta : ta - tb;
-    });
-  }
-
-  function renderTable(list) {
-    const arrow = sortDir === 'desc' ? ' ↓' : ' ↑';
-    const rows = list.length
-      ? list.map(src => {
-          const statusCell = src.last_success
-            ? '<span class="ok">✓ OK</span>'
-            : `<span class="err">✗ ${esc(src.last_error || 'unknown')}</span>`;
-          const activeCell = src.active
-            ? `<button class="toggle-btn active-on"  onclick="toggleActive('${esc(src.name)}',false)">Yes</button>`
-            : `<button class="toggle-btn active-off" onclick="toggleActive('${esc(src.name)}',true)">No</button>`;
-          return `<tr>
-            <td><a href="#/sources/${encodeURIComponent(src.name)}">${esc(src.title || src.name)}</a></td>
-            <td>${esc(src.base_currency)}/${esc(src.quote_currency)}</td>
-            <td>${esc(src.interval)}</td>
-            <td>${fmtDate(src.last_run_at)}</td>
-            <td>${statusCell}</td>
-            <td>${activeCell}</td>
-          </tr>`;
-        }).join('')
-      : '<tr><td colspan="6">No sources match the current filters.</td></tr>';
-
-    return `<table>
-      <thead><tr>
-        <th>Title</th>
-        <th>Pair</th>
-        <th>Interval</th>
-        <th id="sort-lastrun" onclick="toggleSort()">Last Run${arrow}</th>
-        <th>Status</th>
-        <th>Active</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
-  }
-
-  function redraw() {
-    document.getElementById('sources-table').innerHTML = renderTable(applyFilters(allSources));
-  }
-
-  window.toggleSort = function() {
-    sortDir = sortDir === 'desc' ? 'asc' : 'desc';
-    redraw();
-  };
-
-  window.toggleActive = async function(name, active) {
-    await fetch(`/api/sources/${encodeURIComponent(name)}/active`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ active }),
-    });
-    const updated = await apiFetch('/api/sources?limit=100');
-    if (Array.isArray(updated)) {
-      allSources.length = 0;
-      updated.forEach(x => allSources.push(x));
+    if (!window._wasm || typeof window._wasm.renderSourceDetail !== 'function') {
+      // WASM still loading; wasmReady.then(route) will re-fire once ready.
+      return;
     }
-    redraw();
-  };
-
-  app.innerHTML = `
-    <h1>FX Rate Monitor</h1>
-    <p class="stats-line">${s.sources_active}/${s.sources_total} source(s) active${errLink}</p>
-    <div class="filters">
-      <input id="f-title"  type="text"    placeholder="Filter by title…"  oninput="ftitle(this.value)">
-      <input id="f-pair"   type="text"    placeholder="Filter by pair…"   oninput="fpair(this.value)">
-      <select id="f-status" onchange="fstatus(this.value)">
-        <option value="all">All statuses</option>
-        <option value="ok">OK</option>
-        <option value="error">Error</option>
-      </select>
-      <select id="f-active" onchange="factive(this.value)">
-        <option value="all">All</option>
-        <option value="yes">Active only</option>
-        <option value="no">Inactive only</option>
-      </select>
-    </div>
-    <div id="sources-table">${renderTable(applyFilters(allSources))}</div>`;
-
-  window.ftitle  = v => { filterTitle  = v; redraw(); };
-  window.fpair   = v => { filterPair   = v; redraw(); };
-  window.fstatus = v => { filterStatus = v; redraw(); };
-  window.factive = v => { filterActive = v; redraw(); };
-}
-
-// ── PAGE: Source Detail (#/sources/{name}) ────────────────────────────────────
-async function renderSourceDetail(name) {
-  const app = document.getElementById('app');
-  app.innerHTML = '<p>Loading…</p>';
-  const enc = encodeURIComponent(name);
-
-  const [sources, ratesFirst] = await Promise.all([
-    apiFetch('/api/sources?limit=100'),
-    apiFetch(`/api/sources/${enc}/rates?limit=50`),
-  ]);
-
-  const src = (Array.isArray(sources) ? sources : []).find(s => s.name === name) || {};
-
-  // ── Rate History ──────────────────────────────────────────────────────────
-  let rates = Array.isArray(ratesFirst) ? ratesFirst : [];
-  let rateFilter = '', rateSortDir = 'desc';
-
-  function filteredRates() {
-    return rates
-      .filter(r => !rateFilter ||
-        (r.base_currency + '/' + r.quote_currency).toLowerCase().includes(rateFilter.toLowerCase()))
-      .sort((a, b) => {
-        const ta = new Date(a.timestamp).getTime();
-        const tb = new Date(b.timestamp).getTime();
-        return rateSortDir === 'desc' ? tb - ta : ta - tb;
-      });
+    window._wasm.renderSourceDetail(decodeURIComponent(h.slice('#/sources/'.length)));
+  } else if (h === '#/errors') {
+    if (!window._wasm || typeof window._wasm.renderErrors !== 'function') {
+      // WASM still loading; wasmReady.then(route) will re-fire once ready.
+      return;
+    }
+    window._wasm.renderErrors();
+  } else {
+    if (!window._wasm || typeof window._wasm.renderSources !== 'function') {
+      // WASM still loading; wasmReady.then(route) will re-fire once ready.
+      return;
+    }
+    window._wasm.renderSources();
   }
-
-  function renderRatesTable(list) {
-    const arrow = rateSortDir === 'desc' ? ' ↓' : ' ↑';
-    const rows = list.length
-      ? list.map(r => `<tr>
-          <td>${esc(r.base_currency)}/${esc(r.quote_currency)}</td>
-          <td>${esc(String(r.price))}</td>
-          <td>${fmtDate(r.timestamp)}</td>
-        </tr>`).join('')
-      : '<tr><td colspan="3">No rates.</td></tr>';
-    return `<table>
-      <thead><tr>
-        <th>Pair</th>
-        <th>Price</th>
-        <th id="rate-sort" onclick="rateSort()" style="cursor:pointer">Timestamp${arrow}</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
-  }
-
-  // ── Subscriptions ─────────────────────────────────────────────────────────
-  async function loadSubs(page) {
-    const items = await apiFetch(`/api/sources/${enc}/subscriptions/list?page=${page}`);
-    const list = Array.isArray(items) ? items : [];
-    const rows = list.length
-      ? list.map(s => `<tr>
-          <td>${esc(s.id)}</td>
-          <td>${esc(s.user_type)}</td>
-          <td>${esc(s.source_name)}</td>
-          <td>${esc(s.condition)}</td>
-          <td>${s.latest_notified_at ? fmtDate(s.latest_notified_at) : '—'}</td>
-        </tr>`).join('')
-      : '<tr><td colspan="5">No subscriptions.</td></tr>';
-    const html = `<table>
-      <thead><tr>
-        <th>ID</th><th>User Type</th><th>Source</th><th>Condition</th><th>Latest Notified At</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>` + paginationHtml('loadSubs', page, list.length, 25);
-    document.getElementById('subs-section').innerHTML = html;
-  }
-
-  // ── Events by Day ─────────────────────────────────────────────────────────
-  async function loadDailyEvents(page) {
-    const items = await apiFetch(`/api/sources/${enc}/events/daily?page=${page}`);
-    const list = Array.isArray(items) ? items : [];
-    const rows = list.length
-      ? list.map(e => `<tr>
-          <td>${esc(e.type)}</td>
-          <td>${esc(e.date)}</td>
-          <td>${esc(e.success_count)}/${esc(e.failed_count)}</td>
-        </tr>`).join('')
-      : '<tr><td colspan="3">No daily event data.</td></tr>';
-    const html = `<table>
-      <thead><tr><th>Type</th><th>Date</th><th>Count (S/F)</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>` + paginationHtml('loadDailyEvents', page, list.length, 25);
-    document.getElementById('daily-events-section').innerHTML = html;
-  }
-
-  app.innerHTML = `
-    <div class="breadcrumb"><a href="#/">← All Sources</a></div>
-    <h1>${esc(src.title || name)}</h1>
-
-    <h2>Rate History</h2>
-    <div class="filters">
-      <input type="text" placeholder="Filter by pair…" oninput="rateFilterFn(this.value)">
-    </div>
-    <div id="rates-table">${renderRatesTable(filteredRates())}</div>
-
-    <h2>Subscriptions</h2>
-    <div id="subs-section"><p>Loading…</p></div>
-
-    <h2>Events by Day</h2>
-    <div id="daily-events-section"><p>Loading…</p></div>`;
-
-  window.rateFilterFn = v => { rateFilter = v; document.getElementById('rates-table').innerHTML = renderRatesTable(filteredRates()); };
-  window.rateSort     = ()  => { rateSortDir = rateSortDir === 'desc' ? 'asc' : 'desc'; document.getElementById('rates-table').innerHTML = renderRatesTable(filteredRates()); };
-  window.loadSubs = loadSubs;
-  window.loadDailyEvents = loadDailyEvents;
-
-  await Promise.all([loadSubs(1), loadDailyEvents(1)]);
-}
-
-// ── PAGE: Errors (#/errors) ───────────────────────────────────────────────────
-async function renderErrors() {
-  const app = document.getElementById('app');
-  app.innerHTML = '<p>Loading…</p>';
-
-  async function loadExecErrors(page) {
-    const items = await apiFetch(`/api/errors/execution?page=${page}`);
-    const list = Array.isArray(items) ? items : [];
-    const rows = list.length
-      ? list.map(e => `<tr>
-          <td>${esc(e.id)}</td>
-          <td>${esc(e.source_name)}</td>
-          <td class="err">${esc(e.error)}</td>
-          <td>${fmtDate(e.timestamp)}</td>
-        </tr>`).join('')
-      : '<tr><td colspan="4">No execution errors.</td></tr>';
-    const html = `<table>
-      <thead><tr><th>ID</th><th>Source</th><th>Error</th><th>Timestamp</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>` + paginationHtml('loadExecErrors', page, list.length, 50);
-    document.getElementById('exec-errors-section').innerHTML = html;
-  }
-
-  async function loadEventErrors(page) {
-    const items = await apiFetch(`/api/notifications/failed?offset=${(page-1)*50}&limit=50`);
-    const list = Array.isArray(items) ? items : [];
-    const rows = list.length
-      ? list.map(e => `<tr>
-          <td>${esc(e.id)}</td>
-          <td>${esc(e.user_type)}</td>
-          <td class="err">${esc(e.last_error)}</td>
-          <td>${fmtDate(e.sent_at)}</td>
-        </tr>`).join('')
-      : '<tr><td colspan="4">No event errors.</td></tr>';
-    const html = `<table>
-      <thead><tr><th>ID</th><th>User Type</th><th>Error</th><th>Timestamp</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>` + paginationHtml('loadEventErrors', page, list.length, 50);
-    document.getElementById('event-errors-section').innerHTML = html;
-  }
-
-  app.innerHTML = `
-    <div class="breadcrumb"><a href="#/">← All Sources</a></div>
-    <h1>Errors</h1>
-
-    <h2>Execution Errors</h2>
-    <div id="exec-errors-section"><p>Loading…</p></div>
-
-    <h2>Event Errors</h2>
-    <div id="event-errors-section"><p>Loading…</p></div>`;
-
-  window.loadExecErrors  = loadExecErrors;
-  window.loadEventErrors = loadEventErrors;
-
-  await Promise.all([loadExecErrors(1), loadEventErrors(1)]);
-}
-
-// ── pagination helper ─────────────────────────────────────────────────────────
-function paginationHtml(fnName, page, count, limit) {
-  const hasPrev = page > 1;
-  const hasNext = count >= limit;
-  if (!hasPrev && !hasNext) return '';
-  const prev = hasPrev
-    ? `<button onclick="${fnName}(${page - 1})">‹ Prev</button>`
-    : `<button disabled>‹ Prev</button>`;
-  const next = hasNext
-    ? `<button onclick="${fnName}(${page + 1})">Next ›</button>`
-    : '';
-  return `<div class="pagination">${prev}${next}</div>`;
 }
 </script>
 </body>

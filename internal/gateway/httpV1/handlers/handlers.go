@@ -15,9 +15,9 @@ import (
 
 	"github.com/seilbekskindirov/monitor/internal"
 	"github.com/seilbekskindirov/monitor/internal/domain"
-	"github.com/seilbekskindirov/monitor/internal/gateway/httpV1/dto"
 	"github.com/seilbekskindirov/monitor/internal/repository"
 	"github.com/seilbekskindirov/monitor/internal/tools/tgwebapp"
+	"github.com/seilbekskindirov/monitor/pkg/api"
 )
 
 // NewHandler constructs a Handler wired to the rate service and, optionally,
@@ -74,9 +74,9 @@ func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]dto.SourceResponse, 0, len(sources))
+	resp := make([]api.SourceResponse, 0, len(sources))
 	for _, s := range sources {
-		item := dto.SourceResponse{
+		item := api.SourceResponse{
 			Name:          s.Name,
 			Title:         s.Title,
 			BaseCurrency:  s.BaseCurrency,
@@ -122,9 +122,9 @@ func (h *Handler) ListRates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]dto.RateResponse, 0, len(rates))
+	resp := make([]api.RateResponse, 0, len(rates))
 	for _, rv := range rates {
-		resp = append(resp, dto.RateResponse{
+		resp = append(resp, api.RateResponse{
 			ID:            rv.ID,
 			Price:         rv.Price,
 			BaseCurrency:  rv.BaseCurrency,
@@ -155,9 +155,9 @@ func (h *Handler) ListHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]dto.HistoryResponse, 0, len(recs))
+	resp := make([]api.HistoryResponse, 0, len(recs))
 	for _, rec := range recs {
-		resp = append(resp, dto.HistoryResponse{
+		resp = append(resp, api.HistoryResponse{
 			ID:         rec.ID,
 			SourceName: rec.SourceName,
 			Success:    rec.Success,
@@ -185,9 +185,9 @@ func (h *Handler) ListNotifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]dto.NotificationResponse, 0, len(records))
+	resp := make([]api.NotificationResponse, 0, len(records))
 	for _, rec := range records {
-		resp = append(resp, dto.NotificationResponse{
+		resp = append(resp, api.NotificationResponse{
 			ID:        rec.ID,
 			UserType:  string(rec.UserType),
 			UserID:    rec.UserID,
@@ -221,9 +221,9 @@ func (h *Handler) ListFailedNotifications(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	resp := make([]dto.NotificationResponse, 0, len(records))
+	resp := make([]api.NotificationResponse, 0, len(records))
 	for _, rec := range records {
-		resp = append(resp, dto.NotificationResponse{
+		resp = append(resp, api.NotificationResponse{
 			ID:        rec.ID,
 			UserType:  string(rec.UserType),
 			UserID:    rec.UserID,
@@ -245,9 +245,9 @@ func (h *Handler) ListPendingEvents(w http.ResponseWriter, r *http.Request) {
 		h.internalError(w, err)
 		return
 	}
-	resp := make([]dto.NotificationResponse, 0, len(events))
+	resp := make([]api.NotificationResponse, 0, len(events))
 	for _, e := range events {
-		resp = append(resp, dto.NotificationResponse{
+		resp = append(resp, api.NotificationResponse{
 			ID:        e.ID,
 			UserType:  string(e.UserType),
 			Status:    string(e.Status),
@@ -275,9 +275,9 @@ func (h *Handler) GetRatesChart(w http.ResponseWriter, r *http.Request) {
 		h.internalError(w, err)
 		return
 	}
-	resp := make([]dto.ChartPointResponse, 0, len(points))
+	resp := make([]api.ChartPointResponse, 0, len(points))
 	for _, p := range points {
-		resp = append(resp, dto.ChartPointResponse{Label: p.Label, Price: p.Price})
+		resp = append(resp, api.ChartPointResponse{Label: p.Label, Price: p.Price})
 	}
 	writeJSON(w, resp)
 }
@@ -298,9 +298,9 @@ func (h *Handler) ListSourceFailedEvents(w http.ResponseWriter, r *http.Request)
 		h.internalError(w, err)
 		return
 	}
-	resp := make([]dto.NotificationResponse, 0, len(events))
+	resp := make([]api.NotificationResponse, 0, len(events))
 	for _, e := range events {
-		resp = append(resp, dto.NotificationResponse{
+		resp = append(resp, api.NotificationResponse{
 			ID:        e.ID,
 			UserType:  string(e.UserType),
 			Status:    string(e.Status),
@@ -326,9 +326,9 @@ func (h *Handler) ListSourceSubscriptions(w http.ResponseWriter, r *http.Request
 		h.internalError(w, err)
 		return
 	}
-	resp := make([]dto.SubscriptionSummaryResponse, 0, len(summaries))
+	resp := make([]api.SubscriptionSummaryResponse, 0, len(summaries))
 	for _, s := range summaries {
-		item := dto.SubscriptionSummaryResponse{
+		item := api.SubscriptionSummaryResponse{
 			SourceName:        s.SourceName,
 			UserType:          string(s.UserType),
 			SubscriptionCount: s.SubscriptionCount,
@@ -353,9 +353,7 @@ func (h *Handler) ToggleSourceActive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body struct {
-		Active bool `json:"active"`
-	}
+	var body api.SourceActiveRequest
 	if err = json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
 		return
@@ -381,7 +379,7 @@ func (h *Handler) ListStats(w http.ResponseWriter, r *http.Request) {
 		h.internalError(w, err)
 		return
 	}
-	writeJSON(w, dto.StatsResponse{
+	writeJSON(w, api.StatsResponse{
 		SourcesTotal:  stats.SourcesTotal,
 		SourcesActive: stats.SourcesActive,
 		ErrorsTotal:   stats.ErrorsTotal,
@@ -406,9 +404,9 @@ func (h *Handler) ListSourceSubscriptionDetails(w http.ResponseWriter, r *http.R
 		h.internalError(w, err)
 		return
 	}
-	resp := make([]dto.SubscriptionDetailResponse, 0, len(items))
+	resp := make([]api.SubscriptionDetailResponse, 0, len(items))
 	for _, s := range items {
-		item := dto.SubscriptionDetailResponse{
+		item := api.SubscriptionDetailResponse{
 			ID:         s.ID,
 			UserType:   string(s.UserType),
 			SourceName: s.SourceName,
@@ -440,9 +438,9 @@ func (h *Handler) ListSourceDailyEvents(w http.ResponseWriter, r *http.Request) 
 		h.internalError(w, err)
 		return
 	}
-	resp := make([]dto.DailyEventResponse, 0, len(items))
+	resp := make([]api.DailyEventResponse, 0, len(items))
 	for _, s := range items {
-		resp = append(resp, dto.DailyEventResponse{
+		resp = append(resp, api.DailyEventResponse{
 			Type:         s.UserType,
 			Date:         s.Date,
 			SuccessCount: s.SuccessCount,
@@ -465,9 +463,9 @@ func (h *Handler) ListExecutionErrors(w http.ResponseWriter, r *http.Request) {
 		h.internalError(w, err)
 		return
 	}
-	resp := make([]dto.ExecutionErrorResponse, 0, len(items))
+	resp := make([]api.ExecutionErrorResponse, 0, len(items))
 	for _, rec := range items {
-		resp = append(resp, dto.ExecutionErrorResponse{
+		resp = append(resp, api.ExecutionErrorResponse{
 			ID:         rec.ID,
 			SourceName: rec.SourceName,
 			Error:      rec.Error,
@@ -664,14 +662,14 @@ func (h *Handler) ListMeSubscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 	page_items := filtered[offset:end]
 
-	items := make([]dto.MeSubscriptionRow, 0, len(page_items))
+	items := make([]api.MeSubscriptionRow, 0, len(page_items))
 	for _, g := range page_items {
 		src, srcErr := h.meSourceRepo.ObtainRateSourceByName(r.Context(), g.sourceName)
 		if srcErr != nil {
 			h.internalError(w, srcErr)
 			return
 		}
-		row := dto.MeSubscriptionRow{
+		row := api.MeSubscriptionRow{
 			SourceName: g.sourceName,
 			Conditions: g.conditions,
 		}
@@ -692,7 +690,7 @@ func (h *Handler) ListMeSubscriptions(w http.ResponseWriter, r *http.Request) {
 		items = append(items, row)
 	}
 
-	writeJSON(w, dto.MeSubscriptionsResponse{
+	writeJSON(w, api.MeSubscriptionsResponse{
 		Items:    items,
 		Page:     page,
 		PageSize: pageSize,

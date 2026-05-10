@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://telegram.org; script-src 'self' https://telegram.org 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://telegram.org; script-src 'self' https://telegram.org 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline';">
   <title>My Subscriptions</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
@@ -61,121 +61,21 @@
   </style>
 </head>
 <body>
-  <input class="search-bar" id="search" type="text" placeholder="Search subscriptions...">
-  <div id="list"></div>
-  <div class="pagination" id="pagination" style="display:none">
-    <button id="prev">&#8592; Prev</button>
-    <button id="next">Next &#8594;</button>
-  </div>
-
+  <div id="app">Loading&#8230;</div>
+  <script src="/wasm_exec.js"></script>
   <script>
-    var WebApp = window.Telegram && window.Telegram.WebApp;
-
-    if (WebApp) {
-      WebApp.ready();
-      WebApp.expand();
-    }
-
-    var initData = WebApp ? WebApp.initData : '';
-    var currentPage = 1;
-    var currentQ = '';
-    var debounceTimer = null;
-
-    if (!initData) {
-      document.getElementById('list').innerHTML =
-        '<p class="error-msg">This page must be opened from the bot\'s button. Please reopen via the bot.</p>';
-    } else {
-      load(currentPage, currentQ);
-    }
-
-    document.getElementById('search').addEventListener('input', function(e) {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(function() {
-        currentQ = e.target.value;
-        currentPage = 1;
-        load(currentPage, currentQ);
-      }, 250);
+    var wasmReady = new Promise(function(resolve, reject) {
+      var go = new Go();
+      WebAssembly.instantiateStreaming(fetch('/app.wasm'), go.importObject)
+        .then(function(result) { go.run(result.instance); resolve(); })
+        .catch(function(err) { console.error('WASM load failed (run make build?):', err); reject(err); });
     });
-
-    document.getElementById('prev').addEventListener('click', function() {
-      if (currentPage > 1) { currentPage--; load(currentPage, currentQ); }
-    });
-
-    document.getElementById('next').addEventListener('click', function() {
-      currentPage++;
-      load(currentPage, currentQ);
-    });
-
-    function load(page, q) {
-      var listEl = document.getElementById('list');
-      listEl.innerHTML = '<p class="status">Loading...</p>';
-
-      var url = '/api/me/subscriptions?page=' + page + '&page_size=10';
-      if (q) { url += '&q=' + encodeURIComponent(q); }
-
-      fetch(url, {
-        headers: { 'X-Telegram-Init-Data': initData }
-      })
-      .then(function(res) {
-        if (res.status === 401) {
-          listEl.innerHTML = '<p class="error-msg">This page must be opened from the bot\'s button. Please reopen via the bot.</p>';
-          document.getElementById('pagination').style.display = 'none';
-          return null;
-        }
-        return res.json();
-      })
-      .then(function(data) {
-        if (!data) return;
-        render(data);
-      })
-      .catch(function() {
-        listEl.innerHTML = '<p class="error-msg">Failed to load subscriptions. Please try again.</p>';
+    wasmReady
+      .then(function() { window._wasm.renderMeSubscriptions(); })
+      .catch(function(err) {
+        document.getElementById('app').innerHTML =
+          '<p class="error-msg">Failed to load app. Did you run <code>make build</code>?</p>';
       });
-    }
-
-    function render(data) {
-      var listEl = document.getElementById('list');
-      var paginationEl = document.getElementById('pagination');
-
-      if (!data.items || data.items.length === 0) {
-        listEl.innerHTML = '<p class="status">No subscriptions found.</p>';
-        paginationEl.style.display = 'none';
-        return;
-      }
-
-      var html = '';
-      data.items.forEach(function(item) {
-        var price = item.latest_price ? item.latest_price.toFixed(4) : '—';
-        var pair = item.base_currency && item.quote_currency
-          ? item.base_currency + '/' + item.quote_currency : '';
-        var ts = item.latest_at ? new Date(item.latest_at).toLocaleString() : '—';
-        var badges = (item.conditions || []).map(function(c) {
-          return '<span class="badge">' + escHtml(c) + '</span>';
-        }).join('');
-
-        html += '<div class="card">' +
-          '<div class="card-title">' + escHtml(item.source_title || item.source_name) + '</div>' +
-          (pair ? '<div class="card-pair">' + escHtml(pair) + '</div>' : '') +
-          '<div class="card-price">' + escHtml(price) + '</div>' +
-          '<div class="card-time">Last grab: ' + escHtml(ts) + '</div>' +
-          (badges ? '<div class="badges">' + badges + '</div>' : '') +
-          '</div>';
-      });
-      listEl.innerHTML = html;
-
-      var totalPages = Math.ceil(data.total / data.page_size) || 1;
-      paginationEl.style.display = totalPages > 1 ? 'flex' : 'none';
-      document.getElementById('prev').disabled = currentPage <= 1;
-      document.getElementById('next').disabled = currentPage >= totalPages;
-    }
-
-    function escHtml(s) {
-      return String(s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-    }
   </script>
 </body>
 </html>

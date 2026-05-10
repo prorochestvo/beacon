@@ -135,10 +135,29 @@ make build   # build binary
 make run ARGS="--config configs/sources.example.json --interval 1m"
 ```
 
+### Frontend testing
+
+The WASM frontend is tested in two layers:
+
+- `make test` — runs all pure-Go tests, including the `application/` controllers,
+  `ui/` rendering, and `apiclient/` end-to-end via `httptest`. No Node required.
+- `make test-wasm` — runs tests under the WASM runtime for the small `dom`
+  glue layer. Requires Node.js 18+. Optional; useful for local verification.
+
+DOM event-binding lifecycle (`cmd/wasm/main.go` mount/unmount, `dom.On` releases)
+is exercised only by manual browser smoke — see [ADR-002](docs/decisions/260509.0001.adopt-fetcher-seam-no-headless-wasm-ci.md)
+for the CI-strategy rationale.
+
 ## CI/CD
 
-- **CI** — runs on every PR and push to `main`: vet, race-detector tests, build, golangci-lint
-- **Release** — triggered on `v*.*.*` tags: builds static binaries for `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` and publishes them as GitHub Release assets
+No automated CI pipeline exists yet. When one is added, `make test` is the
+intended build-gate command (see [ADR-002](docs/decisions/260509.0001.adopt-fetcher-seam-no-headless-wasm-ci.md)
+for the WASM-side strategy).
+
+Planned (not yet wired):
+
+- **Pull requests** — run `make test` and `make build` on every PR: vet, race-detector tests, build, golangci-lint.
+- **Release** — on `v*.*.*` tags: build static binaries for `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` and publish them as GitHub Release assets.
 
 ## License
 

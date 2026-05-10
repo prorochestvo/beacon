@@ -11,7 +11,7 @@ TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 BUILD_OPTIONS := "-s -w -X main.BuildVersion=${BRANCH} -X main.BuildTime=${TIME} -X main.BuildHash=${BUILD}"
 
-.PHONY: all claude_task claude_evaluates_project claude_auto_fix_tests run build build-collector build-notifier build-web build-wasm test lint format swagger clean deploy_environment
+.PHONY: all claude_task claude_evaluates_project claude_auto_fix_tests run build build-collector build-notifier build-web build-wasm test test-wasm lint format swagger clean deploy_environment
 
 
 deploy_environment:
@@ -97,6 +97,16 @@ test: format
 	go clean -cache
 	CGO_ENABLED=0 go vet ./...
 	CGO_ENABLED=0 go test -race ./...
+
+## test-wasm: run tests for WASM-only packages under the WASM runtime (requires Node)
+test-wasm:
+	@if ! command -v node >/dev/null 2>&1; then \
+		echo "Error: 'node' is required for test-wasm. Install Node.js 18+ first."; \
+		exit 1; \
+	fi
+	CGO_ENABLED=0 GOOS=js GOARCH=wasm go test \
+		-exec "$$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
+		./internal/wasm/dom/... ./internal/wasm/apiclient/...
 
 ## lint: run go vet across all packages
 lint: format
