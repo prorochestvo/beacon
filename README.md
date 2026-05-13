@@ -1,75 +1,157 @@
-# Monitor
+# fx_rate_monitor
 
-A lightweight, portable tool for collecting, storing, monitoring, and forecasting rates (currency exchange rates, and more) from multiple sources.
-
-Sends Telegram alerts when rates change significantly and provides short-term forecasts using moving average and linear regression.
+A small self-hosted FX/exchange-rate monitor written in pure Go. It scrapes rates from
+configurable web sources, stores them in SQLite, evaluates per-user notification
+conditions (delta / interval / daily / cron), and dispatches alerts through a Telegram
+bot. A minimal HTTP dashboard (HTML + WASM) ships embedded in the `web` binary.
 
 ## Features
 
-- Configurable rate sources via JSON (regex-based HTML extraction)
-- SQLite storage — pure Go, no CGO, no external database required
-- Change detection with absolute and percentage thresholds
-- Telegram notifications with forecast included
-- Moving average + linear regression forecasting
-- Periodic scheduler with configurable interval
-- VPN / proxy support (Mullvad-compatible)
-- Structured logging (`log/slog`)
-- Single static binary, cross-platform
+- **Multi-source extraction** — regex, JSONPath, `parse_float`, and a `store_as_rate`
+  pass-through method for sources that already publish a numeric value.
+- **Per-source schedules** — each source declares its own interval (`10m`, `1h`, …);
+  the collector applies a grace window of `interval/4` (clamped to `[30s, 1h]`) so
+  near-simultaneous runs don't race.
+- **Subscription conditions** — `delta` (absolute price change), `interval`,
+  `daily` (HH:MM:SS), and `cron` (5-field). Evaluated by `RateCheckAgent`.
+- **Telegram bot UI** — fully stateless inline-keyboard flows for adding/listing/
+  deleting subscriptions; all flow state travels in `callback_data`.
+- **REST + dashboard** — `cmd/web` exposes a `/api/...` v1 surface and serves an
+  embedded vanilla-JS dashboard (with a WASM alternative built from `cmd/wasm`).
+- **Pure Go SQLite** — `modernc.org/sqlite`, so the project builds with
+  `CGO_ENABLED=0` and cross-compiles cleanly.
 
-## Installation
+## Repository layout
 
-```bash
-git clone https://github.com/seilbekskindirov/monitor.git
-cd monitor
-CGO_ENABLED=0 go build -o monitor ./cmd/monitor
+```
+cmd/
+  collector/     # scrapes active rate sources on each invocation
+  notifier/      # check-agent + dispatch-agent, drains the notification pool
+  web/           # HTTP dashboard + REST API + Telegram callback router
+  wasm/          # GOOS=js GOARCH=wasm dashboard renderer
+internal/
+  application/   # collection / notification agents, REST + Telegram services
+  domain/        # RateSource, RateValue, RateUserSubscription, RateUserEvent, …
+  gateway/       # http.ServeMux wiring; httpV1/{router,handlers,routes,dto}
+  repository/    # one repo per table; each owns its own DDL via Migration()
+  infrastructure/# sqlitedb client + migrator, telegrambot client, scheduler
+  tools/         # rateextractor, rateforecaster, threadsafe (buffer + cache)
+  errors.go      # PublicError / TraceError / StackTraceError / HttpCodeError
+  logger.go      # cyclic file logger built on loginjector
+configs/         # nginx, systemd, sources example
+deploy/          # reference systemd unit
+plans/           # planning workflow (see CLAUDE.md)
 ```
 
-Or via `make`:
+## Requirements
+
+- Go **1.26+**
+- `make`
+- A Telegram bot token + admin chat id (for `notifier` and `web`)
+
+No CGO, no system libraries. The build embeds the dashboard, the WASM bundle, and
+the migration scaffold.
+
+## Configuration
+
+All runtime configuration is passed via environment variables, normally loaded
+from a project-local `.env` (Make sources it for you on `make run`). See
+`.env.example` for the canonical shape:
+
+| Variable          | Required by                | Format |
+|-------------------|---------------------------|--------|
+| `SQLITEDB_DSN`    | collector, notifier, web  | `sqlite://_:_@_:_/<filename>` |
+| `TELEGRAMBOT_DSN` | notifier, web             | `tbot://<admin_chat_id>:@<bot_token>/` |
+| `PROXY_URL`       | collector (optional)      | `socks5://user:pass@host:port` or `http://...` |
+
+CLI flags accepted by the binaries:
+
+| Flag | Binaries | Default | Notes |
+|------|----------|---------|-------|
+| `--logs-dir`   | all          | `$TMPDIR/logs` | cyclic file logger output |
+| `--verbosity`  | all          | `warning`      | `debug \| info \| warning \| error \| severe \| critical` |
+| `--port`       | web          | `8080`         | must be in `(1000, 32000)` |
+| `--timeout`    | web          | `30s`          | Go duration; must be `> 10s` |
+| `--static-dir` | web          | (embedded FS)  | overrides the embedded dashboard for local development |
+
+## Build & run
 
 ```bash
-make build
+make build    # builds collector, notifier, web, plus cmd/web/static/app.wasm
+make test     # go fmt + go vet + go test -race ./...
+make lint     # go fmt + go vet
+make format   # go fmt ./...
+make clean    # removes ./build/, generated wasm, and runs go mod tidy
 ```
 
-## Usage
+The `run` target builds first, then starts the binaries sequentially with `.env`
+sourced:
 
 ```bash
-./monitor \
-  --db rates.db \
-  --config configs/sources.example.json \
-  --interval 10m \
-  --telegram-token <TOKEN> \
-  --telegram-chat <CHAT_ID>
+make run
 ```
 
-### All flags
+For day-to-day development you typically run the three binaries separately, e.g.:
 
-| Flag | Default | Description |
-|---|---|---|
-| `--db` | `rates.db` | SQLite database file path |
-| `--config` | — | JSON sources config file |
-| `--interval` | `10m` | Polling interval (e.g. `5m`, `1h`) |
-| `--telegram-token` | — | Telegram bot token |
-| `--telegram-chat` | — | Telegram chat ID |
-| `--abs-threshold` | `0.5` | Notify if change > N KZT |
-| `--pct-threshold` | `0.2` | Notify if change > N% |
-| `--proxy` | — | HTTP/SOCKS5 proxy URL |
-| `--log-format` | `text` | `text` or `json` |
+```bash
+set -a; . .env; set +a
+go run ./cmd/collector --logs-dir ./build/logs
+go run ./cmd/notifier  --logs-dir ./build/logs
+go run ./cmd/web       --logs-dir ./build/logs --static-dir ./cmd/web/static
+```
 
-## Sources config
+`collector` and `notifier` are designed as one-shot processes — schedule them with
+cron / a systemd timer at whatever cadence your shortest source needs. `web` is a
+long-running server that also drives the Telegram subscription bot.
 
-Sources are defined in a JSON file. Each source specifies a URL and a list of regex extraction rules:
+### Targeted tests
+
+```bash
+CGO_ENABLED=0 go test -race -run TestRateAgent ./internal/application/collection/
+CGO_ENABLED=0 go test -race -run 'TestRateUserSubscription_IsDue/cron_due' ./internal/domain/
+CGO_ENABLED=0 go test -race -coverprofile=cover.out ./...
+go tool cover -html=cover.out
+```
+
+## HTTP API
+
+Route constants live in `internal/gateway/httpV1/routes/routes.go`. The current
+v1 surface:
+
+- `GET   /api/sources` — list all sources
+- `PATCH /api/sources/{name}/active` — toggle a source on/off
+- `GET   /api/sources/{name}/rates` — recent rate values
+- `GET   /api/sources/{name}/rates/chart` — aggregated chart data
+- `GET   /api/sources/{name}/history` — execution history
+- `GET   /api/sources/{name}/events/failed` — failed events for a source
+- `GET   /api/sources/{name}/events/daily` — daily aggregated event counts
+- `GET   /api/sources/{name}/subscriptions` — grouped subscription stats
+- `GET   /api/sources/{name}/subscriptions/list` — paginated subscription detail
+- `GET   /api/events/pending` — pending notification events
+- `GET   /api/notifications` — last N notifications
+- `GET   /api/notifications/failed` — failed notifications
+- `GET   /api/errors/execution` — recent failed execution history
+- `GET   /api/stats` — global counters
+
+Static assets are served from `/` by the embedded FS (or `--static-dir`).
+
+## Sources
+
+Sources are stored in the `rate_sources` table. A source declares its `URL`,
+`Interval`, base/quote currency pair, kind (`BID` or `ASK`), and a list of
+extraction `Rules`. An example shape (see `configs/sources.example.json`):
 
 ```json
 {
   "rates_vs_kzt": [
     {
       "name": "Halyk Bank",
-      "url": "https://halykbank.kz/exchange-rates",
+      "url":  "https://halykbank.kz/exchange-rates",
       "rules": [
         {
-          "method": "regex",
+          "method":  "regex",
           "pattern": "USD[^0-9]*([0-9]+[.,][0-9]+)",
-          "base_currency": "USD",
+          "base_currency":  "USD",
           "quote_currency": "KZT"
         }
       ],
@@ -79,94 +161,17 @@ Sources are defined in a JSON file. Each source specifies a URL and a list of re
 }
 ```
 
-See `configs/sources.example.json` for a working example.
+Supported extraction methods: `regex`, `json` (JSONPath), `parse_float`, and
+`store_as_rate`.
 
-## Telegram notification format
+## Deployment
 
-```
-📊 USD/KZT rate changed
-
-Source: Halyk Bank
-Old value: 502.10
-New value: 503.70
-Change: +1.60 (+0.32%)
-Time: 15:45
-
-📈 Forecast:
-  Next week: 504.50
-  Next month: 506.20
-```
-
-## VPN / Proxy
-
-Pass a proxy URL via `--proxy` to route all HTTP requests through it:
-
-```bash
-# Mullvad SOCKS5 (when connected)
-./fxmon --proxy socks5://10.64.0.1:1080 ...
-
-# Or set the standard env var
-HTTPS_PROXY=socks5://10.64.0.1:1080 ./fxmon ...
-```
-
-## Project structure
-
-```
-cmd/monitor/          — entry point
-internal/
-  config/           — CLI flag and JSON config loading
-  model/            — domain types (Rate, ForecastResult)
-  storage/          — SQLite persistence
-  extractor/        — HTTP fetch + regex rate extraction
-  detector/         — change significance detection
-  notifier/         — Telegram notifications
-  forecaster/       — moving average + linear regression
-  scheduler/        — periodic job runner
-configs/            — example source configs
-migrations/         — SQL schema migrations
-```
-
-## Development
-
-First-time setup applies SQL migrations from `./migrations/` via the standalone
-`cmd/migrator` binary before any service starts. Service binaries fail fast if
-`__schema_migrations` is missing or empty.
-
-```bash
-make build      # builds collector, notifier, migrator, web (and the WASM bundle)
-make migrate    # applies pending SQL migrations (idempotent — safe to re-run)
-make run        # starts collector, notifier, web (also runs migrate as a prerequisite)
-make test       # go fmt + go vet + go test -race ./...
-make lint       # go vet across all packages
-```
-
-See `CLAUDE.md` → Architecture Overview → Database for the migration model and
-filename rules. Schema changes are SQL only — never `CREATE TABLE` from Go.
-
-### Frontend testing
-
-The WASM frontend is tested in two layers:
-
-- `make test` — runs all pure-Go tests, including the `application/` controllers,
-  `ui/` rendering, and `apiclient/` end-to-end via `httptest`. No Node required.
-- `make test-wasm` — runs tests under the WASM runtime for the small `dom`
-  glue layer. Requires Node.js 18+. Optional; useful for local verification.
-
-DOM event-binding lifecycle (`cmd/wasm/main.go` mount/unmount, `dom.On` releases)
-is exercised only by manual browser smoke — see [ADR-002](docs/decisions/260509.0001.adopt-fetcher-seam-no-headless-wasm-ci.md)
-for the CI-strategy rationale.
-
-## CI/CD
-
-No automated CI pipeline exists yet. When one is added, `make test` is the
-intended build-gate command (see [ADR-002](docs/decisions/260509.0001.adopt-fetcher-seam-no-headless-wasm-ci.md)
-for the WASM-side strategy).
-
-Planned (not yet wired):
-
-- **Pull requests** — run `make test` and `make build` on every PR: vet, race-detector tests, build, golangci-lint.
-- **Release** — on `v*.*.*` tags: build static binaries for `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` and publish them as GitHub Release assets.
+`deploy/monitor.service` is a reference systemd unit; `deploy/README.md` walks
+through creating a dedicated user, installing the binary, and enabling the unit.
+`configs/srv.{prime,stage}_monitor.service` are the production units used by
+the `make deploy_environment` target (which `scp`s nginx + systemd config to the
+target host).
 
 ## License
 
-MIT
+See [`LICENSE`](LICENSE).
