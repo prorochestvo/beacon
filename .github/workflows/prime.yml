@@ -139,16 +139,29 @@ jobs:
           rm -f "$BINARY_TMP_NOTIFIER_NAME.sha256"
           rm -f "$BINARY_TMP_MIGRATOR_NAME.sha256"
 
-      - name: Apply migrations
+      - name: Pause cron wrappers
+        run: |
+          SSH="ssh -p $SSH_HOSTPORT -i /tmp/deploy_key $SSH_USERNAME@$SSH_HOSTNAME"
+
+          # rename cron wrappers so cron does not fire collector/notifier mid-deploy.
+          # on deploy failure these stay renamed (.sh.deploying); operator must restore manually.
+          $SSH "mv $REMOTE_DIR/${BINARY_COLLECTOR_NAME}.sh $REMOTE_DIR/${BINARY_COLLECTOR_NAME}.sh.deploying"
+          $SSH "mv $REMOTE_DIR/${BINARY_NOTIFIER_NAME}.sh $REMOTE_DIR/${BINARY_NOTIFIER_NAME}.sh.deploying"
+
+      - name: Place migrator binary
         run: |
           SSH="ssh -p $SSH_HOSTPORT -i /tmp/deploy_key $SSH_USERNAME@$SSH_HOSTNAME"
 
           # abort if uploaded migrator is missing — do not touch running service
           $SSH "test -f $REMOTE_DIR/$BINARY_TMP_MIGRATOR_NAME || (echo 'migrator binary not found, aborting'; exit 1)"
 
-          # swap migrator into place before running it so operators can rerun manually
+          # swap migrator into place so operators can rerun it manually after this point
           $SSH "chmod +x $REMOTE_DIR/$BINARY_TMP_MIGRATOR_NAME && \
                 mv $REMOTE_DIR/$BINARY_TMP_MIGRATOR_NAME $REMOTE_DIR/$BINARY_MIGRATOR_NAME"
+
+      - name: Run migrations
+        run: |
+          SSH="ssh -p $SSH_HOSTPORT -i /tmp/deploy_key $SSH_USERNAME@$SSH_HOSTNAME"
 
           # run migrator with the service env file; failure aborts the deploy
           $SSH "set -a && . $REMOTE_ENV_FILE && set +a && $REMOTE_DIR/$BINARY_MIGRATOR_NAME"
@@ -179,6 +192,15 @@ jobs:
           $SSH "sudo systemctl is-active --quiet $SERVICE_NAME && \
                 echo 'service is running' || \
                 (sudo journalctl -u $SERVICE_NAME -n 50 --no-pager; exit 1)"
+
+      - name: Resume cron wrappers
+        if: always()
+        run: |
+          SSH="ssh -p $SSH_HOSTPORT -i /tmp/deploy_key $SSH_USERNAME@$SSH_HOSTNAME"
+
+          # idempotent: skip silently if .sh.deploying does not exist (e.g. Pause step never ran)
+          $SSH "if [ -f $REMOTE_DIR/${BINARY_COLLECTOR_NAME}.sh.deploying ]; then mv $REMOTE_DIR/${BINARY_COLLECTOR_NAME}.sh.deploying $REMOTE_DIR/${BINARY_COLLECTOR_NAME}.sh; fi"
+          $SSH "if [ -f $REMOTE_DIR/${BINARY_NOTIFIER_NAME}.sh.deploying ]; then mv $REMOTE_DIR/${BINARY_NOTIFIER_NAME}.sh.deploying $REMOTE_DIR/${BINARY_NOTIFIER_NAME}.sh; fi"
 
       - name: Cleanup SSH
         if: always()
