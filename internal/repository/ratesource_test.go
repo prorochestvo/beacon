@@ -247,15 +247,15 @@ func TestSourceRepository_ObtainAllSources(t *testing.T) {
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, len(result), 2)
 	})
-	t.Run("empty", func(t *testing.T) {
+	t.Run("returns seeded sources without user inserts", func(t *testing.T) {
 		t.Parallel()
 
-		emptyRepo, err := NewRateSourceRepository(stubSQLiteDB(t))
+		seededRepo, err := NewRateSourceRepository(stubSQLiteDB(t))
 		require.NoError(t, err)
 
-		result, err := emptyRepo.ObtainAllRateSources(t.Context())
+		result, err := seededRepo.ObtainAllRateSources(t.Context())
 		require.NoError(t, err)
-		require.Empty(t, result)
+		require.NotEmpty(t, result)
 	})
 }
 

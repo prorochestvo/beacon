@@ -102,19 +102,22 @@ startup. They call `sqlitedb.RequireMigratedSchema(ctx, db)` immediately after
 opening the DB; a missing or empty `__schema_migrations` table causes
 `log.Fatalf("schema not initialised: run cmd/migrator before starting the service")`.
 
-Filename convention: `<table>_<NNN>_<description>.sql` (e.g.
-`rate_sources_001_table_initiate.sql`). Files are applied in lexicographic
-order. Once applied to any production database the filename is **immutable** —
-renaming triggers a duplicate apply.
+Filename convention: `<YYYYMM>.<NNN>.<table>.<description>.sql` (e.g.
+`202605.001.rate_sources.table_initiate.sql`). The `<NNN>` segment is a
+**global** zero-padded counter across all tables — it encodes the apply order
+explicitly, so a new migration always lands after every earlier one regardless
+of which table it touches. Files are applied in lexicographic order. Once
+applied to any production database the filename is **immutable** — renaming
+triggers a duplicate apply.
 
 | Migration | Table |
 |-----------|-------|
-| `rate_sources_001_table_initiate.sql` | `rate_sources` |
-| `rate_values_001_table_initiate.sql` | `rate_values` |
-| `rate_user_subscriptions_001_table_initiate.sql` | `rate_user_subscriptions` |
-| `rate_user_events_001_table_initiate.sql` | `rate_user_events` |
-| `rate_user_events_002_add_source_name.sql` | `rate_user_events` (alter) |
-| `execution_history_001_table_initiate.sql` | `execution_history` |
+| `202605.001.rate_sources.table_initiate.sql` | `rate_sources` |
+| `202605.002.rate_values.table_initiate.sql` | `rate_values` |
+| `202605.003.rate_user_subscriptions.table_initiate.sql` | `rate_user_subscriptions` |
+| `202605.004.rate_user_events.table_initiate.sql` | `rate_user_events` |
+| `202605.005.rate_user_events.add_source_name.sql` | `rate_user_events` (alter) |
+| `202605.006.execution_history.table_initiate.sql` | `execution_history` |
 
 Repository files in `internal/repository/` reference table and column names
 exclusively through `const` declarations (e.g. `rateSourceTableName`,
