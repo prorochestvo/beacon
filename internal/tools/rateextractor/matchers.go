@@ -22,7 +22,7 @@ func ApplyRegex(pattern string, payload []byte) ([]byte, error) {
 
 	matches := re.FindSubmatch(payload)
 	if len(matches) < 2 {
-		err = fmt.Errorf("invalid regex pattern %q", pattern)
+		err = fmt.Errorf("pattern %q produced no match in body (len=%d)", pattern, len(payload))
 		return nil, errors.Join(err, internal.NewTraceError())
 	}
 

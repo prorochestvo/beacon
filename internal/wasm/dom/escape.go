@@ -1,3 +1,6 @@
+// Package dom provides helpers for interacting with the browser DOM from Go WASM.
+// Escape and other pure helpers in this package are buildable under any GOOS;
+// the js+wasm-tagged files (event.go, fetch.go) require GOOS=js GOARCH=wasm.
 package dom
 
 import "strings"

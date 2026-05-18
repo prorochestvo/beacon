@@ -24,7 +24,7 @@ func TestApplyRegex(t *testing.T) {
 		result, err := ApplyRegex(`nocapture`, []byte(`nocapture`))
 		require.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "invalid regex pattern")
+		assert.Contains(t, err.Error(), "produced no match")
 	})
 
 	t.Run("pattern does not match payload returns error", func(t *testing.T) {
@@ -33,7 +33,7 @@ func TestApplyRegex(t *testing.T) {
 		result, err := ApplyRegex(`price=(\d+)`, []byte(`no numbers here`))
 		require.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "invalid regex pattern")
+		assert.Contains(t, err.Error(), "produced no match")
 	})
 
 	t.Run("invalid pattern returns compile error", func(t *testing.T) {

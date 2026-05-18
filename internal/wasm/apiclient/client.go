@@ -1,3 +1,6 @@
+// Package apiclient provides a typed Go client for the /api/... HTTP routes.
+// It is used by the WASM frontend; transport is abstracted through the Fetcher
+// interface so tests can inject an in-process fake without real HTTP calls.
 package apiclient
 
 import (

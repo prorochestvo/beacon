@@ -14,16 +14,20 @@ import (
 	"github.com/twinj/uuid"
 )
 
+// NewRateSourceRepository returns a repository for the rate_sources table.
 func NewRateSourceRepository(db db) (*RateSourceRepository, error) {
 	return &RateSourceRepository{db: db}, nil
 }
 
+// RateSourceRepository persists and retrieves domain.RateSource records from the rate_sources table.
 type RateSourceRepository struct {
 	db db
 }
 
+// Name returns the name of the underlying database table.
 func (r *RateSourceRepository) Name() string { return rateSourceTableName }
 
+// CheckUP verifies that the repository can read from the rate_sources table.
 func (r *RateSourceRepository) CheckUP(ctx context.Context) error {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
@@ -52,6 +56,7 @@ func (r *RateSourceRepository) CheckUP(ctx context.Context) error {
 	return nil
 }
 
+// ObtainRateSourceByName returns the rate source with the given name, or nil if no row matches.
 func (r *RateSourceRepository) ObtainRateSourceByName(ctx context.Context, name string) (*domain.RateSource, error) {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
@@ -74,6 +79,8 @@ func (r *RateSourceRepository) ObtainRateSourceByName(ctx context.Context, name 
 	return rows, nil
 }
 
+// ObtainAllRateSources returns all rate sources ordered by name descending.
+// Always returns a non-nil slice on success.
 func (r *RateSourceRepository) ObtainAllRateSources(ctx context.Context) ([]domain.RateSource, error) {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
@@ -96,11 +103,27 @@ func (r *RateSourceRepository) ObtainAllRateSources(ctx context.Context) ([]doma
 	return rows, nil
 }
 
+// RetainRateSource inserts or updates the given rate source record in the rate_sources table.
 func (r *RateSourceRepository) RetainRateSource(ctx context.Context, record *domain.RateSource) error {
 	if record == nil {
 		err := errors.New("rate source is nil")
 		err = errors.Join(err, internal.NewTraceError())
 		return err
+	}
+
+	// Normalise and validate fetcher_kind. An empty string is treated as "plain"
+	// rather than hard-failing: rows written before this column existed carry ""
+	// until they round-trip through Go code, and hard-failing would break cmd/web
+	// reads of in-flight data during a rolling deploy.
+	switch record.FetcherKind {
+	case "", "plain":
+		record.FetcherKind = "plain"
+	case "chromedp":
+		// allowed; routes to ChromedpFetcher in cmd/rulegen — not used by
+		// cmd/collector or cmd/web which do not perform fetching.
+	default:
+		return fmt.Errorf("rate source %q: unsupported fetcher_kind %q (allowed: plain, chromedp)",
+			record.Name, record.FetcherKind)
 	}
 
 	rules, err := json.Marshal(record.Rules)
@@ -113,6 +136,13 @@ func (r *RateSourceRepository) RetainRateSource(ctx context.Context, record *dom
 	opts, err := json.Marshal(record.Options)
 	if err != nil {
 		err = fmt.Errorf("marshal options for rate source %q: %w", record.Name, err)
+		err = errors.Join(err, internal.NewTraceError())
+		return err
+	}
+
+	ruleMetadata, err := json.Marshal(record.RuleMetadata)
+	if err != nil {
+		err = fmt.Errorf("marshal rule_metadata for rate source %q: %w", record.Name, err)
 		err = errors.Join(err, internal.NewTraceError())
 		return err
 	}
@@ -140,8 +170,10 @@ func (r *RateSourceRepository) RetainRateSource(ctx context.Context, record *dom
 			reteSourceIntervalFieldName + " = ?, " +
 			rateSourceKindFieldName + " = ?, " +
 			rateSourceActiveFieldName + " = ?, " +
+			rateSourceFetcherKindFieldName + " = ?, " +
 			rateSourceOptionsFieldName + " = ?, " +
-			rateSourceRulesFieldName + " = ?" +
+			rateSourceRulesFieldName + " = ?, " +
+			rateSourceRuleMetadataFieldName + " = ?" +
 			" WHERE " + rateSourceNameFieldName + " = ?;"
 		res, err = tx.ExecContext(
 			ctx, cmd,
@@ -152,8 +184,10 @@ func (r *RateSourceRepository) RetainRateSource(ctx context.Context, record *dom
 			record.Interval,
 			record.Kind,
 			record.Active,
+			record.FetcherKind,
 			string(opts),
 			string(rules),
+			string(ruleMetadata),
 			record.Name,
 		)
 	} else {
@@ -167,10 +201,12 @@ func (r *RateSourceRepository) RetainRateSource(ctx context.Context, record *dom
 			reteSourceIntervalFieldName + ", " +
 			rateSourceKindFieldName + ", " +
 			rateSourceActiveFieldName + ", " +
+			rateSourceFetcherKindFieldName + ", " +
 			rateSourceOptionsFieldName + ", " +
-			rateSourceRulesFieldName +
+			rateSourceRulesFieldName + ", " +
+			rateSourceRuleMetadataFieldName +
 			")" +
-			" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+			" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
 		res, err = tx.ExecContext(
 			ctx, cmd,
 			record.Name,
@@ -181,8 +217,10 @@ func (r *RateSourceRepository) RetainRateSource(ctx context.Context, record *dom
 			record.Interval,
 			record.Kind,
 			record.Active,
+			record.FetcherKind,
 			string(opts),
 			string(rules),
+			string(ruleMetadata),
 		)
 	}
 	if err != nil {
@@ -210,6 +248,7 @@ func (r *RateSourceRepository) RetainRateSource(ctx context.Context, record *dom
 	return nil
 }
 
+// RemoveRateSource deletes the given rate source record from the rate_sources table.
 func (r *RateSourceRepository) RemoveRateSource(ctx context.Context, record *domain.RateSource) error {
 	if record == nil {
 		err := errors.New("rate source is nil")
@@ -250,8 +289,13 @@ const (
 	reteSourceQuoteCurrencyFieldName = "quote_currency"
 	rateSourceKindFieldName          = "kind"
 	rateSourceActiveFieldName        = "active"
-	rateSourceOptionsFieldName       = "options"
-	rateSourceRulesFieldName         = "rules"
+	// rateSourceFetcherKindFieldName identifies the fetch mechanism for the source.
+	// Allowed values: "plain" (default plain HTTP fetch), "chromedp" (headless
+	// Chrome via DevTools Protocol — handled by ChromedpFetcher in cmd/rulegen).
+	rateSourceFetcherKindFieldName  = "fetcher_kind"
+	rateSourceOptionsFieldName      = "options"
+	rateSourceRulesFieldName        = "rules"
+	rateSourceRuleMetadataFieldName = "rule_metadata"
 
 	rateSourceSqlSelect = "SELECT\n" +
 		rateSourceNameFieldName + ", " +
@@ -262,8 +306,10 @@ const (
 		reteSourceIntervalFieldName + ", " +
 		rateSourceKindFieldName + ", " +
 		rateSourceActiveFieldName + ", " +
+		rateSourceFetcherKindFieldName + ", " +
 		rateSourceOptionsFieldName + ", " +
-		rateSourceRulesFieldName + " " +
+		rateSourceRulesFieldName + ", " +
+		rateSourceRuleMetadataFieldName + " " +
 		"\nFROM " + rateSourceTableName
 )
 
@@ -314,7 +360,7 @@ func rateSourceQueryContext(tx *sql.Tx, ctx context.Context, condition string, a
 	items = make([]domain.RateSource, 0, count)
 
 	for rows.Next() {
-		var optsJSON, rulesJSON string
+		var optsJSON, rulesJSON, ruleMetadataJSON string
 
 		var item domain.RateSource
 		if err = rows.Scan(
@@ -326,8 +372,10 @@ func rateSourceQueryContext(tx *sql.Tx, ctx context.Context, condition string, a
 			&item.Interval,
 			&item.Kind,
 			&item.Active,
+			&item.FetcherKind,
 			&optsJSON,
 			&rulesJSON,
+			&ruleMetadataJSON,
 		); err != nil {
 			err = errors.Join(err, internal.NewTraceError())
 			return nil, err
@@ -351,6 +399,12 @@ func rateSourceQueryContext(tx *sql.Tx, ctx context.Context, condition string, a
 			return nil, err
 		}
 
+		if err = json.Unmarshal([]byte(ruleMetadataJSON), &item.RuleMetadata); err != nil {
+			err = fmt.Errorf("unmarshal rule_metadata for source %q: %w", item.Name, err)
+			err = errors.Join(err, internal.NewTraceError())
+			return nil, err
+		}
+
 		items = append(items, item)
 	}
 
@@ -361,7 +415,7 @@ func rateSourceQueryRowContext(tx *sql.Tx, ctx context.Context, condition string
 	query := rateSourceSqlSelect + "\n" + condition
 
 	var item domain.RateSource
-	var optionsJSON, rulesJSON string
+	var optionsJSON, rulesJSON, ruleMetadataJSON string
 	err := tx.QueryRowContext(ctx, query, args...).Scan(
 		&item.Name,
 		&item.Title,
@@ -371,8 +425,10 @@ func rateSourceQueryRowContext(tx *sql.Tx, ctx context.Context, condition string
 		&item.Interval,
 		&item.Kind,
 		&item.Active,
+		&item.FetcherKind,
 		&optionsJSON,
 		&rulesJSON,
+		&ruleMetadataJSON,
 	)
 	if err != nil && errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -390,6 +446,12 @@ func rateSourceQueryRowContext(tx *sql.Tx, ctx context.Context, condition string
 
 	if err = json.Unmarshal([]byte(rulesJSON), &item.Rules); err != nil {
 		err = fmt.Errorf("unmarshal rules for source %q: %w", item.Name, err)
+		err = errors.Join(err, internal.NewTraceError())
+		return nil, err
+	}
+
+	if err = json.Unmarshal([]byte(ruleMetadataJSON), &item.RuleMetadata); err != nil {
+		err = fmt.Errorf("unmarshal rule_metadata for source %q: %w", item.Name, err)
 		err = errors.Join(err, internal.NewTraceError())
 		return nil, err
 	}

@@ -16,16 +16,20 @@ import (
 	"github.com/twinj/uuid"
 )
 
+// NewRateUserEventRepository returns a repository for the rate_user_events table.
 func NewRateUserEventRepository(db db) (*RateUserEventRepository, error) {
 	return &RateUserEventRepository{db: db}, nil
 }
 
+// RateUserEventRepository persists and retrieves domain.RateUserEvent notification records.
 type RateUserEventRepository struct {
 	db db
 }
 
+// Name returns the name of the underlying database table.
 func (r *RateUserEventRepository) Name() string { return rateUserEventTableName }
 
+// CheckUP verifies that the repository can read from the rate_user_events table.
 func (r *RateUserEventRepository) CheckUP(ctx context.Context) error {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
@@ -54,6 +58,9 @@ func (r *RateUserEventRepository) CheckUP(ctx context.Context) error {
 	return nil
 }
 
+// ObtainLastNRateUserEvents returns paginated events optionally filtered by one or more statuses,
+// ordered by created_at ASC. Pass no status arguments to return all statuses.
+// Always returns a non-nil slice on success.
 func (r *RateUserEventRepository) ObtainLastNRateUserEvents(ctx context.Context, offset, limit int64, status ...domain.RateUserEventStatus) ([]domain.RateUserEvent, error) {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
@@ -266,6 +273,8 @@ func (r *RateUserEventRepository) ObtainDailyEventSummaryBySource(ctx context.Co
 	return items, nil
 }
 
+// ObtainUnprocessedRateUserEvents returns all events in pending or failed status,
+// ordered by created_at ASC. Always returns a non-nil slice on success.
 func (r *RateUserEventRepository) ObtainUnprocessedRateUserEvents(ctx context.Context) ([]domain.RateUserEvent, error) {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
@@ -287,6 +296,7 @@ func (r *RateUserEventRepository) ObtainUnprocessedRateUserEvents(ctx context.Co
 	return rows, nil
 }
 
+// ObtainRateUserEventById returns the event with the given ID, or nil if no row matches.
 func (r *RateUserEventRepository) ObtainRateUserEventById(ctx context.Context, id string) (*domain.RateUserEvent, error) {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
@@ -308,6 +318,7 @@ func (r *RateUserEventRepository) ObtainRateUserEventById(ctx context.Context, i
 	return row, nil
 }
 
+// RetainRateUserEvent inserts or updates the given notification event record.
 func (r *RateUserEventRepository) RetainRateUserEvent(ctx context.Context, record *domain.RateUserEvent) error {
 	if record == nil {
 		err := errors.New("notification record is nil")
@@ -416,6 +427,7 @@ func (r *RateUserEventRepository) RetainRateUserEvent(ctx context.Context, recor
 	return nil
 }
 
+// RemoveRateUserEvent deletes the given notification event record by ID.
 func (r *RateUserEventRepository) RemoveRateUserEvent(ctx context.Context, record *domain.RateUserEvent) error {
 	if record == nil {
 		err := errors.New("rate value is nil")
@@ -446,6 +458,7 @@ func (r *RateUserEventRepository) RemoveRateUserEvent(ctx context.Context, recor
 	return nil
 }
 
+// RemoveRateUserEventOlderThan deletes all non-pending events created more than duration ago.
 func (r *RateUserEventRepository) RemoveRateUserEventOlderThan(ctx context.Context, duration time.Duration) error {
 	if duration < 0 {
 		duration = time.Duration(math.Abs(float64(duration)))

@@ -1,3 +1,6 @@
+// Command sourceaudit probes seeded rate sources against the live web to verify
+// that their extraction rules still return plausible values. Results are printed
+// to stdout; non-zero exit code indicates at least one probe failure.
 package main
 
 import (

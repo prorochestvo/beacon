@@ -1,3 +1,6 @@
+// Package rateextractor fetches web pages and applies a pipeline of extraction
+// rules (regex, JSONPath, parse_float, store_to_rate) to derive a numeric FX rate,
+// then persists the result via rateValueRepository.
 package rateextractor
 
 import (
@@ -17,6 +20,14 @@ import (
 	"github.com/seilbekskindirov/monitor/internal/tools/threadsafe"
 )
 
+// MinPlausibleRateValue rejects zero and negative extractions.
+const MinPlausibleRateValue = 0.0
+
+// MaxPlausibleRateValue rejects values larger than any plausible exchange rate.
+const MaxPlausibleRateValue = math.MaxInt32
+
+// NewRateExtractor creates a RateExtractor with an HTTP client configured for the
+// given timeout. When proxyURL is non-empty the client routes requests through that proxy.
 func NewRateExtractor(
 	rateValueRepository rateValueRepository,
 	proxyURL string,
@@ -47,6 +58,8 @@ func NewRateExtractor(
 	return extractor, nil
 }
 
+// NewRateExtractorWithHTTPClient creates a RateExtractor with a caller-supplied HTTP
+// client. Use this in tests to inject a custom transport or timeout.
 func NewRateExtractorWithHTTPClient(
 	rateValueRepository rateValueRepository,
 	httpClient *http.Client,
@@ -68,6 +81,9 @@ func NewRateExtractorWithHTTPClient(
 	return p, nil
 }
 
+// RateExtractor fetches a URL, applies the source's rule pipeline, and persists
+// the extracted rate value. Responses are cached in memory for 30 minutes to avoid
+// redundant fetches when multiple sources share the same URL.
 type RateExtractor struct {
 	RateValueRepository rateValueRepository
 	cache               *threadsafe.Cache
@@ -75,10 +91,14 @@ type RateExtractor struct {
 	logger              io.Writer
 }
 
+// Name returns the identifier used in scheduler and log output.
 func (extractor *RateExtractor) Name() string {
 	return "rate_extractor"
 }
 
+// Run fetches source.URL, applies all extraction rules in sequence, and persists
+// the resulting rate value. Returns an error if any rule fails or the parsed value
+// is outside [MinPlausibleRateValue, MaxPlausibleRateValue].
 func (extractor *RateExtractor) Run(ctx context.Context, source *domain.RateSource) error {
 	payload, err := extractor.fetchHtmlPage(ctx, source.URL)
 	if err != nil || payload == nil {
@@ -141,7 +161,7 @@ func (extractor *RateExtractor) Run(ctx context.Context, source *domain.RateSour
 		return errors.Join(err, internal.NewTraceError())
 	}
 
-	if value <= 0 || value > math.MaxInt32 {
+	if value <= MinPlausibleRateValue || value > MaxPlausibleRateValue {
 		err = fmt.Errorf("invalid rate value: %s", string(payload))
 		err = fmt.Errorf("parse extracted value %q: %s", payload, err.Error())
 		return errors.Join(err, internal.NewTraceError())
@@ -221,6 +241,7 @@ func (extractor *RateExtractor) fetchRegexPage(_ context.Context, pattern string
 	return ApplyRegex(pattern, payload)
 }
 
+// rateValueRepository is the narrow persistence interface required by RateExtractor.
 type rateValueRepository interface {
 	RetainRateValue(ctx context.Context, rate *domain.RateValue) error
 }

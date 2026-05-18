@@ -13,16 +13,20 @@ import (
 	"github.com/twinj/uuid"
 )
 
+// NewExecutionHistoryRepository returns a repository for the execution_history table.
 func NewExecutionHistoryRepository(db db) (*ExecutionHistoryRepository, error) {
 	return &ExecutionHistoryRepository{db: db}, nil
 }
 
+// ExecutionHistoryRepository persists and retrieves domain.ExecutionHistory records.
 type ExecutionHistoryRepository struct {
 	db db
 }
 
+// Name returns the name of the underlying database table.
 func (r *ExecutionHistoryRepository) Name() string { return executionHistoryTableName }
 
+// CheckUP verifies that the repository can read from the execution_history table.
 func (r *ExecutionHistoryRepository) CheckUP(ctx context.Context) error {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
@@ -138,6 +142,7 @@ func (r *ExecutionHistoryRepository) ObtainLastNExecutionHistoryErrors(ctx conte
 	return items, nil
 }
 
+// RetainExecutionHistory inserts or updates the given execution history record.
 func (r *ExecutionHistoryRepository) RetainExecutionHistory(ctx context.Context, record *domain.ExecutionHistory) error {
 	if record == nil {
 		err := errors.New("execution history is nil")
@@ -225,6 +230,7 @@ func (r *ExecutionHistoryRepository) RetainExecutionHistory(ctx context.Context,
 	return nil
 }
 
+// RemoveSourceExecutionHistory deletes the given execution history record by ID.
 func (r *ExecutionHistoryRepository) RemoveSourceExecutionHistory(ctx context.Context, record *domain.ExecutionHistory) error {
 	if record == nil {
 		err := errors.New("execution history is nil")

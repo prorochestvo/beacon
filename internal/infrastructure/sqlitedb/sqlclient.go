@@ -1,3 +1,6 @@
+// Package sqlitedb provides a SQLite client and migration runner for the application.
+// The client wraps *sql.DB with explicit transaction helpers (Commit/Rollback) and
+// enforces WAL journal mode and foreign-key checks via PRAGMA on first open.
 package sqlitedb
 
 import (
@@ -13,6 +16,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// NewSQLiteClient opens a SQLite database at the path encoded in sqlDSN,
+// applies WAL mode and foreign-key PRAGMAs, sets the connection pool to seven
+// connections, and sets a one-minute query timeout.
+// Close must be called on the returned client when it is no longer needed.
 func NewSQLiteClient(sqlDSN dsninjector.DataSource, logger io.Writer) (*SQLiteClient, error) {
 	db, err := sql.Open("sqlite", sqlDSN.Database())
 	if err != nil {
@@ -36,6 +43,9 @@ func NewSQLiteClient(sqlDSN dsninjector.DataSource, logger io.Writer) (*SQLiteCl
 	return c, nil
 }
 
+// NewSQLiteClientEx initialises a SQLiteClient from an already-open *sql.DB.
+// It applies WAL mode and foreign-key PRAGMAs and sets a 30-second default timeout.
+// Use this in tests or when the caller controls the *sql.DB lifecycle.
 func NewSQLiteClientEx(db *sql.DB, logger io.Writer) (*SQLiteClient, error) {
 	const pragma = "PRAGMA"
 	if _, err := db.Exec(pragma + " foreign_keys=ON;\n" + pragma + " journal_mode=WAL;"); err != nil {
@@ -73,6 +83,8 @@ func (sqlite *SQLiteClient) Ping(ctx context.Context) error {
 	return nil
 }
 
+// Transaction opens a read-write transaction. The caller is responsible for
+// committing or rolling back the returned *sql.Tx.
 func (sqlite *SQLiteClient) Transaction(ctx context.Context) (*sql.Tx, error) {
 	return sqlite.db.BeginTx(ctx, nil)
 }
@@ -84,6 +96,8 @@ func (sqlite *SQLiteClient) ReadOnlyTransaction(ctx context.Context) (*sql.Tx, e
 	return sqlite.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 }
 
+// Commit runs action and each extraAction inside a single transaction and commits.
+// Returns on the first error; the transaction is rolled back automatically via defer.
 func (sqlite *SQLiteClient) Commit(ctx context.Context, action sqlAction, extraActions ...sqlAction) error {
 	ctx, cancel := context.WithTimeout(ctx, sqlite.Timeout)
 	defer cancel()
@@ -116,6 +130,9 @@ func (sqlite *SQLiteClient) Commit(ctx context.Context, action sqlAction, extraA
 	return nil
 }
 
+// Rollback runs action and each extraAction inside a transaction that is always
+// rolled back, regardless of errors. Use this for read-only operations where a
+// deliberate rollback is preferred over commit to avoid any unintended writes.
 func (sqlite *SQLiteClient) Rollback(ctx context.Context, action sqlAction, extraActions ...sqlAction) error {
 	ctx, cancel := context.WithTimeout(ctx, sqlite.Timeout)
 	defer cancel()
@@ -148,6 +165,7 @@ func (sqlite *SQLiteClient) Rollback(ctx context.Context, action sqlAction, extr
 	return nil
 }
 
+// Vacuum runs VACUUM to reclaim unused space from the SQLite file.
 func (sqlite *SQLiteClient) Vacuum(ctx context.Context) error {
 	_, err := sqlite.db.ExecContext(ctx, "VACUUM;")
 	return err
@@ -158,6 +176,8 @@ func (sqlite *SQLiteClient) Close() error {
 	return sqlite.db.Close()
 }
 
+// Ping is a sqlAction that validates the DB connection by querying the migration
+// table row count. It is used internally by SQLiteClient.Ping.
 type Ping struct{}
 
 func (_ *Ping) Run(tx *sql.Tx, ctx context.Context) error {
@@ -177,6 +197,7 @@ func (_ *Ping) Run(tx *sql.Tx, ctx context.Context) error {
 	return nil
 }
 
+// sqlAction is implemented by types that can execute SQL inside an open transaction.
 type sqlAction interface {
 	Run(*sql.Tx, context.Context) error
 }

@@ -82,6 +82,7 @@ common layered Go layout — keep, edit, or remove rows as needed.
 - `GET /api/notifications` — last N notification pool records
 - `GET /api/notifications/failed` — all failed notification pool records
 - `GET /api/me/subscriptions` — caller's own subscriptions enriched with latest rate values; authenticated via Telegram WebApp initData HMAC (`X-Telegram-Init-Data` header or `?initData=` query string fallback)
+- `POST /api/sources/{name}/rules/generate` — trigger rule (re-)generation for a named source. Admin-only; authenticated via Telegram WebApp initData with chat-id check against the bot admin. Synchronous; up to 120s wall-clock.
 - `GET /app/subscriptions.html` — Telegram Mini App HTML page (served by embedded static file server; no dedicated route needed)
 
 ### Database
@@ -118,6 +119,11 @@ triggers a duplicate apply.
 | `202605.004.rate_user_events.table_initiate.sql` | `rate_user_events` |
 | `202605.005.rate_user_events.add_source_name.sql` | `rate_user_events` (alter) |
 | `202605.006.execution_history.table_initiate.sql` | `execution_history` |
+| `202605.007.rate_sources.seed_initial.sql` | `rate_sources` (seed) |
+| `202605.008.rate_user_subscriptions.seed_admin_user.sql` | `rate_user_subscriptions` (seed) |
+| `202605.009.rate_sources.add_rule_metadata.sql` | `rate_sources` (alter) |
+| `202605.010.rate_sources.add_fetcher_kind.sql` | `rate_sources` (alter) |
+| `202605.011.rate_sources.rename_headless_to_chromedp.sql` | `rate_sources` (data) |
 
 Repository files in `internal/repository/` reference table and column names
 exclusively through `const` declarations (e.g. `rateSourceTableName`,
@@ -262,6 +268,24 @@ add what's missing.
   test code. Always capture the error and assert/check it. The only exceptions are
   `fmt.Fprint*` writes to loggers, `Rollback()` calls in error-recovery paths, and
   resource `.Close()` in `t.Cleanup` / `defer`.
+- **Godoc on exported identifiers**: Every exported identifier (Type, Func, Method,
+  Var, Const) gets a doc comment that starts with the identifier name and ends with
+  a period — e.g. `// Encode returns the base64-encoded form of v.` Each package
+  has exactly one `// Package <name> ...` declaration; `cmd/*` entry points use
+  `// Command <name> ...` instead. Skip the comment entirely if it would only
+  restate the signature — no `// Foo is a Foo.` fluff. Document concurrency
+  guarantees, which methods return `PublicError` vs plain errors, constructor
+  lifecycle contracts ("caller must Close"), and error sentinel conditions.
+  Preserve existing WHY-comments verbatim; do not overwrite a substantive comment
+  with a generic restatement. Unexported symbols only get comments when intent is
+  non-obvious — do not bulk-add comments to private helpers.
+- **Build outputs live in `./build/`, scratch in `./tmp/`, logs in `./logs/`**:
+  Never run `go build` without `-o ./build/<name>` — bare `go build ./cmd/web`
+  drops a `./web` binary in the project root, which is **not** in `.gitignore` and
+  would be picked up by `git add .`. The same applies to any throwaway artifacts,
+  fixtures, or intermediate files: use `./tmp/` (e.g. `./tmp/probe_*`) rather than
+  the repo root. Runtime / cyclic logs go to `./logs/`. Only these three directories
+  are gitignored at the root.
 - **UI conventions**: Document any project-specific rules about emojis, copy, or
   formatting in user-facing surfaces.
 

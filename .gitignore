@@ -56,7 +56,7 @@ dist
 .claude/*
 !.claude/commands/
 !.claude/agents/
-!.claude/prompts/
+!.claude/skills/
 !.claude/settings.json
 !.claude/README.md
 

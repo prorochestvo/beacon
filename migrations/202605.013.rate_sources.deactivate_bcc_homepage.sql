@@ -1,0 +1,17 @@
+-- Deactivate KZ_BCC_BID_USD_KZT.
+--
+-- This source points at https://www.bcc.kz/kz/, whose rate widget is rendered
+-- by an Alpine.js x-model/x-text interactive component. Even with chromedp +
+-- 5s wait, the rate values do not populate without a user click on a currency
+-- radio button, so rulegen cannot extract them with the current navigate+wait
+-- model (plan 014's smoke-test confirmed the failure mode).
+--
+-- Functionally this source is a duplicate of KZ_BCC_FX_BID_USD_KZT, which
+-- already extracts USD/KZT BID from https://www.bcc.kz/en/personal/currency-rates/
+-- via plain HTTP. Deactivating the homepage row avoids both LLM token waste
+-- and double-writes into rate_values for the same currency pair.
+--
+-- The row is preserved (not deleted) so the configuration history stays
+-- inspectable. If a future plan adds chromedp click-action support, the row
+-- can be reactivated with active = 1.
+UPDATE rate_sources SET active = 0 WHERE name = 'KZ_BCC_BID_USD_KZT';

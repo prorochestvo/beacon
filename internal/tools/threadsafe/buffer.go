@@ -1,3 +1,5 @@
+// Package threadsafe provides mutex-protected wrappers around standard types.
+// Every exported type in this package is safe for concurrent use by multiple goroutines.
 package threadsafe
 
 import (

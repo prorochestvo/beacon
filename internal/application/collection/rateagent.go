@@ -1,3 +1,5 @@
+// Package collection implements the rate-collection loop that fetches live
+// exchange rates from configured sources and persists them to the database.
 package collection
 
 import (
@@ -12,6 +14,7 @@ import (
 	"github.com/seilbekskindirov/monitor/internal/tools/rateextractor"
 )
 
+// NewRateAgent constructs a RateAgent. proxyURL may be empty to disable proxying.
 func NewRateAgent(
 	proxyURL string,
 	rRateSource rateSourceRepository,
@@ -35,6 +38,8 @@ func NewRateAgent(
 	return a, nil
 }
 
+// RateAgent fetches rates for all active sources that are due, persisting results
+// and execution history. It is designed to run to completion on each invocation.
 type RateAgent struct {
 	rateValueRepository        rateValueRepository
 	rateSourceRepository       rateSourceRepository
@@ -43,6 +48,8 @@ type RateAgent struct {
 	logger                     io.Writer
 }
 
+// Run fetches all active, due rate sources and stores the results.
+// Returns a joined error containing all per-source failures; nil if all succeeded.
 func (a *RateAgent) Run(ctx context.Context) (err error) {
 	// isDue returns true if the source should run in this invocation.
 	// The grace period is interval/4, clamped to [30s, 1h], to absorb scheduling

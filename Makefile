@@ -89,10 +89,15 @@ migrate: build
 build:
 	cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" ./cmd/web/static/wasm_exec.js
 	CGO_ENABLED=0 GOOS=js GOARCH=wasm go build -o ./cmd/web/static/app.wasm ./cmd/wasm/main.go
-	CGO_ENABLED=0 go build -o ./build/collector -ldflags ${BUILD_OPTIONS} ./cmd/collector/main.go
-	CGO_ENABLED=0 go build -o ./build/notifier  -ldflags ${BUILD_OPTIONS} ./cmd/notifier/main.go
-	CGO_ENABLED=0 go build -o ./build/migrator  -ldflags ${BUILD_OPTIONS} ./cmd/migrator
-	CGO_ENABLED=0 go build -o ./build/web       -ldflags ${BUILD_OPTIONS} ./cmd/web
+	CGO_ENABLED=0 go build -o ./build/collector  -ldflags ${BUILD_OPTIONS} ./cmd/collector/main.go
+	CGO_ENABLED=0 go build -o ./build/notifier   -ldflags ${BUILD_OPTIONS} ./cmd/notifier/main.go
+	CGO_ENABLED=0 go build -o ./build/migrator   -ldflags ${BUILD_OPTIONS} ./cmd/migrator
+	CGO_ENABLED=0 go build -o ./build/web        -ldflags ${BUILD_OPTIONS} ./cmd/web
+	CGO_ENABLED=0 go build -o ./build/rulegen    -ldflags ${BUILD_OPTIONS} ./cmd/rulegen
+
+## rulegen-help: print rulegen usage and flags
+rulegen-help: build
+	./build/rulegen --help 2>&1 || true
 
 
 

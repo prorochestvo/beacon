@@ -1,3 +1,5 @@
+// Package sourceaudit probes seeded rate sources against the live web to verify
+// that their extraction rules still return plausible numeric values.
 package sourceaudit
 
 import (
@@ -14,13 +16,21 @@ import (
 type ProbeStatus string
 
 const (
-	StatusOK                 ProbeStatus = "OK"
-	StatusFetchError         ProbeStatus = "FETCH_ERROR"
-	StatusHTTPNon2xx         ProbeStatus = "HTTP_NON_2XX"
-	StatusRegexNoMatch       ProbeStatus = "REGEX_NO_MATCH"
-	StatusJSONPathError      ProbeStatus = "JSON_PATH_ERROR"
-	StatusValueParseError    ProbeStatus = "VALUE_PARSE_ERROR"
-	StatusUnsupportedMethod  ProbeStatus = "UNSUPPORTED_METHOD"
+	// StatusOK indicates the source was fetched and the extraction rule returned a plausible value.
+	StatusOK ProbeStatus = "OK"
+	// StatusFetchError indicates the HTTP request failed.
+	StatusFetchError ProbeStatus = "FETCH_ERROR"
+	// StatusHTTPNon2xx indicates the server returned a non-2xx status code.
+	StatusHTTPNon2xx ProbeStatus = "HTTP_NON_2XX"
+	// StatusRegexNoMatch indicates the regex rule found no match in the response body.
+	StatusRegexNoMatch ProbeStatus = "REGEX_NO_MATCH"
+	// StatusJSONPathError indicates the JSONPath rule could not be evaluated.
+	StatusJSONPathError ProbeStatus = "JSON_PATH_ERROR"
+	// StatusValueParseError indicates the extracted text could not be parsed as a valid rate.
+	StatusValueParseError ProbeStatus = "VALUE_PARSE_ERROR"
+	// StatusUnsupportedMethod indicates the rule uses an extraction method not supported by the auditor.
+	StatusUnsupportedMethod ProbeStatus = "UNSUPPORTED_METHOD"
+	// StatusUnsupportedHeaders indicates the source requires request headers the auditor does not set.
 	StatusUnsupportedHeaders ProbeStatus = "UNSUPPORTED_HEADERS"
 )
 
@@ -139,7 +149,7 @@ func (a *Auditor) probeSource(src SeededSource, fetch *fetchEntry) ProbeResult {
 		return pr
 	}
 
-	if value <= 0 || value > math.MaxInt32 {
+	if value <= rateextractor.MinPlausibleRateValue || value > rateextractor.MaxPlausibleRateValue {
 		pr.Status = StatusValueParseError
 		pr.Detail = truncate(valueStr, 80)
 		return pr

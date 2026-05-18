@@ -1,3 +1,6 @@
+// Package ui produces HTML strings that the WASM main goroutine writes into the
+// DOM via innerHTML. Renderers are pure functions: state in, HTML string out —
+// no syscall/js calls, so they are testable under the host toolchain.
 package ui
 
 import (

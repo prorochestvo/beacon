@@ -14,16 +14,20 @@ import (
 	"github.com/twinj/uuid"
 )
 
+// NewRateUserSubscriptionRepository returns a repository for the rate_user_subscriptions table.
 func NewRateUserSubscriptionRepository(db db) (*RateUserSubscriptionRepository, error) {
 	return &RateUserSubscriptionRepository{db: db}, nil
 }
 
+// RateUserSubscriptionRepository persists and retrieves domain.RateUserSubscription records.
 type RateUserSubscriptionRepository struct {
 	db db
 }
 
+// Name returns the name of the underlying database table.
 func (r *RateUserSubscriptionRepository) Name() string { return rateUserSubscriptionTableName }
 
+// CheckUP verifies that the repository can read from the rate_user_subscriptions table.
 func (r *RateUserSubscriptionRepository) CheckUP(ctx context.Context) error {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
@@ -52,6 +56,8 @@ func (r *RateUserSubscriptionRepository) CheckUP(ctx context.Context) error {
 	return nil
 }
 
+// ObtainRateUserSubscriptionsByUserID returns all subscriptions for the given user type and ID.
+// Always returns a non-nil slice on success.
 func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.RateUserSubscription, error) {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
@@ -73,6 +79,8 @@ func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsByUserID(ctx
 	return rows, nil
 }
 
+// ObtainRateUserSubscriptionsBySource returns all subscriptions for the given source name.
+// Always returns a non-nil slice on success.
 func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsBySource(ctx context.Context, sourceName string) ([]domain.RateUserSubscription, error) {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
@@ -95,6 +103,8 @@ func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsBySource(ctx
 	return rows, nil
 }
 
+// RetainRateUserSubscription inserts or updates the given subscription record.
+// UpdatedAt is always set to the current UTC time; CreatedAt is set only on insert.
 func (r *RateUserSubscriptionRepository) RetainRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error {
 	if record == nil {
 		err := errors.New("user subscription is nil")
@@ -315,6 +325,7 @@ GROUP BY s.source_name, s.user_type;`
 	return result, nil
 }
 
+// RemoveRateUserSubscription deletes the given subscription record by ID.
 func (r *RateUserSubscriptionRepository) RemoveRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error {
 	if record == nil {
 		err := errors.New("user subscription is nil")

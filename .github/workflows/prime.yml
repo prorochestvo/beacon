@@ -166,6 +166,16 @@ jobs:
           # run migrator with the service env file; failure aborts the deploy
           $SSH "set -a && . $REMOTE_ENV_FILE && set +a && $REMOTE_DIR/$BINARY_MIGRATOR_NAME"
 
+      - name: Ensure Chromium on deploy host
+        run: |
+          SSH="ssh -p $SSH_HOSTPORT -i /tmp/deploy_key $SSH_USERNAME@$SSH_HOSTNAME"
+
+          # Install Chromium on the deploy host for sources with fetcher_kind='chromedp'.
+          # This step runs on the SSH target, not the GitHub runner — the runner does not
+          # need Chromium because builds and tests do not invoke the browser.
+          # apt-get install is idempotent: no-op if already installed.
+          $SSH "which chromium-browser > /dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y chromium-browser)"
+
       - name: Swap and restart
         run: |
           SERVICE_NAME="prime_monitor"

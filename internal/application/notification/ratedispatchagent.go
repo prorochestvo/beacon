@@ -1,3 +1,6 @@
+// Package notification implements the two-agent notification pipeline:
+// RateCheckAgent evaluates subscription conditions and queues events, and
+// RateDispatchAgent delivers queued events via the configured transport.
 package notification
 
 import (
@@ -13,6 +16,7 @@ import (
 	integration "github.com/seilbekskindirov/monitor/internal/infrastructure/telegrambot"
 )
 
+// NewRateDispatchAgent constructs a RateDispatchAgent wired to the given transport and event repository.
 func NewRateDispatchAgent(
 	cltTelegram telegramClient,
 	rRateUserEvent rateUserEventRepository,
@@ -27,12 +31,17 @@ func NewRateDispatchAgent(
 	return a, nil
 }
 
+// RateDispatchAgent delivers pending and failed notification events and cancels
+// events that exceed the 24-hour TTL. It is designed to run to completion on
+// each invocation (one-shot).
 type RateDispatchAgent struct {
 	telegramClient          telegramClient
 	rateUserEventRepository rateUserEventRepository
 	ttl                     time.Duration
 }
 
+// Run fetches all unprocessed events and attempts delivery, updating each
+// event's status. Returns a joined error containing all delivery failures.
 func (a *RateDispatchAgent) Run(ctx context.Context) error {
 	events, err := a.rateUserEventRepository.ObtainUnprocessedRateUserEvents(ctx)
 	if err != nil {

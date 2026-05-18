@@ -1,3 +1,7 @@
+// Package application contains pure-Go page controllers for the WASM frontend.
+// Each controller owns a typed State struct and exposes load/action methods that
+// call the apiclient. The controllers have no syscall/js dependencies and are
+// therefore testable under the host toolchain.
 package application
 
 import (

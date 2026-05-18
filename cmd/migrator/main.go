@@ -1,3 +1,7 @@
+// Command migrator applies pending SQL migration files from the embedded
+// migrations.MigrationsFS to the SQLite database pointed to by SQLITEDB_DSN.
+// It is idempotent: already-applied migration filenames are tracked in
+// __schema_migrations and skipped on subsequent runs.
 package main
 
 import (
@@ -20,10 +24,15 @@ import (
 )
 
 var (
+	// BuildVersion is the application version string, injected at link time via -ldflags.
 	BuildVersion = "dev"
-	BuildTime    = "unknown"
-	BuildHash    = "undefined"
-	LogsDir      = path.Join(os.TempDir(), "logs")
+	// BuildTime is the build timestamp, injected at link time via -ldflags.
+	BuildTime = "unknown"
+	// BuildHash is the VCS commit hash, injected at link time via -ldflags.
+	BuildHash = "undefined"
+	// LogsDir is the directory where log files are written.
+	LogsDir = path.Join(os.TempDir(), "logs")
+	// LogVerbosity controls the minimum log level emitted by the logger.
 	LogVerbosity = internal.LogLevelWarning
 )
 

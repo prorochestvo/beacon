@@ -16,6 +16,14 @@ bot. A minimal HTTP dashboard (HTML + WASM) ships embedded in the `web` binary.
   `daily` (HH:MM:SS), and `cron` (5-field). Evaluated by `RateCheckAgent`.
 - **Telegram bot UI** — fully stateless inline-keyboard flows for adding/listing/
   deleting subscriptions; all flow state travels in `callback_data`.
+
+### Bot commands
+
+| Command | Available to | Description |
+|---------|-------------|-------------|
+| `/start` | All users | Opens the subscription management menu |
+| `/subscriptions` | All users | Same as `/start` |
+| `/regen <source> [--force-fallback] [--max-fallback=N]` | Admin only | Trigger rule (re-)generation for a named source; reply is edited in place when finished |
 - **REST + dashboard** — `cmd/web` exposes a `/api/...` v1 surface and serves an
   embedded vanilla-JS dashboard (with a WASM alternative built from `cmd/wasm`).
 - **Pure Go SQLite** — `modernc.org/sqlite`, so the project builds with
@@ -48,6 +56,15 @@ plans/           # planning workflow (see CLAUDE.md)
 - Go **1.26+**
 - `make`
 - A Telegram bot token + admin chat id (for `notifier` and `web`)
+
+**Deploy-host runtime dependency (not required for the build):** Chromium or Google
+Chrome must be installed on the host for any rate source with `fetcher_kind='chromedp'`
+(JS-rendered pages). The `cmd/rulegen` binary looks for `chromium`, `chromium-browser`,
+`google-chrome`, or `chrome` on PATH, or uses `CHROMIUM_PATH` if set. Install once:
+```bash
+sudo apt-get install -y chromium-browser   # Debian/Ubuntu (Oracle Cloud ARM Free Tier)
+brew install --cask chromium               # macOS dev
+```
 
 No CGO, no system libraries. The build embeds the dashboard, the WASM bundle, and
 the migration scaffold.
@@ -163,6 +180,32 @@ extraction `Rules`. An example shape (see `configs/sources.example.json`):
 
 Supported extraction methods: `regex`, `json` (JSONPath), `parse_float`, and
 `store_as_rate`.
+
+## Rule generation
+
+`cmd/rulegen` is an operator-invoked binary that generates an extraction rule
+for a named source using an LLM. It fetches the source URL, asks the LLM for a
+rule, validates the rule against the live body, and persists the result to the
+database. Run it once after inserting a new source row (via a seed migration).
+
+```bash
+# Build first
+make build
+
+# Generate a rule for the "halyk_usd" source
+SQLITEDB_DSN=sqlite://_:_@_:_/./build/monitor.db \
+AI_PRIMARY_DSN=groq://_:<base64url(KEY)>@api.groq.com/openai/v1?model=llama-3.1-8b-instant \
+./build/rulegen halyk_usd
+
+# Skip primary and go straight to fallback (useful when source is hard)
+./build/rulegen halyk_usd --force-fallback
+
+# See all flags
+make rulegen-help
+```
+
+For full usage, exit codes, cost notes, and troubleshooting guidance see
+`cmd/rulegen/README.md`.
 
 ## Deployment
 

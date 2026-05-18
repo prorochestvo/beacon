@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/seilbekskindirov/monitor/internal"
+	"github.com/seilbekskindirov/monitor/internal/application/rulegen"
 	"github.com/seilbekskindirov/monitor/internal/domain"
 	"github.com/seilbekskindirov/monitor/internal/repository"
 	"github.com/seilbekskindirov/monitor/internal/tools/tgwebapp"
@@ -23,13 +24,19 @@ import (
 // NewHandler constructs a Handler wired to the rate service and, optionally,
 // to the Mini App auth dependencies. botToken, meSubRepo, meSourceRepo, and
 // meRateValueRepo are required for ListMeSubscriptions; the remaining handlers
-// only need srvRate.
+// only need srvRate. defaultGenerator, generatorFactory, adminChatID, and
+// lockMgr are required for GenerateRules; pass nil/nil/0/nil in tests that do
+// not exercise it.
 func NewHandler(
 	srvRate rateService,
 	botToken string,
 	meSubRepo meSubscriptionRepository,
 	meSourceRepo meSourceRepository,
 	meRateValueRepo meRateValueRepository,
+	defaultGenerator rulegenGenerator,
+	generatorFactory rulegenGeneratorFactory,
+	adminChatID int64,
+	lockMgr *rulegen.LockManager,
 ) (*Handler, error) {
 	h := &Handler{
 		rateService:      srvRate,
@@ -39,6 +46,10 @@ func NewHandler(
 		meRateValueRepo:  meRateValueRepo,
 		validateInitData: tgwebapp.ValidateInitData,
 		nowFn:            time.Now,
+		defaultGenerator: defaultGenerator,
+		generatorFactory: generatorFactory,
+		adminChatID:      adminChatID,
+		lockMgr:          lockMgr,
 	}
 	return h, nil
 }
@@ -56,6 +67,12 @@ type Handler struct {
 	validateInitData func(initData, botToken string, maxAge time.Duration, now time.Time) (int64, error)
 	// nowFn returns the current time. Injected for deterministic tests.
 	nowFn func() time.Time
+
+	// rulegen dependencies — required for GenerateRules.
+	defaultGenerator rulegenGenerator
+	generatorFactory rulegenGeneratorFactory
+	adminChatID      int64
+	lockMgr          *rulegen.LockManager
 }
 
 // internalError logs the underlying error with a trace and returns a generic 500 to the client.

@@ -1,3 +1,6 @@
+// Package internal provides shared cross-cutting utilities: structured errors
+// with stack traces, user-facing PublicError, HTTP-code errors, and the logger
+// factory. It is imported by every application layer; keep it dependency-light.
 package internal
 
 import (
@@ -15,7 +18,7 @@ import (
 )
 
 // NewTraceError creates a new TraceError with the current caller information.
-// it captures the file name, line number, and function name where the error occurred.
+// It captures the file name, line number, and function name where the error occurred.
 func NewTraceError() *TraceError {
 	pc, file, line, ok := runtime.Caller(1)
 	var traceLine string
@@ -30,26 +33,26 @@ func NewTraceError() *TraceError {
 }
 
 // TraceError represents an error with a stack trace line.
-// it stores the file, line number, and function name where the error was created.
+// It stores the file, line number, and function name where the error was created.
 type TraceError struct {
 	line string
 }
 
-// line returns the trace line string containing file, line number, and function name.
+// Line returns the trace line string containing file, line number, and function name.
 func (e *TraceError) Line() string { return e.line }
 
-// error implements the error interface.
+// Error implements the error interface.
 func (e *TraceError) Error() string { return e.line }
 
 // NewPublicError creates a new PublicError with the given details.
-// multiple detail strings are joined with spaces to form the error message.
+// Multiple detail strings are joined with spaces to form the error message.
 func NewPublicError(details ...string) *PublicError {
 	d := strings.Join(details, " ")
 	return &PublicError{details: d}
 }
 
 // PublicError represents an error with user-facing details.
-// it is intended for errors that can be safely shown to end users.
+// It is intended for errors that can be safely shown to end users.
 type PublicError struct {
 	details string
 }
@@ -64,7 +67,7 @@ func (e *PublicError) Error() string { return e.details }
 func NewHttpCodeError(code int) *HttpCodeError { return &HttpCodeError{code: code} }
 
 // HttpCodeError represents an error with an associated HTTP status code.
-// it is useful for mapping errors to HTTP responses.
+// It is useful for mapping errors to HTTP responses.
 type HttpCodeError struct {
 	code int
 }
@@ -76,14 +79,14 @@ func (e *HttpCodeError) StatusCode() int { return e.code }
 func (e *HttpCodeError) Error() string { return http.StatusText(e.code) }
 
 // NewStackTraceError creates a new StackTraceError with the full stack trace.
-// it captures the complete call stack and system information at the time of creation.
+// It captures the complete call stack and system information at the time of creation.
 func NewStackTraceError() *StackTraceError {
 	traceLines := strings.Split(strings.TrimSpace(string(debug.Stack())), "\n")
 	return &StackTraceError{info: debugOSDetails, lines: traceLines}
 }
 
 // StackTraceError represents an error with a full stack trace and system information.
-// it includes both the call stack and detailed system/runtime information.
+// It includes both the call stack and detailed system/runtime information.
 type StackTraceError struct {
 	info  string
 	lines []string

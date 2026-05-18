@@ -1,3 +1,7 @@
+// Package service implements the application-layer business logic consumed by the
+// gateway layer (HTTP handlers and Telegram bot). All methods return plain errors;
+// the gateway maps them to the generic fallback message per the project's
+// error-handling contract in CLAUDE.md.
 package service
 
 import (
@@ -10,6 +14,7 @@ import (
 	"github.com/seilbekskindirov/monitor/internal/repository"
 )
 
+// NewRateRestAPI returns a RateRestApi wired to the given repository implementations.
 func NewRateRestAPI(
 	rExecutionHistory executionHistoryRepository,
 	rRateSource rateSourceRepository,
@@ -38,11 +43,14 @@ type RateRestApi struct {
 	rateUserEventRepository        rateUserEventRepository
 }
 
+// HealthCheck verifies basic service availability.
 func (h *RateRestApi) HealthCheck(_ context.Context) error {
 	// TODO: not implemented yet
 	return nil
 }
 
+// ObtainLastNExecutionHistoryBySourceName returns the most recent limit execution history records
+// for the given source name, ordered newest-first.
 func (h *RateRestApi) ObtainLastNExecutionHistoryBySourceName(ctx context.Context, name string, limit int64) ([]domain.ExecutionHistory, error) {
 	items, err := h.executionHistoryRepository.ObtainLastNExecutionHistoryBySourceName(ctx, name, limit, false)
 	if err != nil {
@@ -52,6 +60,8 @@ func (h *RateRestApi) ObtainLastNExecutionHistoryBySourceName(ctx context.Contex
 	return items, nil
 }
 
+// ObtainLastSuccessNExecutionHistoryBySourceName returns the most recent limit successful
+// execution history records for the given source name, ordered newest-first.
 func (h *RateRestApi) ObtainLastSuccessNExecutionHistoryBySourceName(ctx context.Context, name string, limit int64) ([]domain.ExecutionHistory, error) {
 	items, err := h.executionHistoryRepository.ObtainLastNExecutionHistoryBySourceName(ctx, name, limit, true)
 	if err != nil {
@@ -61,6 +71,8 @@ func (h *RateRestApi) ObtainLastSuccessNExecutionHistoryBySourceName(ctx context
 	return items, nil
 }
 
+// UpdateRateSourceActive enables or disables the rate source identified by name.
+// Returns a plain error if the source is not found.
 func (h *RateRestApi) UpdateRateSourceActive(ctx context.Context, name string, active bool) error {
 	src, err := h.rateSourceRepository.ObtainRateSourceByName(ctx, name)
 	if err != nil || src == nil {
@@ -82,6 +94,7 @@ func (h *RateRestApi) UpdateRateSourceActive(ctx context.Context, name string, a
 	return nil
 }
 
+// ObtainAllRateSources returns all configured rate sources.
 func (h *RateRestApi) ObtainAllRateSources(ctx context.Context) ([]domain.RateSource, error) {
 	items, err := h.rateSourceRepository.ObtainAllRateSources(ctx)
 	if err != nil {
@@ -91,6 +104,7 @@ func (h *RateRestApi) ObtainAllRateSources(ctx context.Context) ([]domain.RateSo
 	return items, nil
 }
 
+// ObtainLastNRateValuesBySourceName returns the most recent limit rate values for the given source.
 func (h *RateRestApi) ObtainLastNRateValuesBySourceName(ctx context.Context, name string, limit int64) ([]domain.RateValue, error) {
 	items, err := h.rateValueRepository.ObtainLastNRateValuesBySourceName(
 		ctx,
@@ -104,6 +118,7 @@ func (h *RateRestApi) ObtainLastNRateValuesBySourceName(ctx context.Context, nam
 	return items, nil
 }
 
+// ObtainListOfLastRateUserEvent returns the most recent limit notification events across all statuses.
 func (h *RateRestApi) ObtainListOfLastRateUserEvent(ctx context.Context, limit int64) ([]domain.RateUserEvent, error) {
 	items, err := h.rateUserEventRepository.ObtainLastNRateUserEvents(
 		ctx,
@@ -121,6 +136,7 @@ func (h *RateRestApi) ObtainListOfLastRateUserEvent(ctx context.Context, limit i
 	return items, nil
 }
 
+// ObtainFailedListOfRateUserEvent returns paginated failed notification events.
 func (h *RateRestApi) ObtainFailedListOfRateUserEvent(ctx context.Context, offset, limit int64) ([]domain.RateUserEvent, error) {
 	items, err := h.rateUserEventRepository.ObtainLastNRateUserEvents(
 		ctx,

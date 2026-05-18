@@ -8,15 +8,20 @@ import (
 	"github.com/patrickmn/go-cache"
 )
 
+// NewCache creates a Cache with the given default expiration. The internal
+// cleanup interval is set to one quarter of defaultExpiration.
 func NewCache(defaultExpiration time.Duration) *Cache {
 	return &Cache{c: cache.New(defaultExpiration, defaultExpiration>>2)}
 }
 
+// Cache is a goroutine-safe in-memory key-value store with TTL expiration.
+// All operations are serialised with a mutex.
 type Cache struct {
 	c *cache.Cache
 	m sync.Mutex
 }
 
+// Fetch returns the value stored under key, or an error if the key is absent or expired.
 func (s *Cache) Fetch(key string) (interface{}, error) {
 	s.m.Lock()
 	defer s.m.Unlock()
@@ -32,6 +37,7 @@ func (s *Cache) Fetch(key string) (interface{}, error) {
 	return val, nil
 }
 
+// Pull returns and removes the value stored under key, or an error if absent.
 func (s *Cache) Pull(key string) (interface{}, error) {
 	s.m.Lock()
 	defer s.m.Unlock()
@@ -49,6 +55,8 @@ func (s *Cache) Pull(key string) (interface{}, error) {
 	return val, nil
 }
 
+// Push stores val under key with the default expiration. Returns an error if the
+// key already exists (uses cache.Add semantics — no overwrite).
 func (s *Cache) Push(key string, val interface{}) error {
 	s.m.Lock()
 	defer s.m.Unlock()

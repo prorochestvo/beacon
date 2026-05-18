@@ -1,9 +1,11 @@
+// Package httpV1 wires the v1 HTTP handlers onto the provided ServeMux.
 package httpV1
 
 import (
 	"context"
 	"net/http"
 
+	"github.com/seilbekskindirov/monitor/internal/application/rulegen"
 	"github.com/seilbekskindirov/monitor/internal/application/service"
 	"github.com/seilbekskindirov/monitor/internal/domain"
 	v1 "github.com/seilbekskindirov/monitor/internal/gateway/httpV1/handlers"
@@ -26,6 +28,7 @@ type meRateValueRepo interface {
 	ObtainLastNRateValuesBySourceName(ctx context.Context, name string, limit int64) ([]domain.RateValue, error)
 }
 
+// NewRouter registers all v1 HTTP routes on mux and returns it.
 func NewRouter(
 	mux *http.ServeMux,
 	srvRateRestApi *service.RateRestApi,
@@ -33,8 +36,13 @@ func NewRouter(
 	subRepo meSubscriptionRepo,
 	sourceRepo meSourceRepo,
 	rateValueRepo meRateValueRepo,
+	defaultGenerator v1.RulegenGenerator,
+	generatorFactory v1.RulegenGeneratorFactory,
+	adminChatID int64,
+	lockMgr *rulegen.LockManager,
 ) (*http.ServeMux, error) {
-	h, err := v1.NewHandler(srvRateRestApi, botToken, subRepo, sourceRepo, rateValueRepo)
+	h, err := v1.NewHandler(srvRateRestApi, botToken, subRepo, sourceRepo, rateValueRepo,
+		defaultGenerator, generatorFactory, adminChatID, lockMgr)
 	if err != nil {
 		return nil, err
 	}
@@ -65,6 +73,10 @@ func NewRouter(
 	// ServeMux longest-prefix matching selects the correct handler.
 	mux.HandleFunc("GET "+routes.NotificationsFailed, h.ListFailedNotifications)
 	mux.HandleFunc("GET "+routes.Notifications, h.ListNotifications)
+
+	// SourceRulesGenerate is more specific than any existing GET on /api/sources/{name}/...
+	// so Go's ServeMux longest-prefix rule routes it correctly without ordering constraints.
+	mux.HandleFunc("POST "+routes.SourceRulesGenerate, h.GenerateRules)
 
 	return mux, nil
 }

@@ -106,6 +106,36 @@ func TestSourceRepository_RetainSource(t *testing.T) {
 		require.Equal(t, "https://example.com/update/v2", url)
 		require.Equal(t, "1h", interval)
 	})
+	t.Run("persists rule_metadata round-trip", func(t *testing.T) {
+		t.Parallel()
+
+		src := &domain.RateSource{
+			Name:          "src-rule-metadata",
+			Title:         "Rule Metadata Source",
+			URL:           "https://example.com/rule-metadata",
+			Interval:      "5m",
+			BaseCurrency:  "USD",
+			QuoteCurrency: "KZT",
+			Kind:          domain.RateSourceKindASK,
+			Active:        true,
+			Rules:         []domain.RateSourceRule{},
+			RuleMetadata: domain.RateSourceRuleMetadata{
+				Provider:     "groq",
+				Model:        "llama-3.1-8b-instant",
+				AttemptsUsed: 2,
+				GeneratedAt:  "2026-05-14T10:00:00Z",
+			},
+		}
+		require.NoError(t, r.RetainRateSource(t.Context(), src))
+
+		result, err := r.ObtainRateSourceByName(t.Context(), src.Name)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, "groq", result.RuleMetadata.Provider)
+		require.Equal(t, "llama-3.1-8b-instant", result.RuleMetadata.Model)
+		require.Equal(t, 2, result.RuleMetadata.AttemptsUsed)
+		require.Equal(t, "2026-05-14T10:00:00Z", result.RuleMetadata.GeneratedAt)
+	})
 	t.Run("sets active to true", func(t *testing.T) {
 		t.Parallel()
 
@@ -133,6 +163,99 @@ func TestSourceRepository_RetainSource(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.True(t, result.Active)
+	})
+
+	t.Run("persists fetcher_kind round-trip", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("plain value is stored and retrieved", func(t *testing.T) {
+			t.Parallel()
+
+			src := &domain.RateSource{
+				Name:          "fk-plain-" + t.Name(),
+				Title:         "FetcherKind Plain",
+				URL:           "https://example.com/fk-plain",
+				Interval:      "5m",
+				BaseCurrency:  "USD",
+				QuoteCurrency: "KZT",
+				Kind:          domain.RateSourceKindASK,
+				Active:        true,
+				FetcherKind:   "plain",
+				Rules:         []domain.RateSourceRule{},
+			}
+			require.NoError(t, r.RetainRateSource(t.Context(), src))
+
+			result, err := r.ObtainRateSourceByName(t.Context(), src.Name)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, "plain", result.FetcherKind)
+		})
+
+		t.Run("chromedp value is stored and retrieved", func(t *testing.T) {
+			t.Parallel()
+
+			src := &domain.RateSource{
+				Name:          "fk-chromedp-" + t.Name(),
+				Title:         "FetcherKind Chromedp",
+				URL:           "https://example.com/fk-chromedp",
+				Interval:      "5m",
+				BaseCurrency:  "USD",
+				QuoteCurrency: "KZT",
+				Kind:          domain.RateSourceKindBID,
+				Active:        true,
+				FetcherKind:   "chromedp",
+				Rules:         []domain.RateSourceRule{},
+			}
+			require.NoError(t, r.RetainRateSource(t.Context(), src))
+
+			result, err := r.ObtainRateSourceByName(t.Context(), src.Name)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, "chromedp", result.FetcherKind)
+		})
+
+		t.Run("empty string is normalised to plain", func(t *testing.T) {
+			t.Parallel()
+
+			src := &domain.RateSource{
+				Name:          "fk-empty-" + t.Name(),
+				Title:         "FetcherKind Empty",
+				URL:           "https://example.com/fk-empty",
+				Interval:      "5m",
+				BaseCurrency:  "USD",
+				QuoteCurrency: "KZT",
+				Kind:          domain.RateSourceKindASK,
+				Active:        true,
+				FetcherKind:   "", // legacy: should be treated as plain
+				Rules:         []domain.RateSourceRule{},
+			}
+			require.NoError(t, r.RetainRateSource(t.Context(), src))
+
+			result, err := r.ObtainRateSourceByName(t.Context(), src.Name)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, "plain", result.FetcherKind)
+		})
+
+		t.Run("unsupported value returns error", func(t *testing.T) {
+			t.Parallel()
+
+			src := &domain.RateSource{
+				Name:          "fk-bad-playwright-" + t.Name(),
+				Title:         "FetcherKind Bad Playwright",
+				URL:           "https://example.com/fk-bad",
+				Interval:      "5m",
+				BaseCurrency:  "USD",
+				QuoteCurrency: "KZT",
+				Kind:          domain.RateSourceKindASK,
+				Active:        true,
+				FetcherKind:   "playwright", // genuinely unknown; not in the allowed set
+				Rules:         []domain.RateSourceRule{},
+			}
+			err := r.RetainRateSource(t.Context(), src)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "unsupported fetcher_kind")
+		})
 	})
 }
 

@@ -1,3 +1,5 @@
+// Package scheduler wraps robfig/cron with second-level precision and
+// provides a managed job registry for recurring background tasks.
 package scheduler
 
 import (

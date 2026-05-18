@@ -51,4 +51,10 @@ const (
 	// MeSubscriptions returns the calling user's own subscriptions enriched with the
 	// latest rate value per source. Authentication is via Telegram WebApp initData HMAC.
 	MeSubscriptions = "/api/me/subscriptions"
+
+	// SourceRulesGenerate triggers the rule-generator audit loop for a named source.
+	// Admin-only: authenticated via Telegram WebApp initData with chat-id check.
+	// Synchronous; up to 120s wall-clock. More specific than any existing GET on
+	// /api/sources/{name}/... so Go's ServeMux longest-prefix rule routes it correctly.
+	SourceRulesGenerate = "/api/sources/{name}/rules/generate"
 )

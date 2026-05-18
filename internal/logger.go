@@ -14,11 +14,17 @@ import (
 )
 
 const (
-	LogLevelDebug    loginjector.LogLevel = 1
-	LogLevelInfo     loginjector.LogLevel = 2
-	LogLevelWarning  loginjector.LogLevel = 3
-	LogLevelError    loginjector.LogLevel = 4
-	LogLevelSevere   loginjector.LogLevel = 5
+	// LogLevelDebug is the most verbose log level, used for detailed diagnostic output.
+	LogLevelDebug loginjector.LogLevel = 1
+	// LogLevelInfo records normal operational messages.
+	LogLevelInfo loginjector.LogLevel = 2
+	// LogLevelWarning records recoverable problems or unexpected conditions.
+	LogLevelWarning loginjector.LogLevel = 3
+	// LogLevelError records failures that require attention but do not crash the service.
+	LogLevelError loginjector.LogLevel = 4
+	// LogLevelSevere records critical failures that may require immediate action.
+	LogLevelSevere loginjector.LogLevel = 5
+	// LogLevelCritical records the most severe failures, typically leading to shutdown.
 	LogLevelCritical loginjector.LogLevel = 6
 
 	defaultFileSize = 5 * 1024 * 1024 // 5MB

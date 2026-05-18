@@ -41,7 +41,7 @@ func TestListSources(t *testing.T) {
 			}},
 		}
 
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -60,7 +60,7 @@ func TestListSources(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{sources: nil}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -77,7 +77,7 @@ func TestListSources(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{err: errors.New("db error")}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -99,7 +99,7 @@ func TestListRates(t *testing.T) {
 				{ID: "r2", Price: 471.0, BaseCurrency: "USD", QuoteCurrency: "KZT", Timestamp: time.Now().UTC()},
 			},
 		}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/rates", nil)
@@ -119,7 +119,7 @@ func TestListRates(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{rates: nil}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/rates", nil)
@@ -138,7 +138,7 @@ func TestListRates(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -150,7 +150,7 @@ func TestListRates(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{err: errors.New("db error")}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/rates", nil)
@@ -175,7 +175,7 @@ func TestListHistory(t *testing.T) {
 				{ID: "h3", Success: true, Timestamp: time.Now().UTC()},
 			},
 		}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/history", nil)
@@ -195,7 +195,7 @@ func TestListHistory(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{err: errors.New("db error")}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/history", nil)
@@ -220,7 +220,7 @@ func TestListNotifications(t *testing.T) {
 				{ID: "e2", UserType: domain.UserTypeTelegram, UserID: "222", Status: domain.RateUserEventStatusFailed, CreatedAt: now},
 			},
 		}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -241,7 +241,7 @@ func TestListNotifications(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{err: errors.New("db error")}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -263,7 +263,7 @@ func TestListFailedNotifications(t *testing.T) {
 				{ID: "e1", UserType: domain.UserTypeTelegram, UserID: "111", Status: domain.RateUserEventStatusFailed, CreatedAt: now},
 			},
 		}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -281,7 +281,7 @@ func TestListFailedNotifications(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{events: []domain.RateUserEvent{}}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -294,7 +294,7 @@ func TestListFailedNotifications(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{err: errors.New("db error")}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -316,7 +316,7 @@ func TestListPendingEvents(t *testing.T) {
 				{ID: "e1", UserType: domain.UserTypeTelegram, Status: domain.RateUserEventStatusPending, CreatedAt: now},
 			},
 		}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -334,7 +334,7 @@ func TestListPendingEvents(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{events: []domain.RateUserEvent{}}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -347,7 +347,7 @@ func TestListPendingEvents(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{err: errors.New("db error")}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -369,7 +369,7 @@ func TestGetRatesChart(t *testing.T) {
 				{Label: "2026-04-02", Price: 451.00},
 			},
 		}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/rates/chart?period=week", nil)
@@ -389,7 +389,7 @@ func TestGetRatesChart(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -401,7 +401,7 @@ func TestGetRatesChart(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{err: errors.New("db error")}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/rates/chart", nil)
@@ -425,7 +425,7 @@ func TestListSourceFailedEvents(t *testing.T) {
 				{ID: "e1", UserType: domain.UserTypeTelegram, Status: domain.RateUserEventStatusFailed, LastError: "timeout", CreatedAt: now},
 			},
 		}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/events/failed?page=1", nil)
@@ -445,7 +445,7 @@ func TestListSourceFailedEvents(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -457,7 +457,7 @@ func TestListSourceFailedEvents(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{err: errors.New("db error")}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/events/failed", nil)
@@ -486,7 +486,7 @@ func TestListSourceSubscriptions(t *testing.T) {
 				},
 			},
 		}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/subscriptions", nil)
@@ -507,7 +507,7 @@ func TestListSourceSubscriptions(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -519,7 +519,7 @@ func TestListSourceSubscriptions(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{err: errors.New("db error")}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/subscriptions", nil)
@@ -537,7 +537,7 @@ func TestHandler_ToggleSourceActive(t *testing.T) {
 	t.Run("204 on success", func(t *testing.T) {
 		t.Parallel()
 
-		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodPatch, "/api/sources/src1/active", strings.NewReader(`{"active":true}`))
@@ -550,7 +550,7 @@ func TestHandler_ToggleSourceActive(t *testing.T) {
 	t.Run("404 when source not found", func(t *testing.T) {
 		t.Parallel()
 
-		h, err := NewHandler(&mockRateService{err: internal.ErrNotFound}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(&mockRateService{err: internal.ErrNotFound}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodPatch, "/api/sources/unknown/active", strings.NewReader(`{"active":true}`))
@@ -563,7 +563,7 @@ func TestHandler_ToggleSourceActive(t *testing.T) {
 	t.Run("400 on malformed request body", func(t *testing.T) {
 		t.Parallel()
 
-		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodPatch, "/api/sources/src1/active", strings.NewReader(`not-json`))
@@ -576,7 +576,7 @@ func TestHandler_ToggleSourceActive(t *testing.T) {
 	t.Run("400 when name path param missing", func(t *testing.T) {
 		t.Parallel()
 
-		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -587,7 +587,7 @@ func TestHandler_ToggleSourceActive(t *testing.T) {
 	t.Run("500 on unexpected service error", func(t *testing.T) {
 		t.Parallel()
 
-		h, err := NewHandler(&mockRateService{err: errors.New("db error")}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(&mockRateService{err: errors.New("db error")}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodPatch, "/api/sources/src1/active", strings.NewReader(`{"active":true}`))
@@ -606,7 +606,7 @@ func TestHandler_ListStats(t *testing.T) {
 		t.Parallel()
 
 		svc := &mockRateService{stats: repository.StatsResult{SourcesTotal: 5, SourcesActive: 3, ErrorsTotal: 7}}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -624,7 +624,7 @@ func TestHandler_ListStats(t *testing.T) {
 	t.Run("500 on error", func(t *testing.T) {
 		t.Parallel()
 
-		h, err := NewHandler(&mockRateService{err: errors.New("db error")}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(&mockRateService{err: errors.New("db error")}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -647,7 +647,7 @@ func TestHandler_ListSourceSubscriptionDetails(t *testing.T) {
 				{ID: "sub2", SourceName: "src1", ConditionType: "absolute", ConditionValue: "10", UserType: domain.UserTypeTelegram},
 			},
 		}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/subscriptions/list?page=1", nil)
@@ -668,7 +668,7 @@ func TestHandler_ListSourceSubscriptionDetails(t *testing.T) {
 	t.Run("400 when name path param missing", func(t *testing.T) {
 		t.Parallel()
 
-		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -679,7 +679,7 @@ func TestHandler_ListSourceSubscriptionDetails(t *testing.T) {
 	t.Run("500 on error", func(t *testing.T) {
 		t.Parallel()
 
-		h, err := NewHandler(&mockRateService{err: errors.New("db error")}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(&mockRateService{err: errors.New("db error")}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/subscriptions/list", nil)
@@ -703,7 +703,7 @@ func TestHandler_ListSourceDailyEvents(t *testing.T) {
 				{UserType: "telegram", Date: "2026-04-13", SuccessCount: 8, FailedCount: 0},
 			},
 		}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/events/daily?page=1", nil)
@@ -723,7 +723,7 @@ func TestHandler_ListSourceDailyEvents(t *testing.T) {
 	t.Run("400 when name path param missing", func(t *testing.T) {
 		t.Parallel()
 
-		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -734,7 +734,7 @@ func TestHandler_ListSourceDailyEvents(t *testing.T) {
 	t.Run("500 on error", func(t *testing.T) {
 		t.Parallel()
 
-		h, err := NewHandler(&mockRateService{err: errors.New("db error")}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(&mockRateService{err: errors.New("db error")}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/events/daily", nil)
@@ -759,7 +759,7 @@ func TestHandler_ListExecutionErrors(t *testing.T) {
 				{ID: "h2", SourceName: "src2", Success: false, Error: "parse error", Timestamp: now},
 			},
 		}
-		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(svc, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -779,7 +779,7 @@ func TestHandler_ListExecutionErrors(t *testing.T) {
 	t.Run("200 empty array on page with no records", func(t *testing.T) {
 		t.Parallel()
 
-		h, err := NewHandler(&mockRateService{historyItems: nil}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(&mockRateService{historyItems: nil}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -794,7 +794,7 @@ func TestHandler_ListExecutionErrors(t *testing.T) {
 	t.Run("500 on error", func(t *testing.T) {
 		t.Parallel()
 
-		h, err := NewHandler(&mockRateService{err: errors.New("db error")}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(&mockRateService{err: errors.New("db error")}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 
 		rr := httptest.NewRecorder()
@@ -952,7 +952,7 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 	t.Run("rejects missing initData with 401", func(t *testing.T) {
 		t.Parallel()
 
-		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 		h.validateInitData = alwaysRejectInitData
 
@@ -966,7 +966,7 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 	t.Run("rejects bad hash with 401", func(t *testing.T) {
 		t.Parallel()
 
-		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{})
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, nil, nil, 0, nil)
 		require.NoError(t, err)
 		h.validateInitData = alwaysRejectInitData
 
@@ -996,7 +996,7 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 			},
 		}
 
-		h, err := NewHandler(&mockRateService{}, "", subRepo, sourceRepo, rateRepo)
+		h, err := NewHandler(&mockRateService{}, "", subRepo, sourceRepo, rateRepo, nil, nil, 0, nil)
 		require.NoError(t, err)
 		h.validateInitData = alwaysValidateInitData(callerUserID)
 
@@ -1036,7 +1036,7 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 		}
 		rateRepo := &mockMeRateValueRepo{}
 
-		h, err := NewHandler(&mockRateService{}, "", subRepo, sourceRepo, rateRepo)
+		h, err := NewHandler(&mockRateService{}, "", subRepo, sourceRepo, rateRepo, nil, nil, 0, nil)
 		require.NoError(t, err)
 		h.validateInitData = alwaysValidateInitData(callerUserID)
 
@@ -1071,7 +1071,7 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 		sourceRepo := &mockMeSourceRepo{sources: sources}
 		rateRepo := &mockMeRateValueRepo{}
 
-		h, err := NewHandler(&mockRateService{}, "", subRepo, sourceRepo, rateRepo)
+		h, err := NewHandler(&mockRateService{}, "", subRepo, sourceRepo, rateRepo, nil, nil, 0, nil)
 		require.NoError(t, err)
 		h.validateInitData = alwaysValidateInitData(callerUserID)
 

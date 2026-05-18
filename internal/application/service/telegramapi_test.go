@@ -860,14 +860,15 @@ func BenchmarkHandleShow(b *testing.B) {
 }
 
 // newTelegramApi is a helper that creates a TelegramApi wired to the provided mocks.
+// Regen is disabled (nil generator, nil locks, 0 adminChatID, nil factory).
 func newTelegramApi(client *mockTelegramClient, subRepo subscriptionRepository, sourceRepo sourceRepository) *TelegramApi {
-	h, _ := NewTelegramApi(client, subRepo, sourceRepo, "")
+	h, _ := NewTelegramApi(client, subRepo, sourceRepo, "", nil, nil, 0, nil)
 	return h
 }
 
 // newTelegramApiWithWebApp creates a TelegramApi with a non-empty webAppURL for WebApp button tests.
 func newTelegramApiWithWebApp(client *mockTelegramClient, subRepo subscriptionRepository, sourceRepo sourceRepository, webAppURL string) *TelegramApi {
-	h, _ := NewTelegramApi(client, subRepo, sourceRepo, webAppURL)
+	h, _ := NewTelegramApi(client, subRepo, sourceRepo, webAppURL, nil, nil, 0, nil)
 	return h
 }
 
@@ -933,6 +934,21 @@ func (m *mockTelegramClient) EditHTMLMessageWithKeyboard(_ context.Context, _ in
 	m.editedMsgIDs = append(m.editedMsgIDs, messageID)
 	m.editedTexts = append(m.editedTexts, text)
 	m.keyboards = append(m.keyboards, kb)
+	return nil
+}
+
+func (m *mockTelegramClient) SendHTMLMessageReturning(_ context.Context, _ integration.TelegramChatID, text string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.htmlMessages = append(m.htmlMessages, text)
+	return 0, nil
+}
+
+func (m *mockTelegramClient) EditMessageText(_ context.Context, _ integration.TelegramChatID, messageID int, text string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.editedMsgIDs = append(m.editedMsgIDs, messageID)
+	m.editedTexts = append(m.editedTexts, text)
 	return nil
 }
 

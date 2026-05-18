@@ -13,16 +13,20 @@ import (
 	"github.com/twinj/uuid"
 )
 
+// NewRateValueRepository returns a repository for the rate_values table.
 func NewRateValueRepository(db db) (*RateValueRepository, error) {
 	return &RateValueRepository{db: db}, nil
 }
 
+// RateValueRepository persists and retrieves domain.RateValue records from the rate_values table.
 type RateValueRepository struct {
 	db db
 }
 
+// Name returns the name of the underlying database table.
 func (r *RateValueRepository) Name() string { return rateValueTableName }
 
+// CheckUP verifies that the repository can read from the rate_values table.
 func (r *RateValueRepository) CheckUP(ctx context.Context) error {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
@@ -51,6 +55,8 @@ func (r *RateValueRepository) CheckUP(ctx context.Context) error {
 	return nil
 }
 
+// ObtainAllRateValueBySourceName returns all rate value records for the given source name.
+// Always returns a non-nil slice on success.
 func (r *RateValueRepository) ObtainAllRateValueBySourceName(ctx context.Context, sourceName string) ([]domain.RateValue, error) {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
@@ -74,6 +80,8 @@ func (r *RateValueRepository) ObtainAllRateValueBySourceName(ctx context.Context
 	return rates, nil
 }
 
+// ObtainLastNRateValuesBySourceName returns the most recent limit rate values for the given source,
+// ordered newest-first. Always returns a non-nil slice on success.
 func (r *RateValueRepository) ObtainLastNRateValuesBySourceName(ctx context.Context, sourceName string, limit int64) ([]domain.RateValue, error) {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
@@ -99,6 +107,7 @@ func (r *RateValueRepository) ObtainLastNRateValuesBySourceName(ctx context.Cont
 	return rates, nil
 }
 
+// RetainRateValue inserts or updates the given rate value record; Timestamp is always set to now.
 func (r *RateValueRepository) RetainRateValue(ctx context.Context, record *domain.RateValue) error {
 	if record == nil {
 		err := errors.New("rate value is nil")
@@ -170,6 +179,7 @@ func (r *RateValueRepository) RetainRateValue(ctx context.Context, record *domai
 	return nil
 }
 
+// RemoveRateValue deletes the given rate value record by ID.
 func (r *RateValueRepository) RemoveRateValue(ctx context.Context, record *domain.RateValue) error {
 	if record == nil {
 		err := errors.New("rate value is nil")
@@ -204,9 +214,12 @@ func (r *RateValueRepository) RemoveRateValue(ctx context.Context, record *domai
 type ChartPeriod string
 
 const (
-	ChartPeriodWeek  ChartPeriod = "week"
+	// ChartPeriodWeek aggregates rate data over the past 7 days, grouped by day.
+	ChartPeriodWeek ChartPeriod = "week"
+	// ChartPeriodMonth aggregates rate data over the past 30 days, grouped by day.
 	ChartPeriodMonth ChartPeriod = "month"
-	ChartPeriodYear  ChartPeriod = "year"
+	// ChartPeriodYear aggregates rate data over the past 12 months, grouped by month.
+	ChartPeriodYear ChartPeriod = "year"
 )
 
 // ChartPoint is one aggregated data point returned by ObtainRateValueChartBySourceName.

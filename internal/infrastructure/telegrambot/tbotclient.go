@@ -1,3 +1,5 @@
+// Package telegrambot wraps the OvyFlash telegram-bot-api library and provides
+// a higher-level client used by the application's notification and bot-command layers.
 package telegrambot
 
 import (
@@ -17,8 +19,13 @@ import (
 
 // UpdateHandler is called for every incoming Telegram update in the event bus.
 type UpdateHandler func(ctx context.Context, update tgbotapi.Update)
+
+// TelegramChatID is a typed int64 that identifies a Telegram chat or user.
 type TelegramChatID int64
 
+// NewTBotClient parses the TELEGRAMBOT_DSN, validates the bot token and admin
+// chat ID, connects to the Telegram Bot API, and returns a ready-to-use client.
+// The DSN format is <adminChatID>:<botToken>@<host>.
 func NewTBotClient(tbotDSN dsninjector.DataSource, logger io.Writer) (*TelegramBotClient, error) {
 	rx := regexp.MustCompile(regexpTelegramToken)
 
@@ -52,6 +59,8 @@ func NewTBotClient(tbotDSN dsninjector.DataSource, logger io.Writer) (*TelegramB
 	return t, nil
 }
 
+// TelegramBotClient is a high-level Telegram bot client that wraps tgbotapi.BotAPI
+// with typed send helpers, an update listener, and admin-targeted convenience methods.
 type TelegramBotClient struct {
 	bot         *tgbotapi.BotAPI
 	adminChatID TelegramChatID
@@ -62,6 +71,12 @@ type TelegramBotClient struct {
 // Do not log the returned value — it is a secret.
 func (tbot *TelegramBotClient) BotToken() string { return tbot.bot.Token }
 
+// AdminChatID returns the Telegram chat id of the configured admin.
+// Used by HTTP handlers that need to gate admin-only operations.
+func (tbot *TelegramBotClient) AdminChatID() int64 { return int64(tbot.adminChatID) }
+
+// Ping verifies the Telegram Bot API is reachable by calling GetMe and checking
+// that the returned bot ID is non-zero.
 func (tbot *TelegramBotClient) Ping(_ context.Context) error {
 	u, err := tbot.bot.GetMe()
 	if err != nil {
@@ -73,6 +88,7 @@ func (tbot *TelegramBotClient) Ping(_ context.Context) error {
 	return nil
 }
 
+// Me returns the bot's own chat ID and username by calling GetMe.
 func (tbot *TelegramBotClient) Me(_ context.Context) (TelegramChatID, string, error) {
 	u, err := tbot.bot.GetMe()
 	if err != nil {
@@ -84,35 +100,56 @@ func (tbot *TelegramBotClient) Me(_ context.Context) (TelegramChatID, string, er
 	return TelegramChatID(u.ID), u.UserName, nil
 }
 
+// SendPlainTextMessageToAdmin sends a plain-text message to the configured admin chat.
 func (tbot *TelegramBotClient) SendPlainTextMessageToAdmin(ctx context.Context, text string) error {
 	return tbot.SendPlainTextMessage(ctx, tbot.adminChatID, text)
 }
 
+// SendPlainTextMessage sends a plain-text (no parse mode) message to chatID.
 func (tbot *TelegramBotClient) SendPlainTextMessage(ctx context.Context, chatID TelegramChatID, text string) error {
 	m := tgbotapi.NewMessage(int64(chatID), text)
 	return tbot.emit(ctx, &m)
 }
 
+// SendMarkdownMessageToAdmin sends a Markdown-formatted message to the configured admin chat.
 func (tbot *TelegramBotClient) SendMarkdownMessageToAdmin(ctx context.Context, text string) error {
 	return tbot.SendMarkdownMessage(ctx, tbot.adminChatID, text)
 }
 
+// SendMarkdownMessage sends a Markdown-formatted message to chatID.
 func (tbot *TelegramBotClient) SendMarkdownMessage(ctx context.Context, chatID TelegramChatID, text string) error {
 	m := tgbotapi.NewMessage(int64(chatID), text)
 	m.ParseMode = tgbotapi.ModeMarkdown
 	return tbot.emit(ctx, &m)
 }
 
+// SendHTMLMessageToAdmin sends an HTML-formatted message to the configured admin chat.
 func (tbot *TelegramBotClient) SendHTMLMessageToAdmin(ctx context.Context, text string) error {
 	return tbot.SendHTMLMessage(ctx, tbot.adminChatID, text)
 }
 
+// SendHTMLMessage sends an HTML-formatted message to chatID.
 func (tbot *TelegramBotClient) SendHTMLMessage(ctx context.Context, chatID TelegramChatID, text string) error {
 	m := tgbotapi.NewMessage(int64(chatID), text)
 	m.ParseMode = tgbotapi.ModeHTML
 	return tbot.emit(ctx, &m)
 }
 
+// SendHTMLMessageReturning sends an HTML-formatted message and returns the
+// message id assigned by Telegram. Use this when you need to edit the message
+// in place later (send-then-edit pattern). The existing SendHTMLMessage is kept
+// unchanged so callers that do not need the id are unaffected.
+func (tbot *TelegramBotClient) SendHTMLMessageReturning(_ context.Context, chatID TelegramChatID, text string) (int, error) {
+	m := tgbotapi.NewMessage(int64(chatID), text)
+	m.ParseMode = tgbotapi.ModeHTML
+	msg, err := tbot.bot.Send(m)
+	if err != nil {
+		return 0, errors.Join(err, internal.NewTraceError())
+	}
+	return msg.MessageID, nil
+}
+
+// SendDocumentToAdmin uploads content as a named file to the configured admin chat.
 func (tbot *TelegramBotClient) SendDocumentToAdmin(ctx context.Context, fileName string, fileContent []byte) error {
 	return tbot.SendDocument(ctx, tbot.adminChatID, fileName, fileContent)
 }
@@ -123,6 +160,7 @@ func (tbot *TelegramBotClient) SendDocument(ctx context.Context, chatID Telegram
 	return tbot.emit(ctx, d)
 }
 
+// emit dispatches a Chattable message via the bot API and discards the returned message.
 func (tbot *TelegramBotClient) emit(_ context.Context, m tgbotapi.Chattable) error {
 	if _, err := tbot.bot.Send(m); err != nil {
 		return errors.Join(err, internal.NewTraceError())

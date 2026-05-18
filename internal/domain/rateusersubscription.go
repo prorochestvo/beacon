@@ -42,6 +42,8 @@ func (rus *RateUserSubscription) Validate() error {
 	}
 }
 
+// DailyTime parses ConditionValue as a time-of-day (HH:MM:SS).
+// Returns an error if ConditionType is not ConditionTypeDaily.
 func (rus *RateUserSubscription) DailyTime() (time.Time, error) {
 	if rus.ConditionType != ConditionTypeDaily {
 		return time.Time{}, fmt.Errorf("invalid condition type: %s", rus.ConditionType)
@@ -49,6 +51,8 @@ func (rus *RateUserSubscription) DailyTime() (time.Time, error) {
 	return time.Parse(time.TimeOnly, rus.ConditionValue)
 }
 
+// DeltaThreshold parses ConditionValue as a non-negative float64 delta threshold.
+// Returns an error if ConditionType is not ConditionTypeDelta or the value is negative.
 func (rus *RateUserSubscription) DeltaThreshold() (float64, error) {
 	if rus.ConditionType != ConditionTypeDelta {
 		return 0, fmt.Errorf("invalid condition type: %s", rus.ConditionType)
@@ -63,6 +67,8 @@ func (rus *RateUserSubscription) DeltaThreshold() (float64, error) {
 	return d, nil
 }
 
+// IntervalDuration parses ConditionValue as a Go duration string (minimum 1 minute).
+// Returns an error if ConditionType is not ConditionTypeInterval or the duration is below the minimum.
 func (rus *RateUserSubscription) IntervalDuration() (time.Duration, error) {
 	if rus.ConditionType != ConditionTypeInterval {
 		return 0, fmt.Errorf("invalid condition type: %s", rus.ConditionType)
@@ -195,11 +201,16 @@ type RateUserSubscriptionSummary struct {
 	FailedCount       int64
 }
 
+// SubscriptionConditionType identifies the trigger rule for a user subscription.
 type SubscriptionConditionType string
 
 const (
-	ConditionTypeDelta    SubscriptionConditionType = "delta"
+	// ConditionTypeDelta triggers when the absolute rate change meets a threshold.
+	ConditionTypeDelta SubscriptionConditionType = "delta"
+	// ConditionTypeInterval triggers when a fixed duration has elapsed since the last notification.
 	ConditionTypeInterval SubscriptionConditionType = "interval"
-	ConditionTypeDaily    SubscriptionConditionType = "daily"
-	ConditionTypeCron     SubscriptionConditionType = "cron"
+	// ConditionTypeDaily triggers once per day at a configured time-of-day.
+	ConditionTypeDaily SubscriptionConditionType = "daily"
+	// ConditionTypeCron triggers according to a standard cron schedule expression.
+	ConditionTypeCron SubscriptionConditionType = "cron"
 )

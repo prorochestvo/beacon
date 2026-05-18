@@ -1,3 +1,5 @@
+// Package repository implements SQLite-backed persistence for all domain types.
+// Each repository serialises access through the *sqlitedb.DB transaction helper.
 package repository
 
 import (

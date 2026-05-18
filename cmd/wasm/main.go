@@ -1,5 +1,8 @@
 //go:build js && wasm
 
+// Command wasm is the single-page WASM frontend for the FX Rate Monitor.
+// It runs inside the browser via the Go WASM runtime, drives the DOM through
+// window.fetch and innerHTML, and communicates with the server via /api/... routes.
 package main
 
 import (

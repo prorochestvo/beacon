@@ -10,6 +10,7 @@ import (
 
 	tgbotapi "github.com/OvyFlash/telegram-bot-api"
 	"github.com/seilbekskindirov/monitor/internal/application/labelfmt"
+	"github.com/seilbekskindirov/monitor/internal/application/rulegen"
 	"github.com/seilbekskindirov/monitor/internal/domain"
 	integration "github.com/seilbekskindirov/monitor/internal/infrastructure/telegrambot"
 )
@@ -17,29 +18,63 @@ import (
 // NewTelegramApi constructs a fully stateless handler. The first three arguments are required.
 // webAppURL is the fully-qualified https:// URL of the Telegram Mini App subscriptions page.
 // When empty, the WebApp keyboard button is silently omitted (safe for dev environments).
+//
+// The last four arguments control rule regeneration via the /regen command. Pass all four
+// as nil/nil/0/nil to disable regen (e.g. in environments without AI credentials). If any
+// of rulegenGenerator and rulegenLocks is non-nil, both must be non-nil — mixing nil and
+// non-nil panics at the first /regen invocation.
 func NewTelegramApi(
 	cltTelegram telegramClient,
 	subRepo subscriptionRepository,
 	sourceRepo sourceRepository,
 	webAppURL string,
+	gen rulegenGenerator,
+	locks *rulegen.LockManager,
+	adminChatID int64,
+	genFactory func(maxPrimary, maxFallback int) (rulegenGenerator, error),
 ) (*TelegramApi, error) {
+	if (gen == nil) != (locks == nil) {
+		return nil, fmt.Errorf("telegramapi: rulegenGenerator and LockManager must both be set or both be nil")
+	}
 	return &TelegramApi{
-		telegramClient: cltTelegram,
-		subRepo:        subRepo,
-		sourceRepo:     sourceRepo,
-		webAppURL:      webAppURL,
+		telegramClient:   cltTelegram,
+		subRepo:          subRepo,
+		sourceRepo:       sourceRepo,
+		webAppURL:        webAppURL,
+		rulegenGenerator: gen,
+		rulegenLocks:     locks,
+		adminChatID:      adminChatID,
+		generatorFactory: genFactory,
 	}, nil
 }
 
 // TelegramApi implements Telegram bot subscription CRUD via inline keyboards.
 // It is fully stateless — all flow context travels inside callback_data.
 type TelegramApi struct {
-	telegramClient telegramClient
-	subRepo        subscriptionRepository
-	sourceRepo     sourceRepository
-	webAppURL      string
+	telegramClient   telegramClient
+	subRepo          subscriptionRepository
+	sourceRepo       sourceRepository
+	webAppURL        string
+	rulegenGenerator rulegenGenerator
+	rulegenLocks     *rulegen.LockManager
+	adminChatID      int64
+	generatorFactory func(maxPrimary, maxFallback int) (rulegenGenerator, error)
 }
 
+// rulegenGenerator is the narrow interface the bot command handler needs from
+// the application-layer generator. Defined inside the service package so tests
+// can substitute a fake without depending on rulegen's full surface.
+type rulegenGenerator interface {
+	Generate(ctx context.Context, sourceName string, forceFallback bool) (*rulegen.Result, error)
+}
+
+// RulegenGenerator is the exported alias used by the composition root
+// (cmd/web/main.go) to thread the generator through without importing the
+// full rulegen package into the wiring layer.
+type RulegenGenerator = rulegenGenerator
+
+// Run starts the Telegram bot update loop in the background.
+// It returns immediately; the loop runs until ctx is cancelled.
 func (h *TelegramApi) Run(ctx context.Context) {
 	handle := func(ctx context.Context, update tgbotapi.Update) {
 		switch {
@@ -69,6 +104,19 @@ func (h *TelegramApi) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 	if lower == commandSubscriptions || lower == commandStart {
 		h.sendMainMenu(ctx, chatID, 0)
 		return
+	}
+
+	// Detect /regen (case-insensitive; allow @botname suffix on the first token).
+	firstToken := strings.Fields(msg.Text)
+	if len(firstToken) > 0 {
+		tok := firstToken[0]
+		if i := strings.IndexByte(tok, '@'); i >= 0 {
+			tok = tok[:i]
+		}
+		if strings.EqualFold(tok, "/regen") {
+			h.handleRegen(ctx, msg)
+			return
+		}
 	}
 
 	h.notifyText(ctx, chatID,
@@ -593,8 +641,10 @@ type telegramClient interface {
 	SendPlainTextMessage(context.Context, integration.TelegramChatID, string) error
 	SendMarkdownMessage(context.Context, integration.TelegramChatID, string) error
 	SendHTMLMessage(context.Context, integration.TelegramChatID, string) error
+	SendHTMLMessageReturning(context.Context, integration.TelegramChatID, string) (int, error)
 	SendHTMLMessageWithKeyboard(context.Context, integration.TelegramChatID, string, tgbotapi.InlineKeyboardMarkup) error
 	EditHTMLMessageWithKeyboard(context.Context, integration.TelegramChatID, int, string, tgbotapi.InlineKeyboardMarkup) error
+	EditMessageText(context.Context, integration.TelegramChatID, int, string) error
 	AnswerCallbackQuery(context.Context, string, string) error
 }
 

@@ -28,8 +28,12 @@ type RateUserEventDailySummary struct {
 type RateUserEventStatus string
 
 const (
-	RateUserEventStatusPending  RateUserEventStatus = "pending"
-	RateUserEventStatusSent     RateUserEventStatus = "sent"
-	RateUserEventStatusFailed   RateUserEventStatus = "failed"
+	// RateUserEventStatusPending indicates the notification has not yet been attempted.
+	RateUserEventStatusPending RateUserEventStatus = "pending"
+	// RateUserEventStatusSent indicates the notification was delivered successfully.
+	RateUserEventStatusSent RateUserEventStatus = "sent"
+	// RateUserEventStatusFailed indicates the last delivery attempt returned an error.
+	RateUserEventStatusFailed RateUserEventStatus = "failed"
+	// RateUserEventStatusCanceled indicates the notification was abandoned without delivery.
 	RateUserEventStatusCanceled RateUserEventStatus = "canceled"
 )

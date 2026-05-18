@@ -1,3 +1,5 @@
+// Package labelfmt provides human-readable label formatting for subscription
+// conditions and notification triggers used across the Telegram bot UI.
 package labelfmt
 
 import (
