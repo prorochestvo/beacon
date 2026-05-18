@@ -102,13 +102,22 @@ func (extractor *RateExtractor) Name() string {
 func (extractor *RateExtractor) Run(ctx context.Context, source *domain.RateSource) error {
 	payload, err := extractor.fetchHtmlPage(ctx, source.URL)
 	if err != nil || payload == nil {
-		if err != nil {
+		if err == nil {
 			err = errors.New("page is nil")
 		}
 		err = fmt.Errorf("could not read html page %v: %w", source.URL, err)
 		err = errors.Join(err, internal.NewTraceError())
 		return err
 	}
+
+	return applyRulesAndStore(ctx, source, payload, extractor.RateValueRepository)
+}
+
+// applyRulesAndStore executes the extraction rule pipeline on payload and
+// persists the resulting rate value via repo. It is the shared rule-application
+// core used by both the plain HTTP extractor and the chromedp extractor.
+func applyRulesAndStore(ctx context.Context, source *domain.RateSource, payload []byte, repo rateValueRepository) error {
+	var err error
 
 	for i, rule := range source.Rules {
 		switch rule.Method {
@@ -124,14 +133,14 @@ func (extractor *RateExtractor) Run(ctx context.Context, source *domain.RateSour
 			}
 			payload = []byte(fmt.Sprintf("%.3f", f))
 		case domain.MethodRegex:
-			payload, err = extractor.fetchRegexPage(ctx, rule.Pattern, payload)
+			payload, err = ApplyRegex(rule.Pattern, payload)
 			if err != nil {
 				err = errors.Join(err, fmt.Errorf("rule %d: apply regex pattern %q: %w", i, rule.Pattern, err))
 				err = errors.Join(err, internal.NewTraceError())
 				return err
 			}
 		case domain.MethodJSONPath:
-			payload, err = extractor.extractJSONPath(rule.Pattern, payload)
+			payload, err = ApplyJSONPath(rule.Pattern, payload)
 			if err != nil {
 				err = errors.Join(err, fmt.Errorf("rule %d: apply json_path %q: %w", i, rule.Pattern, err))
 				err = errors.Join(err, internal.NewTraceError())
@@ -175,7 +184,7 @@ func (extractor *RateExtractor) Run(ctx context.Context, source *domain.RateSour
 		Timestamp:     time.Now().UTC(),
 	}
 
-	err = extractor.RateValueRepository.RetainRateValue(ctx, rateValue)
+	err = repo.RetainRateValue(ctx, rateValue)
 	if err != nil {
 		err = errors.Join(fmt.Errorf("could not keep the %f rate value of %s", value, source.Name), err)
 		err = errors.Join(err, internal.NewTraceError())
@@ -235,10 +244,6 @@ func (extractor *RateExtractor) fetchHtmlPage(ctx context.Context, rawURL string
 	}
 
 	return body, nil
-}
-
-func (extractor *RateExtractor) fetchRegexPage(_ context.Context, pattern string, payload []byte) ([]byte, error) {
-	return ApplyRegex(pattern, payload)
 }
 
 // rateValueRepository is the narrow persistence interface required by RateExtractor.

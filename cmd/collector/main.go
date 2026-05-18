@@ -32,6 +32,10 @@ var (
 	LogsDir = path.Join(os.TempDir(), "logs")
 	// ProxyURL is the HTTP proxy URL read from the PROXY_URL environment variable.
 	ProxyURL = os.Getenv(envProxyUrl)
+	// ChromiumPath is the absolute path to the Chromium/Chrome binary read from
+	// CHROMIUM_PATH. When empty, chromedp searches PATH (chromium, chromium-browser,
+	// google-chrome, chrome) on first use.
+	ChromiumPath = os.Getenv(envChromiumPath)
 	// LogVerbosity controls the minimum log level emitted by the logger.
 	LogVerbosity = internal.LogLevelWarning
 )
@@ -39,6 +43,9 @@ var (
 const (
 	envProxyUrl    = "PROXY_URL"
 	envDsnSqliteDB = "SQLITEDB_DSN"
+	// envChromiumPath is an optional absolute path to the Chromium/Chrome binary.
+	// When unset, chromedp searches PATH on first use for a chromedp-kind source.
+	envChromiumPath = "CHROMIUM_PATH"
 )
 
 func main() {
@@ -150,6 +157,7 @@ func buildRunners(
 ) ([]runner, error) {
 	collectionRateAgent, err := collection.NewRateAgent(
 		ProxyURL,
+		ChromiumPath,
 		rRateSource,
 		rExecutionHistory,
 		rRateValue,

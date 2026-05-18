@@ -47,7 +47,3 @@ func parseJSONPath(pattern string) ([]pathSegment, error) {
 
 	return segments, nil
 }
-
-func (extractor *RateExtractor) extractJSONPath(pattern string, payload []byte) ([]byte, error) {
-	return ApplyJSONPath(pattern, payload)
-}

@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 
 // compile-time interface checks
 var _ rateValueRepository = &repository.RateValueRepository{}
+var _ rateValueRepository = &mockRateValueRepository{}
 
 func TestNewRateExtractorWithHTTPClient(t *testing.T) {
 	t.Parallel()
@@ -479,6 +482,110 @@ func TestRateExtractor_Run(t *testing.T) {
 
 		require.Error(t, ext.Run(t.Context(), source))
 	})
+	t.Run("fetch error wraps underlying response", func(t *testing.T) {
+		t.Parallel()
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprint(w, "upstream down")
+		}))
+		defer srv.Close()
+
+		ext, err := NewRateExtractorWithHTTPClient(
+			&mockRateValueRepository{},
+			&http.Client{Timeout: 5 * time.Second},
+			logger,
+		)
+		require.NoError(t, err)
+
+		err = ext.Run(t.Context(), &domain.RateSource{
+			Name: "err_src",
+			URL:  srv.URL,
+			Rules: []domain.RateSourceRule{
+				{Method: domain.MethodRegex, Pattern: `.+`},
+			},
+		})
+
+		require.Error(t, err)
+		require.ErrorContains(t, err, srv.URL)
+		require.ErrorContains(t, err, "could not read html page")
+		require.ErrorContains(t, err, "unexpected status 503")
+		require.NotContains(t, err.Error(), "page is nil")
+	})
+	t.Run("empty body yields non-nil slice so page-is-nil guard is unreachable via transport", func(t *testing.T) {
+		// The guard `if err == nil { err = errors.New("page is nil") }` in Run
+		// defends against a hypothetical fetchHtmlPage returning (nil, nil).
+		// In practice, fetchHtmlPage returns nil only on error, and io.ReadAll on
+		// an empty body yields []byte{} (non-nil), so payload == nil is unreachable
+		// through the HTTP path. We exercise the defensive branch by injecting a
+		// custom RoundTripper whose body returns (0, io.EOF) immediately; io.ReadAll
+		// of that yields []byte{} rather than nil, so the nil guard still does not
+		// fire and we instead get a parse error on the empty payload. This subtest
+		// documents that the nil-synthesis branch is unreachable from outside the
+		// package via the transport API, and asserts the adjacent empty-body behaviour.
+		t.Parallel()
+
+		transport := &emptyBodyTransport{}
+		ext, err := NewRateExtractorWithHTTPClient(
+			&mockRateValueRepository{},
+			&http.Client{Timeout: 5 * time.Second, Transport: transport},
+			logger,
+		)
+		require.NoError(t, err)
+
+		err = ext.Run(t.Context(), &domain.RateSource{
+			Name: "nilbody_src",
+			URL:  "http://example.com/rate",
+			Rules: []domain.RateSourceRule{
+				{Method: domain.MethodRegex, Pattern: `rate=([\d.]+)`},
+			},
+		})
+
+		// io.ReadAll returns []byte{} for an empty body — not nil — so the
+		// payload-nil guard does not fire. The extractor fails later (no regex
+		// match on empty payload). The error must NOT contain "page is nil".
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "page is nil")
+	})
+	t.Run("fetch timeout error preserves cause", func(t *testing.T) {
+		t.Parallel()
+
+		const clientTimeout = 50 * time.Millisecond
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Block well past the client timeout so the deadline fires first.
+			select {
+			case <-time.After(200 * time.Millisecond):
+				_, _ = fmt.Fprint(w, "too late")
+			case <-r.Context().Done():
+			}
+		}))
+		defer srv.Close()
+
+		ext, err := NewRateExtractorWithHTTPClient(
+			&mockRateValueRepository{},
+			&http.Client{Timeout: clientTimeout},
+			logger,
+		)
+		require.NoError(t, err)
+
+		err = ext.Run(t.Context(), &domain.RateSource{
+			Name: "timeout_src",
+			URL:  srv.URL,
+			Rules: []domain.RateSourceRule{
+				{Method: domain.MethodRegex, Pattern: `.+`},
+			},
+		})
+
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "page is nil")
+		// net/http wraps deadline errors inside *url.Error; the deadline string
+		// is always present in the chain regardless of Go version.
+		require.True(t,
+			errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded"),
+			"expected timeout cause in error, got: %v", err,
+		)
+	})
 }
 
 func TestRateExtractor_fetchHtmlPage(t *testing.T) {
@@ -591,4 +698,22 @@ func (m *mockRateValueRepository) RetainRateValue(_ context.Context, rate *domai
 	}
 	m.retained = append(m.retained, rate)
 	return nil
+}
+
+// emptyBodyTransport is an http.RoundTripper that returns a 200 response with
+// an empty body (Read immediately returns (0, io.EOF)). Used in the
+// "empty body yields non-nil slice so page-is-nil guard is unreachable via transport"
+// subtest to verify that io.ReadAll of an empty body yields []byte{} (not nil),
+// meaning the payload-nil guard in Run is unreachable from this transport path.
+type emptyBodyTransport struct{}
+
+var _ http.RoundTripper = &emptyBodyTransport{}
+
+func (emptyBodyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader("")),
+		Request:    req,
+	}, nil
 }

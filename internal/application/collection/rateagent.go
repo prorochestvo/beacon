@@ -15,23 +15,32 @@ import (
 )
 
 // NewRateAgent constructs a RateAgent. proxyURL may be empty to disable proxying.
+// chromiumPath is the absolute path to the Chromium/Chrome binary used for
+// chromedp sources; pass an empty string to let chromedp search PATH.
+// The chromedp extractor is constructed eagerly but Chromium is only launched on
+// the first Run call for a chromedp source, so a plain-only deployment pays no
+// startup cost from Chromium being absent.
 func NewRateAgent(
 	proxyURL string,
+	chromiumPath string,
 	rRateSource rateSourceRepository,
 	rExecutionHistory executionHistoryRepository,
 	rRateValue rateValueRepository,
 	logger io.Writer,
 ) (*RateAgent, error) {
-	extractor, err := rateextractor.NewRateExtractor(rRateValue, proxyURL, time.Minute, logger)
+	plain, err := rateextractor.NewRateExtractor(rRateValue, proxyURL, time.Minute, logger)
 	if err != nil {
 		return nil, err
 	}
+
+	chromedpExt := rateextractor.NewChromedpRateExtractor(chromiumPath, logger, rRateValue)
 
 	a := &RateAgent{
 		rateValueRepository:        rRateValue,
 		rateSourceRepository:       rRateSource,
 		executionHistoryRepository: rExecutionHistory,
-		rateExtractor:              extractor,
+		plainExtractor:             plain,
+		chromedpExtractor:          chromedpExt,
 		logger:                     logger,
 	}
 
@@ -44,7 +53,8 @@ type RateAgent struct {
 	rateValueRepository        rateValueRepository
 	rateSourceRepository       rateSourceRepository
 	executionHistoryRepository executionHistoryRepository
-	rateExtractor              rateExtractor
+	plainExtractor             rateExtractor
+	chromedpExtractor          rateExtractor
 	logger                     io.Writer
 }
 
@@ -126,7 +136,17 @@ func (a *RateAgent) execution(ctx context.Context, sources []domain.RateSource) 
 			Timestamp:  now,
 		}
 
-		err := a.rateExtractor.Run(ctx, &source)
+		var err error
+		switch source.FetcherKind {
+		case "", "plain":
+			err = a.plainExtractor.Run(ctx, &source)
+		case "chromedp":
+			err = a.chromedpExtractor.Run(ctx, &source)
+		default:
+			err = fmt.Errorf("source %q: unsupported fetcher_kind %q", source.Name, source.FetcherKind)
+			err = errors.Join(err, internal.NewTraceError())
+		}
+
 		if err != nil {
 			h.Success = false
 			h.Error = errors.Join(err, internal.NewTraceError()).Error()

@@ -1,10 +1,8 @@
 package rateextractor
 
 import (
-	"net/http"
 	"testing"
 
-	"github.com/seilbekskindirov/monitor/internal/tools/threadsafe"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,129 +73,5 @@ func TestParseJSONPath(t *testing.T) {
 		segs, err := parseJSONPath("foo[-1]")
 		require.Error(t, err)
 		require.Nil(t, segs)
-	})
-}
-
-func TestRateExtractor_extractJSONPath(t *testing.T) {
-	t.Parallel()
-
-	newExtractor := func(t *testing.T) *RateExtractor {
-		t.Helper()
-
-		ext, err := NewRateExtractorWithHTTPClient(
-			&mockRateValueRepository{},
-			&http.Client{},
-			threadsafe.NewBuffer(nil),
-		)
-		require.NoError(t, err)
-		return ext
-	}
-
-	t.Run("simple numeric field", func(t *testing.T) {
-		t.Parallel()
-
-		ext := newExtractor(t)
-		result, err := ext.extractJSONPath("rate", []byte(`{"rate":450.75}`))
-		require.NoError(t, err)
-		require.Equal(t, []byte("450.75"), result)
-	})
-	t.Run("nested field", func(t *testing.T) {
-		t.Parallel()
-
-		ext := newExtractor(t)
-		result, err := ext.extractJSONPath("usd.rate_value", []byte(`{"usd":{"rate_value":99.9}}`))
-		require.NoError(t, err)
-		require.Equal(t, []byte("99.9"), result)
-	})
-	t.Run("array index", func(t *testing.T) {
-		t.Parallel()
-
-		ext := newExtractor(t)
-		result, err := ext.extractJSONPath("records[0].v", []byte(`{"records":[{"v":1.5}]}`))
-		require.NoError(t, err)
-		require.Equal(t, []byte("1.5"), result)
-	})
-	t.Run("string terminal value", func(t *testing.T) {
-		t.Parallel()
-
-		ext := newExtractor(t)
-		result, err := ext.extractJSONPath("rate", []byte(`{"rate":"123.0"}`))
-		require.NoError(t, err)
-		require.Equal(t, []byte("123.0"), result)
-	})
-	t.Run("integer json number", func(t *testing.T) {
-		t.Parallel()
-
-		ext := newExtractor(t)
-		result, err := ext.extractJSONPath("rate", []byte(`{"rate":500}`))
-		require.NoError(t, err)
-		require.Equal(t, []byte("500"), result)
-	})
-	t.Run("key not found", func(t *testing.T) {
-		t.Parallel()
-
-		ext := newExtractor(t)
-		result, err := ext.extractJSONPath("rate", []byte(`{"other":1}`))
-		require.Error(t, err)
-		require.Nil(t, result)
-	})
-	t.Run("index out of range", func(t *testing.T) {
-		t.Parallel()
-
-		ext := newExtractor(t)
-		result, err := ext.extractJSONPath("arr[5]", []byte(`{"arr":[1,2]}`))
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "out of range")
-		require.Nil(t, result)
-	})
-	t.Run("not an array", func(t *testing.T) {
-		t.Parallel()
-
-		ext := newExtractor(t)
-		result, err := ext.extractJSONPath("arr[0]", []byte(`{"arr":{"x":1}}`))
-		require.Error(t, err)
-		require.Nil(t, result)
-	})
-	t.Run("not an object", func(t *testing.T) {
-		t.Parallel()
-
-		ext := newExtractor(t)
-		result, err := ext.extractJSONPath("rate", []byte(`[1,2,3]`))
-		require.Error(t, err)
-		require.Nil(t, result)
-	})
-	t.Run("invalid JSON", func(t *testing.T) {
-		t.Parallel()
-
-		ext := newExtractor(t)
-		result, err := ext.extractJSONPath("rate", []byte(`not-json`))
-		require.Error(t, err)
-		require.Nil(t, result)
-	})
-	t.Run("terminal is object", func(t *testing.T) {
-		t.Parallel()
-
-		ext := newExtractor(t)
-		result, err := ext.extractJSONPath("a", []byte(`{"a":{}}`))
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "unsupported type")
-		require.Nil(t, result)
-	})
-	t.Run("terminal is array", func(t *testing.T) {
-		t.Parallel()
-
-		ext := newExtractor(t)
-		result, err := ext.extractJSONPath("a", []byte(`{"a":[]}`))
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "unsupported type")
-		require.Nil(t, result)
-	})
-	t.Run("invalid path", func(t *testing.T) {
-		t.Parallel()
-
-		ext := newExtractor(t)
-		result, err := ext.extractJSONPath("", []byte(`{"rate":1}`))
-		require.Error(t, err)
-		require.Nil(t, result)
 	})
 }

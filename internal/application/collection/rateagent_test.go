@@ -15,6 +15,7 @@ import (
 var _ executionHistoryRepository = &repository.ExecutionHistoryRepository{}
 var _ rateSourceRepository = &repository.RateSourceRepository{}
 var _ rateValueRepository = &repository.RateValueRepository{}
+var _ rateExtractor = &mockRateExtractor{}
 
 func TestNewRateAgent(t *testing.T) {
 	t.Parallel()
@@ -23,6 +24,7 @@ func TestNewRateAgent(t *testing.T) {
 		t.Parallel()
 
 		agent, err := NewRateAgent(
+			"",
 			"",
 			&mockRateSourceRepository{},
 			&mockExecutionHistoryRepository{},
@@ -42,7 +44,7 @@ func TestRateAgent_execution(t *testing.T) {
 
 		histRepo := &mockExecutionHistoryRepository{}
 		a := &RateAgent{
-			rateExtractor:              &mockRateExtractor{},
+			plainExtractor:             &mockRateExtractor{},
 			executionHistoryRepository: histRepo,
 		}
 
@@ -58,7 +60,7 @@ func TestRateAgent_execution(t *testing.T) {
 
 		histRepo := &mockExecutionHistoryRepository{}
 		a := &RateAgent{
-			rateExtractor:              &mockRateExtractor{err: errors.New("fetch error")},
+			plainExtractor:             &mockRateExtractor{err: errors.New("fetch error")},
 			executionHistoryRepository: histRepo,
 		}
 
@@ -71,7 +73,7 @@ func TestRateAgent_execution(t *testing.T) {
 		t.Parallel()
 
 		a := &RateAgent{
-			rateExtractor:              &mockRateExtractor{err: errors.New("fetch error")},
+			plainExtractor:             &mockRateExtractor{err: errors.New("fetch error")},
 			executionHistoryRepository: &mockExecutionHistoryRepository{},
 		}
 
@@ -83,13 +85,88 @@ func TestRateAgent_execution(t *testing.T) {
 
 		histRepo := &mockExecutionHistoryRepository{}
 		a := &RateAgent{
-			rateExtractor:              &mockRateExtractor{},
+			plainExtractor:             &mockRateExtractor{},
 			executionHistoryRepository: histRepo,
 		}
 
 		errs := a.execution(t.Context(), []domain.RateSource{{Name: "src1"}, {Name: "src2"}})
 		require.Empty(t, errs)
 		require.Len(t, histRepo.retained, 2)
+	})
+}
+
+func TestRateAgent_execution_dispatchesByFetcherKind(t *testing.T) {
+	t.Parallel()
+
+	t.Run("plain", func(t *testing.T) {
+		t.Parallel()
+
+		plain := &mockRateExtractor{}
+		chrome := &mockRateExtractor{}
+		a := &RateAgent{
+			plainExtractor:             plain,
+			chromedpExtractor:          chrome,
+			executionHistoryRepository: &mockExecutionHistoryRepository{},
+		}
+
+		errs := a.execution(t.Context(), []domain.RateSource{{Name: "src1", FetcherKind: "plain"}})
+
+		require.Empty(t, errs)
+		require.Equal(t, 1, plain.calls, "plain extractor must be called for fetcher_kind=plain")
+		require.Equal(t, 0, chrome.calls, "chromedp extractor must not be called for fetcher_kind=plain")
+	})
+	t.Run("empty fetcher_kind defaults to plain", func(t *testing.T) {
+		t.Parallel()
+
+		plain := &mockRateExtractor{}
+		chrome := &mockRateExtractor{}
+		a := &RateAgent{
+			plainExtractor:             plain,
+			chromedpExtractor:          chrome,
+			executionHistoryRepository: &mockExecutionHistoryRepository{},
+		}
+
+		errs := a.execution(t.Context(), []domain.RateSource{{Name: "src1", FetcherKind: ""}})
+
+		require.Empty(t, errs)
+		require.Equal(t, 1, plain.calls, "plain extractor must be called for empty fetcher_kind")
+		require.Equal(t, 0, chrome.calls, "chromedp extractor must not be called for empty fetcher_kind")
+	})
+	t.Run("chromedp", func(t *testing.T) {
+		t.Parallel()
+
+		plain := &mockRateExtractor{}
+		chrome := &mockRateExtractor{}
+		a := &RateAgent{
+			plainExtractor:             plain,
+			chromedpExtractor:          chrome,
+			executionHistoryRepository: &mockExecutionHistoryRepository{},
+		}
+
+		errs := a.execution(t.Context(), []domain.RateSource{{Name: "src1", FetcherKind: "chromedp"}})
+
+		require.Empty(t, errs)
+		require.Equal(t, 0, plain.calls, "plain extractor must not be called for fetcher_kind=chromedp")
+		require.Equal(t, 1, chrome.calls, "chromedp extractor must be called for fetcher_kind=chromedp")
+	})
+	t.Run("unsupported kind returns error", func(t *testing.T) {
+		t.Parallel()
+
+		plain := &mockRateExtractor{}
+		chrome := &mockRateExtractor{}
+		a := &RateAgent{
+			plainExtractor:             plain,
+			chromedpExtractor:          chrome,
+			executionHistoryRepository: &mockExecutionHistoryRepository{},
+		}
+
+		errs := a.execution(t.Context(), []domain.RateSource{{Name: "badsrc", FetcherKind: "bogus"}})
+
+		require.NotNil(t, errs["badsrc"], "unsupported fetcher_kind must produce an error entry")
+		require.ErrorContains(t, errs["badsrc"], "unsupported fetcher_kind")
+		require.ErrorContains(t, errs["badsrc"], "bogus")
+		require.Equal(t, 0, plain.calls, "plain extractor must not be called for unsupported kind")
+		require.Equal(t, 0, chrome.calls, "chromedp extractor must not be called for unsupported kind")
 	})
 }
 
@@ -103,7 +180,7 @@ func TestRateAgent_Run(t *testing.T) {
 			rateSourceRepository:       &mockRateSourceRepository{sources: nil},
 			executionHistoryRepository: &mockExecutionHistoryRepository{},
 			rateValueRepository:        &mockRateValueRepository{},
-			rateExtractor:              &mockRateExtractor{},
+			plainExtractor:             &mockRateExtractor{},
 			logger:                     io.Discard,
 		}
 
@@ -124,7 +201,7 @@ func TestRateAgent_Run(t *testing.T) {
 			rateSourceRepository:       &mockRateSourceRepository{sources: []domain.RateSource{{Name: "src1", Interval: "1h", Active: true}}},
 			executionHistoryRepository: histRepo,
 			rateValueRepository:        &mockRateValueRepository{},
-			rateExtractor:              extractor,
+			plainExtractor:             extractor,
 			logger:                     io.Discard,
 		}
 
@@ -139,7 +216,7 @@ func TestRateAgent_Run(t *testing.T) {
 			rateSourceRepository:       &mockRateSourceRepository{sources: []domain.RateSource{{Name: "src1", Interval: "1m", Title: "SRC", Active: true}}},
 			executionHistoryRepository: histRepo,
 			rateValueRepository:        &mockRateValueRepository{values: []domain.RateValue{{Price: 100}}},
-			rateExtractor:              &mockRateExtractor{},
+			plainExtractor:             &mockRateExtractor{},
 			logger:                     io.Discard,
 		}
 
@@ -153,7 +230,7 @@ func TestRateAgent_Run(t *testing.T) {
 			rateSourceRepository:       &mockRateSourceRepository{sources: []domain.RateSource{{Name: "src1", Interval: "bad", Active: true}}},
 			executionHistoryRepository: &mockExecutionHistoryRepository{},
 			rateValueRepository:        &mockRateValueRepository{},
-			rateExtractor:              &mockRateExtractor{},
+			plainExtractor:             &mockRateExtractor{},
 			logger:                     io.Discard,
 		}
 
@@ -166,7 +243,7 @@ func TestRateAgent_Run(t *testing.T) {
 			rateSourceRepository:       &mockRateSourceRepository{sources: []domain.RateSource{{Name: "src1", Interval: "1m", Active: true}}},
 			executionHistoryRepository: &mockExecutionHistoryRepository{},
 			rateValueRepository:        &mockRateValueRepository{},
-			rateExtractor:              &mockRateExtractor{err: errors.New("fetch error")},
+			plainExtractor:             &mockRateExtractor{err: errors.New("fetch error")},
 			logger:                     io.Discard,
 		}
 
@@ -180,7 +257,7 @@ func TestRateAgent_Run(t *testing.T) {
 			rateSourceRepository:       &mockRateSourceRepository{sources: []domain.RateSource{{Name: "src1", Interval: "1m", Active: false}}},
 			executionHistoryRepository: &mockExecutionHistoryRepository{},
 			rateValueRepository:        &mockRateValueRepository{},
-			rateExtractor:              extractor,
+			plainExtractor:             extractor,
 			logger:                     io.Discard,
 		}
 
@@ -194,7 +271,7 @@ func TestRateAgent_Run(t *testing.T) {
 			rateSourceRepository:       &mockRateSourceRepository{err: errors.New("db fail")},
 			executionHistoryRepository: &mockExecutionHistoryRepository{},
 			rateValueRepository:        &mockRateValueRepository{},
-			rateExtractor:              &mockRateExtractor{},
+			plainExtractor:             &mockRateExtractor{},
 			logger:                     io.Discard,
 		}
 
@@ -211,7 +288,7 @@ func TestRateAgent_Run(t *testing.T) {
 			rateSourceRepository:       &mockRateSourceRepository{sources: []domain.RateSource{{Name: "src1", Interval: "1h", Active: true}}},
 			executionHistoryRepository: histRepo,
 			rateValueRepository:        &mockRateValueRepository{},
-			rateExtractor:              extractor,
+			plainExtractor:             extractor,
 			logger:                     io.Discard,
 		}
 
