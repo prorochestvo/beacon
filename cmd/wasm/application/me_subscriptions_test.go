@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/seilbekskindirov/monitor/cmd/wasm/apiclient"
 	"github.com/seilbekskindirov/monitor/cmd/wasm/application"
+	"github.com/seilbekskindirov/monitor/internal"
 	"github.com/seilbekskindirov/monitor/internal/dto"
 )
 
@@ -290,5 +292,278 @@ func TestMeSubscriptionsPage_HeaderPropagation(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, initData, f.lastHeaders["X-Telegram-Init-Data"],
 			"X-Telegram-Init-Data header must be forwarded from the constructor initData parameter")
+	})
+}
+
+// chartFakeFetcher routes FetchJSON calls: chart-endpoint calls use chartResponse/chartErr,
+// subscriptions-endpoint calls use jsonResponse.
+type chartFakeFetcher struct {
+	jsonResponse  []byte
+	chartResponse []byte
+	chartErr      error
+	chartCallURL  string
+}
+
+var _ apiclient.Fetcher = (*chartFakeFetcher)(nil)
+
+func (f *chartFakeFetcher) FetchJSON(_ context.Context, _, rawURL string, _ any, _ map[string]string) ([]byte, error) {
+	if strings.Contains(rawURL, "/rates/chart") {
+		f.chartCallURL = rawURL
+		if f.chartErr != nil {
+			return nil, f.chartErr
+		}
+		return f.chartResponse, nil
+	}
+	return f.jsonResponse, nil
+}
+
+func (f *chartFakeFetcher) FetchNoContent(_ context.Context, _, _ string, _ any, _ map[string]string) error {
+	return nil
+}
+
+// captureFetcher is like chartFakeFetcher but calls onChartCall from inside the
+// chart FetchJSON so callers can observe intermediate state during the fetch.
+type captureFetcher struct {
+	jsonResponse  []byte
+	chartResponse []byte
+	chartErr      error
+	onChartCall   func()
+}
+
+var _ apiclient.Fetcher = (*captureFetcher)(nil)
+
+func (f *captureFetcher) FetchJSON(_ context.Context, _, rawURL string, _ any, _ map[string]string) ([]byte, error) {
+	if strings.Contains(rawURL, "/rates/chart") {
+		if f.onChartCall != nil {
+			f.onChartCall()
+		}
+		if f.chartErr != nil {
+			return nil, f.chartErr
+		}
+		return f.chartResponse, nil
+	}
+	return f.jsonResponse, nil
+}
+
+func (f *captureFetcher) FetchNoContent(_ context.Context, _, _ string, _ any, _ map[string]string) error {
+	return nil
+}
+
+func chartPoints(prices ...float64) []dto.ChartPointResponse {
+	out := make([]dto.ChartPointResponse, len(prices))
+	for i, p := range prices {
+		out[i] = dto.ChartPointResponse{Label: "2026-01-01", Price: p}
+	}
+	return out
+}
+
+func chartResponse(points []dto.ChartPointResponse) []byte {
+	b, err := json.Marshal(points)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+func TestMeSubscriptionsPage_SetPeriod(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid period updates state and clears charts", func(t *testing.T) {
+		t.Parallel()
+		f := &chartFakeFetcher{
+			jsonResponse:  meSubsResponse(sampleItems(), 1, 1, 10),
+			chartResponse: chartResponse(chartPoints(1.0, 2.0)),
+		}
+		page := application.NewMeSubscriptionsPage(apiclient.New(f), "tok", 10)
+		require.NoError(t, page.LoadInitial(t.Context()))
+		gen := page.SnapshotGeneration()
+		require.NoError(t, page.LoadChart(t.Context(), "usd-eur", gen))
+		assert.NotEmpty(t, page.State().Charts)
+
+		require.NoError(t, page.SetPeriod(t.Context(), application.MeSubscriptionsPeriodMonth))
+		assert.Equal(t, application.MeSubscriptionsPeriodMonth, page.State().Period)
+		assert.Empty(t, page.State().Charts, "SetPeriod must clear charts on period change")
+		assert.Empty(t, page.State().Expanded, "SetPeriod must clear expanded on period change")
+	})
+
+	t.Run("unchanged period leaves charts intact", func(t *testing.T) {
+		t.Parallel()
+		f := &chartFakeFetcher{
+			jsonResponse:  meSubsResponse(sampleItems(), 1, 1, 10),
+			chartResponse: chartResponse(chartPoints(1.0)),
+		}
+		page := application.NewMeSubscriptionsPage(apiclient.New(f), "tok", 10)
+		require.NoError(t, page.LoadInitial(t.Context()))
+		gen := page.SnapshotGeneration()
+		require.NoError(t, page.LoadChart(t.Context(), "usd-eur", gen))
+		before := page.State().Charts["usd-eur"]
+
+		// SetPeriod with same period must be a no-op.
+		require.NoError(t, page.SetPeriod(t.Context(), application.MeSubscriptionsPeriodWeek))
+		after := page.State().Charts["usd-eur"]
+		assert.Equal(t, before, after, "unchanged period must not clear charts")
+	})
+
+	t.Run("invalid period returns PublicError and does not change state", func(t *testing.T) {
+		t.Parallel()
+		f := &chartFakeFetcher{jsonResponse: meSubsResponse(sampleItems(), 1, 1, 10)}
+		page := application.NewMeSubscriptionsPage(apiclient.New(f), "tok", 10)
+		require.NoError(t, page.LoadInitial(t.Context()))
+
+		err := page.SetPeriod(t.Context(), "decade")
+		require.Error(t, err)
+
+		var pubErr *internal.PublicError
+		require.ErrorAs(t, err, &pubErr)
+		assert.Equal(t, "Invalid period.", pubErr.Details())
+		assert.Equal(t, application.MeSubscriptionsPeriodWeek, page.State().Period)
+	})
+}
+
+func TestMeSubscriptionsPage_LoadChart(t *testing.T) {
+	t.Parallel()
+
+	t.Run("happy path stores points and Loaded=true", func(t *testing.T) {
+		f := &chartFakeFetcher{
+			jsonResponse:  meSubsResponse(sampleItems(), 1, 1, 10),
+			chartResponse: chartResponse(chartPoints(1.08, 1.09)),
+		}
+		page := application.NewMeSubscriptionsPage(apiclient.New(f), "tok", 10)
+		require.NoError(t, page.LoadInitial(t.Context()))
+		gen := page.SnapshotGeneration()
+		require.NoError(t, page.LoadChart(t.Context(), "usd-eur", gen))
+		st := page.State().Charts["usd-eur"]
+		assert.True(t, st.Loaded)
+		assert.False(t, st.Loading)
+		assert.NoError(t, st.Error)
+		require.Len(t, st.Points, 2)
+		assert.InDelta(t, 1.08, st.Points[0].Price, 0.001)
+	})
+
+	t.Run("fetch error stores Error and returns it", func(t *testing.T) {
+		f := &chartFakeFetcher{
+			jsonResponse: meSubsResponse(sampleItems(), 1, 1, 10),
+			chartErr:     errors.New("chart http 503"),
+		}
+		page := application.NewMeSubscriptionsPage(apiclient.New(f), "tok", 10)
+		require.NoError(t, page.LoadInitial(t.Context()))
+		gen := page.SnapshotGeneration()
+		err := page.LoadChart(t.Context(), "usd-eur", gen)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "chart http 503")
+		st := page.State().Charts["usd-eur"]
+		assert.NotNil(t, st.Error)
+		assert.False(t, st.Loaded)
+	})
+
+	t.Run("loading flag is set before fetch completes", func(t *testing.T) {
+		// LoadChart sets Charts[name].Loading=true synchronously before calling
+		// the fetcher. We verify this by using captureFetcher.onChartCall, which
+		// fires from inside FetchJSON before returning. Because the whole test is
+		// single-goroutine, no mutex is needed.
+		var capturedLoading bool
+		var pagePtr *application.MeSubscriptionsPage
+
+		capFetch := &captureFetcher{
+			jsonResponse:  meSubsResponse(sampleItems(), 1, 1, 10),
+			chartResponse: chartResponse(chartPoints(1.0)),
+			onChartCall: func() {
+				st := pagePtr.State().Charts["usd-eur"]
+				capturedLoading = st.Loading
+			},
+		}
+		pagePtr = application.NewMeSubscriptionsPage(apiclient.New(capFetch), "tok", 10)
+		require.NoError(t, pagePtr.LoadInitial(t.Context()))
+		gen := pagePtr.SnapshotGeneration()
+		require.NoError(t, pagePtr.LoadChart(t.Context(), "usd-eur", gen))
+
+		assert.True(t, capturedLoading, "Loading must be true during the fetch")
+		assert.True(t, pagePtr.State().Charts["usd-eur"].Loaded, "Loaded must be true after fetch")
+	})
+
+	t.Run("second call replaces prior state", func(t *testing.T) {
+		f := &chartFakeFetcher{
+			jsonResponse: meSubsResponse(sampleItems(), 1, 1, 10),
+			chartErr:     errors.New("first error"),
+		}
+		page := application.NewMeSubscriptionsPage(apiclient.New(f), "tok", 10)
+		require.NoError(t, page.LoadInitial(t.Context()))
+		gen := page.SnapshotGeneration()
+		err := page.LoadChart(t.Context(), "usd-eur", gen)
+		require.Error(t, err)
+		assert.NotNil(t, page.State().Charts["usd-eur"].Error)
+
+		// Second call with success — same gen (no page/period change).
+		f.chartErr = nil
+		f.chartResponse = chartResponse(chartPoints(1.0))
+		require.NoError(t, page.LoadChart(t.Context(), "usd-eur", gen))
+		st := page.State().Charts["usd-eur"]
+		assert.True(t, st.Loaded)
+		assert.NoError(t, st.Error)
+	})
+
+	t.Run("stale generation does not mutate state and returns nil", func(t *testing.T) {
+		f := &chartFakeFetcher{
+			jsonResponse:  meSubsResponse(sampleItems(), 1, 1, 10),
+			chartResponse: chartResponse(chartPoints(1.0)),
+		}
+		page := application.NewMeSubscriptionsPage(apiclient.New(f), "tok", 10)
+		require.NoError(t, page.LoadInitial(t.Context()))
+		staleGen := page.SnapshotGeneration() - 1
+		// Passing a stale gen must be a no-op.
+		err := page.LoadChart(t.Context(), "usd-eur", staleGen)
+		require.NoError(t, err)
+		// Charts should remain untouched (empty after LoadInitial clears them).
+		_, found := page.State().Charts["usd-eur"]
+		assert.False(t, found, "stale gen must not write into Charts")
+	})
+}
+
+func TestMeSubscriptionsPage_ToggleExpand(t *testing.T) {
+	t.Parallel()
+
+	t.Run("absent key sets to true", func(t *testing.T) {
+		t.Parallel()
+		f := &meSubsFakeFetcher{jsonResponse: meSubsResponse(nil, 0, 1, 10)}
+		page := newMePage(f, "tok")
+		page.ToggleExpand("usd-eur")
+		assert.True(t, page.State().Expanded["usd-eur"])
+	})
+
+	t.Run("true flips to false", func(t *testing.T) {
+		t.Parallel()
+		f := &meSubsFakeFetcher{jsonResponse: meSubsResponse(nil, 0, 1, 10)}
+		page := newMePage(f, "tok")
+		page.ToggleExpand("usd-eur")
+		page.ToggleExpand("usd-eur")
+		assert.False(t, page.State().Expanded["usd-eur"])
+	})
+}
+
+func TestMeSubscriptionsPage_NextPage_ClearsCharts(t *testing.T) {
+	t.Parallel()
+
+	t.Run("NextPage clears Charts and Expanded", func(t *testing.T) {
+		t.Parallel()
+		f := &chartFakeFetcher{
+			jsonResponse:  meSubsResponse(sampleItems(), 30, 2, 10),
+			chartResponse: chartResponse(chartPoints(1.0)),
+		}
+		page := application.NewMeSubscriptionsPage(apiclient.New(f), "tok", 10)
+		gen := page.SnapshotGeneration()
+		// Seed a chart entry (without LoadInitial so we can set gen directly).
+		// Use LoadInitial first to get items, then LoadChart.
+		f.jsonResponse = meSubsResponse(sampleItems(), 30, 1, 10)
+		require.NoError(t, page.LoadInitial(t.Context()))
+		gen = page.SnapshotGeneration()
+		require.NoError(t, page.LoadChart(t.Context(), "usd-eur", gen))
+		page.ToggleExpand("usd-eur")
+		assert.NotEmpty(t, page.State().Charts)
+		assert.NotEmpty(t, page.State().Expanded)
+
+		f.jsonResponse = meSubsResponse(sampleItems(), 30, 2, 10)
+		require.NoError(t, page.NextPage(t.Context()))
+		assert.Empty(t, page.State().Charts, "NextPage must clear Charts")
+		assert.Empty(t, page.State().Expanded, "NextPage must clear Expanded")
 	})
 }

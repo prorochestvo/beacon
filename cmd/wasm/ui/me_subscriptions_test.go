@@ -17,6 +17,9 @@ func meSubsState(items []dto.MeSubscriptionRow, total int64, page, pageSize int)
 		Total:    total,
 		Page:     page,
 		PageSize: pageSize,
+		Period:   application.MeSubscriptionsDefaultPeriod,
+		Charts:   map[string]application.ChartState{},
+		Expanded: map[string]bool{},
 	}
 }
 
@@ -226,5 +229,126 @@ func TestRenderMeSubscriptions(t *testing.T) {
 		html := ui.RenderMeSubscriptions(state)
 		assert.NotContains(t, html, "<script>")
 		assert.Contains(t, html, "&lt;script&gt;")
+	})
+
+	t.Run("period toggle shows three buttons with current period active", func(t *testing.T) {
+		t.Parallel()
+		state := meSubsState(nil, 0, 1, 10)
+		state.Period = application.MeSubscriptionsPeriodMonth
+		html := ui.RenderMeSubscriptions(state)
+		assert.Contains(t, html, `id="me-period-toggle"`)
+		assert.Contains(t, html, `data-period="week"`)
+		assert.Contains(t, html, `data-period="month"`)
+		assert.Contains(t, html, `data-period="year"`)
+		// month is active
+		assert.Contains(t, html, `class="period-btn active" data-period="month"`)
+		// week and year are not active
+		assert.Contains(t, html, `class="period-btn" data-period="week"`)
+		assert.Contains(t, html, `class="period-btn" data-period="year"`)
+	})
+
+	t.Run("chart slot renders skeleton when Charts entry is missing", func(t *testing.T) {
+		t.Parallel()
+		state := meSubsState([]dto.MeSubscriptionRow{singleItem()}, 1, 1, 10)
+		// Charts map is empty → no entry for "usd-eur"
+		html := ui.RenderMeSubscriptions(state)
+		assert.Contains(t, html, `class="card-chart-skeleton"`)
+		assert.NotContains(t, html, `class="card-chart"`)
+	})
+
+	t.Run("chart slot renders skeleton when Loading is true", func(t *testing.T) {
+		t.Parallel()
+		state := meSubsState([]dto.MeSubscriptionRow{singleItem()}, 1, 1, 10)
+		state.Charts["usd-eur"] = application.ChartState{Loading: true}
+		html := ui.RenderMeSubscriptions(state)
+		assert.Contains(t, html, `class="card-chart-skeleton"`)
+	})
+
+	t.Run("chart slot renders SVG when Loaded is true", func(t *testing.T) {
+		t.Parallel()
+		state := meSubsState([]dto.MeSubscriptionRow{singleItem()}, 1, 1, 10)
+		state.Charts["usd-eur"] = application.ChartState{
+			Loaded: true,
+			Points: []dto.ChartPointResponse{{Label: "2026-01-01", Price: 1.08}},
+		}
+		html := ui.RenderMeSubscriptions(state)
+		assert.Contains(t, html, `class="card-chart"`)
+		assert.Contains(t, html, `<polyline`)
+		assert.NotContains(t, html, `class="card-chart-skeleton"`)
+	})
+
+	t.Run("chart slot renders error message when Error is non-nil", func(t *testing.T) {
+		t.Parallel()
+		state := meSubsState([]dto.MeSubscriptionRow{singleItem()}, 1, 1, 10)
+		state.Charts["usd-eur"] = application.ChartState{
+			Error: errors.New("network timeout"),
+		}
+		html := ui.RenderMeSubscriptions(state)
+		assert.Contains(t, html, `class="card-chart-error"`)
+		assert.Contains(t, html, "chart unavailable")
+		// raw error text must not appear in the UI
+		assert.NotContains(t, html, "network timeout")
+	})
+
+	t.Run("expanded list renders label and price for each point", func(t *testing.T) {
+		t.Parallel()
+		state := meSubsState([]dto.MeSubscriptionRow{singleItem()}, 1, 1, 10)
+		state.Charts["usd-eur"] = application.ChartState{
+			Loaded: true,
+			Points: []dto.ChartPointResponse{
+				{Label: "2026-01-01", Price: 1.0812},
+				{Label: "2026-01-02", Price: 1.0934},
+			},
+		}
+		state.Expanded["usd-eur"] = true
+		html := ui.RenderMeSubscriptions(state)
+		assert.Contains(t, html, `class="card-chart-expanded"`)
+		assert.Contains(t, html, "2026-01-01")
+		assert.Contains(t, html, "1.0812")
+		assert.Contains(t, html, "2026-01-02")
+		assert.Contains(t, html, "1.0934")
+	})
+
+	t.Run("expanded list hidden when Expanded[name] is false", func(t *testing.T) {
+		t.Parallel()
+		state := meSubsState([]dto.MeSubscriptionRow{singleItem()}, 1, 1, 10)
+		state.Charts["usd-eur"] = application.ChartState{
+			Loaded: true,
+			Points: []dto.ChartPointResponse{{Label: "2026-01-01", Price: 1.08}},
+		}
+		state.Expanded["usd-eur"] = false
+		html := ui.RenderMeSubscriptions(state)
+		assert.NotContains(t, html, `class="card-chart-expanded"`)
+	})
+
+	t.Run("expanded list hidden when chart not yet loaded even if Expanded is true", func(t *testing.T) {
+		t.Parallel()
+		state := meSubsState([]dto.MeSubscriptionRow{singleItem()}, 1, 1, 10)
+		// Chart not loaded, but Expanded is true.
+		state.Expanded["usd-eur"] = true
+		html := ui.RenderMeSubscriptions(state)
+		assert.NotContains(t, html, `class="card-chart-expanded"`)
+	})
+
+	t.Run("chart-slot id is escaped source name", func(t *testing.T) {
+		t.Parallel()
+		item := dto.MeSubscriptionRow{
+			SourceName:    `evil"name`,
+			SourceTitle:   "Evil",
+			BaseCurrency:  "USD",
+			QuoteCurrency: "EUR",
+		}
+		state := meSubsState([]dto.MeSubscriptionRow{item}, 1, 1, 10)
+		html := ui.RenderMeSubscriptions(state)
+		// The raw quote must not appear unescaped in the id attribute.
+		assert.NotContains(t, html, `id="card-chart-evil"name"`)
+		assert.Contains(t, html, `card-chart-evil&quot;name`)
+	})
+
+	t.Run("card carries data-source-name attribute", func(t *testing.T) {
+		t.Parallel()
+		state := meSubsState([]dto.MeSubscriptionRow{singleItem()}, 1, 1, 10)
+		html := ui.RenderMeSubscriptions(state)
+		assert.Contains(t, html, `data-source-name="usd-eur"`)
 	})
 }

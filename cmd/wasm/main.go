@@ -493,8 +493,9 @@ func callWebAppIfDefined() {
 
 // runRenderMeSubscriptions is the entry point for the Telegram Mini App screen.
 // It reads initData once at mount, calls WebApp.ready/expand, renders the
-// search bar + skeleton, loads the first page of subscriptions, and binds all
-// event handlers. Must be called from a goroutine.
+// search bar + skeleton, loads the first page of subscriptions, fans out one
+// chart-fetch goroutine per visible card, and binds all event handlers.
+// Must be called from a goroutine.
 func runRenderMeSubscriptions(client *apiclient.Client) {
 	callWebAppIfDefined()
 
@@ -507,10 +508,10 @@ func runRenderMeSubscriptions(client *apiclient.Client) {
 	app.Set("innerHTML", "<p>Loading…</p>")
 
 	scr := mountScreen()
-	page := application.NewMeSubscriptionsPage(client, initData, 20)
+	page := application.NewMeSubscriptionsPage(client, initData, 10)
 
-	// Render the skeleton (search bar + loading placeholder) immediately so
-	// the user sees a responsive UI before the first network round-trip.
+	// Render the skeleton (search bar + period toggle + loading placeholder)
+	// immediately so the user sees a responsive UI before the first round-trip.
 	app.Set("innerHTML", ui.RenderMeSubscriptions(page.State()))
 
 	redrawList := func() {
@@ -532,18 +533,50 @@ func runRenderMeSubscriptions(client *apiclient.Client) {
 	}
 	redrawList()
 
-	bindMeSubsHandlers(doc, page, scr, redrawList)
+	// fanOutChartFetches issues one goroutine per visible card. Each goroutine
+	// calls LoadChart and, on completion, redraws only its own chart slot so
+	// it does not trample the search input focus or other in-flight slot updates.
+	fanOutChartFetches := func() {
+		gen := page.SnapshotGeneration()
+		for _, item := range page.State().Items {
+			name := item.SourceName
+			go func() {
+				if err := page.LoadChart(ctx, name, gen); err != nil {
+					js.Global().Get("console").Call("warn",
+						"chart fetch failed for "+name+":", err.Error())
+				}
+				slotID := "card-chart-" + name
+				slot := doc.Call("getElementById", slotID)
+				if !slot.IsNull() && !slot.IsUndefined() {
+					slot.Set("innerHTML", ui.RenderMeSubCardChartSlot(page.State(), name))
+				}
+			}()
+		}
+	}
+
+	fanOutChartFetches()
+
+	bindMeSubsHandlers(doc, page, scr, redrawList, fanOutChartFetches)
 }
 
 // bindMeSubsHandlers wires all event handlers for the Mini App screen.
 //
 // Search: oninput on #me-search dispatches through OnSearch and listens on the
 // returned channel to know when the debounced fetch has settled. A new goroutine
-// is started for each search so the JS event loop is never blocked.
+// is started for each search so the JS event loop is never blocked. After the
+// list settles a new chart fanout is issued for the visible cards.
 //
-// Pagination: a delegated click handler on the #app div reads data-section and
-// data-page to dispatch NextPage/PrevPage.
-func bindMeSubsHandlers(doc js.Value, page *application.MeSubscriptionsPage, scr *screen, redrawList func()) {
+// Period toggle: a click on #me-period-toggle reads data-period and calls
+// page.SetPeriod, then redraws the list and fans out fresh chart fetches. A
+// PublicError (invalid period value) is logged as console.warn and ignored.
+//
+// Expand: a delegated click on #me-subs-list checks whether the target is
+// inside a .card-chart-slot via closest(). If so it reads data-source-name from
+// the slot and calls page.ToggleExpand, then updates only that slot's innerHTML.
+//
+// Pagination: a delegated click on the #app div reads data-section and data-page
+// to dispatch NextPage/PrevPage, followed by redrawList and a chart fanout.
+func bindMeSubsHandlers(doc js.Value, page *application.MeSubscriptionsPage, scr *screen, redrawList, fanOutChartFetches func()) {
 	searchEl := doc.Call("getElementById", "me-search")
 	if !searchEl.IsNull() && !searchEl.IsUndefined() {
 		scr.addRelease(dom.On(searchEl, "input", func(ev js.Value) {
@@ -554,7 +587,63 @@ func bindMeSubsHandlers(doc js.Value, page *application.MeSubscriptionsPage, scr
 					js.Global().Get("console").Call("warn", "me-subs search:", err.Error())
 				}
 				redrawList()
+				fanOutChartFetches()
 			}()
+		}))
+	}
+
+	periodToggle := doc.Call("getElementById", "me-period-toggle")
+	if !periodToggle.IsNull() && !periodToggle.IsUndefined() {
+		scr.addRelease(dom.On(periodToggle, "click", func(ev js.Value) {
+			target := ev.Get("target")
+			if target.IsNull() || target.IsUndefined() {
+				return
+			}
+			dataset := target.Get("dataset")
+			if dataset.IsNull() || dataset.IsUndefined() {
+				return
+			}
+			periodAttr := dataset.Get("period")
+			if periodAttr.IsUndefined() || periodAttr.IsNull() {
+				return
+			}
+			period := periodAttr.String()
+			ctx := context.Background()
+			if err := page.SetPeriod(ctx, period); err != nil {
+				js.Global().Get("console").Call("warn", "me-subs SetPeriod:", err.Error())
+				return
+			}
+			redrawList()
+			fanOutChartFetches()
+		}))
+	}
+
+	listDiv := doc.Call("getElementById", "me-subs-list")
+	if !listDiv.IsNull() && !listDiv.IsUndefined() {
+		scr.addRelease(dom.On(listDiv, "click", func(ev js.Value) {
+			target := ev.Get("target")
+			if target.IsNull() || target.IsUndefined() {
+				return
+			}
+			// Find the nearest .card-chart-slot ancestor (inclusive of target).
+			slot := target.Call("closest", ".card-chart-slot")
+			if slot.IsNull() || slot.IsUndefined() {
+				return
+			}
+			nameVal := slot.Get("dataset").Get("sourceName")
+			if nameVal.IsNull() || nameVal.IsUndefined() {
+				return
+			}
+			name := nameVal.String()
+			if name == "" {
+				return
+			}
+			page.ToggleExpand(name)
+			slotID := "card-chart-" + name
+			slotEl := doc.Call("getElementById", slotID)
+			if !slotEl.IsNull() && !slotEl.IsUndefined() {
+				slotEl.Set("innerHTML", ui.RenderMeSubCardChartSlot(page.State(), name))
+			}
 		}))
 	}
 
@@ -594,6 +683,7 @@ func bindMeSubsHandlers(doc js.Value, page *application.MeSubscriptionsPage, scr
 					}
 				}
 				redrawList()
+				fanOutChartFetches()
 			}()
 		}))
 	}

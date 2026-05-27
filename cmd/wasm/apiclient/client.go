@@ -119,6 +119,21 @@ func (c *Client) SetSourceActive(ctx context.Context, name string, active bool) 
 	return c.fetcher.FetchNoContent(ctx, "PATCH", sourceActiveURL(name), dto.SourceActiveRequest{Active: active}, nil)
 }
 
+// RatesChart fetches aggregated chart data for a source over the given period.
+// period must be one of "week", "month", "year", or "" to let the server default.
+// The endpoint is public — no headers required.
+func (c *Client) RatesChart(ctx context.Context, name, period string) ([]dto.ChartPointResponse, error) {
+	raw, err := c.fetcher.FetchJSON(ctx, "GET", chartURL(name, period), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out []dto.ChartPointResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("decode chart points: %w", err)
+	}
+	return out, nil
+}
+
 // MeSubscriptions fetches the caller's own subscriptions enriched with the latest rate
 // values. initData is the Telegram WebApp initData string read by the caller from
 // window.Telegram.WebApp.initData; this method sets the X-Telegram-Init-Data header

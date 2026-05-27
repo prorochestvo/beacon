@@ -376,6 +376,53 @@ func TestClient_SetSourceActive(t *testing.T) {
 	})
 }
 
+func TestClient_RatesChart(t *testing.T) {
+	t.Parallel()
+
+	t.Run("happy path decodes two chart points", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{
+			jsonResponse: []byte(`[{"label":"2026-01-01","price":1.08},{"label":"2026-01-02","price":1.09}]`),
+		}
+		c := apiclient.New(f)
+		got, err := c.RatesChart(t.Context(), "usd-eur", "week")
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+		assert.Equal(t, "2026-01-01", got[0].Label)
+		assert.InDelta(t, 1.08, got[0].Price, 0.001)
+		assert.Equal(t, "2026-01-02", got[1].Label)
+		assert.InDelta(t, 1.09, got[1].Price, 0.001)
+	})
+
+	t.Run("empty chart returns non-nil empty slice", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{jsonResponse: []byte(`[]`)}
+		c := apiclient.New(f)
+		got, err := c.RatesChart(t.Context(), "usd-eur", "week")
+		require.NoError(t, err)
+		assert.NotNil(t, got)
+		assert.Empty(t, got)
+	})
+
+	t.Run("decode error on invalid JSON", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{jsonResponse: []byte(`not-json`)}
+		c := apiclient.New(f)
+		_, err := c.RatesChart(t.Context(), "usd-eur", "week")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "decode chart points")
+	})
+
+	t.Run("fetcher error propagates verbatim", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{jsonErr: errors.New("http 503")}
+		c := apiclient.New(f)
+		_, err := c.RatesChart(t.Context(), "usd-eur", "week")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "http 503")
+	})
+}
+
 func TestClient_MeSubscriptions(t *testing.T) {
 	t.Parallel()
 
