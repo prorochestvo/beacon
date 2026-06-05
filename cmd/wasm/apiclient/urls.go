@@ -67,15 +67,21 @@ func meSubscriptionsHeaders(initData string) map[string]string {
 func meProfileURL() string { return "/api/me/profile" }
 
 // meRatesChartURL returns the endpoint for the authenticated sparkline-list chart.
-// No query parameters — the 7-day window is fixed server-side.
-func meRatesChartURL() string { return "/api/me/rates/chart" }
+// period is the number of days in the rolling window; must be one of {7, 30, 90, 180, 360}.
+func meRatesChartURL(period int) string {
+	v := url.Values{}
+	v.Set("period", strconv.Itoa(period))
+	return "/api/me/rates/chart?" + v.Encode()
+}
 
 // publicRatesChartURL returns the paginated public sparkline-list endpoint URL.
-// page is 1-based; limit is the page size (1–100).
-func publicRatesChartURL(page, limit int) string {
+// page is 1-based; limit is the page size (1–100); period is the rolling window
+// in days and must be one of {7, 30, 90, 180, 360}.
+func publicRatesChartURL(page, limit, period int) string {
 	v := url.Values{}
 	v.Set("page", strconv.Itoa(page))
 	v.Set("limit", strconv.Itoa(limit))
+	v.Set("period", strconv.Itoa(period))
 	return "/api/public/rates/chart?" + v.Encode()
 }
 
@@ -92,4 +98,21 @@ func meRatesHistoryURL(pair, sourceTitle string, page, limit int) string {
 		v.Set("source_title", sourceTitle)
 	}
 	return "/api/me/rates/history?" + v.Encode()
+}
+
+// meSubscriptionsCreateURL returns the POST endpoint for creating a new subscription.
+func meSubscriptionsCreateURL() string {
+	return "/api/me/subscriptions"
+}
+
+// meSubscriptionsRawURL returns the per-condition subscription list endpoint.
+func meSubscriptionsRawURL() string {
+	return "/api/me/subscriptions/raw"
+}
+
+// meSubscriptionByIDURL returns the single-subscription endpoint for PATCH and
+// DELETE. The id is percent-escaped so RUS...T<hex> identifiers round-trip
+// cleanly even if a future ID format includes characters that need escaping.
+func meSubscriptionByIDURL(id string) string {
+	return "/api/me/subscriptions/" + url.PathEscape(id)
 }

@@ -66,6 +66,16 @@ const (
 	// access logs).
 	MeRatesHistory = "/api/me/rates/history"
 
+	// MeSubscriptionsRaw returns the calling user's subscriptions as one row per
+	// condition (not grouped by source), with stable subscription IDs suitable for
+	// PATCH and DELETE. Authentication is via Telegram WebApp initData HMAC.
+	MeSubscriptionsRaw = "/api/me/subscriptions/raw"
+
+	// MeSubscriptionByID is the pattern for single-subscription endpoints:
+	// PATCH to update condition fields, DELETE to remove. Cross-user access
+	// returns 404 (same body as a genuine miss) to avoid existence disclosure.
+	MeSubscriptionByID = "/api/me/subscriptions/{id}"
+
 	// MeProfile upserts the calling user's profile preferences (currently only
 	// IANA timezone). Authentication is via Telegram WebApp initData HMAC, same
 	// as MeSubscriptions.

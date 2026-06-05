@@ -27,13 +27,22 @@ import (
 // The empty-initData path and the 401-response path both render this message.
 const authFailureMsg = "This page must be opened from the bot&#39;s button. Please reopen via the bot."
 
+// meManageGearSVG is the inline SVG gear icon used in the manage-subscriptions
+// button. Viewbox is 24×24 px; rendered at 20×20 px via CSS width/height.
+const meManageGearSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">` +
+	`<path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.01 7.01 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 2h-4c-.25 0-.46.18-.49.42l-.36 2.54a7.01 7.01 0 0 0-1.62.94l-2.39-.96a.48.48 0 0 0-.59.22L2.63 8.48a.48.48 0 0 0 .12.61l2.03 1.58A7.2 7.2 0 0 0 4.71 12c0 .32.03.63.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.36 1.04.67 1.62.94l.36 2.54c.05.24.26.42.49.42h4c.25 0 .46-.18.49-.42l.36-2.54a7.01 7.01 0 0 0 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 0 1 8.4 12 3.6 3.6 0 0 1 12 8.4a3.6 3.6 0 0 1 3.6 3.6 3.6 3.6 0 0 1-3.6 3.6z"/>` +
+	`</svg>`
+
 // RenderMeSubscriptions returns the full HTML for the Mini App subscriptions
 // screen. Default top-to-bottom layout:
-//  1. Sparkline-list chart slot (skeleton, empty-state, or the rendered chart).
-//  2. Pair modal slot — always present so the WASM layer can update it
-//     in-place without rebuilding the page.
+//  1. #me-sparkline-chart — sparkline-list chart (skeleton / empty / rendered).
+//  2. #me-pair-modal-slot — pair detail overlay (empty unless OpenPair is set).
 //
-// AuthFailure short-circuits the whole screen to just the auth-failure message.
+// The manage-subscriptions gear button is absolutely positioned at the top-right
+// of #app via CSS and so contributes nothing to the vertical flow — it floats
+// over the empty space to the right of the chart-card header. The button is NOT
+// rendered on the guest screen or when AuthFailure is set; AuthFailure
+// short-circuits the whole screen to just the auth-failure message.
 //
 // Every user-influenced field is passed through dom.Escape before interpolation.
 func RenderMeSubscriptions(state application.MeSubscriptionsState) string {
@@ -42,6 +51,9 @@ func RenderMeSubscriptions(state application.MeSubscriptionsState) string {
 	}
 
 	var b strings.Builder
+	b.WriteString(`<button id="me-manage" class="me-manage-gear" type="button" aria-label="Manage subscriptions">`)
+	b.WriteString(meManageGearSVG)
+	b.WriteString(`</button>`)
 	b.WriteString(`<div id="me-sparkline-chart">`)
 	b.WriteString(renderSparklineSlot(state))
 	b.WriteString(`</div>`)
@@ -159,7 +171,7 @@ func renderSparklineSlot(state application.MeSubscriptionsState) string {
 	if state.Chart == nil {
 		return `<div class="sparkline-empty">No chart data yet.</div>`
 	}
-	return RenderSparklineList(*state.Chart)
+	return RenderSparklineListForPeriod(*state.Chart, state.Period)
 }
 
 // findChartRowByPair returns the MeChartPairRow whose Pair field equals pair.

@@ -23,6 +23,12 @@
       padding: 12px;
       min-height: 100vh;
     }
+    /*
+     * #app is the screen container; making it position: relative establishes
+     * the containing block for the absolutely positioned .me-manage-gear
+     * button (see CSS rule further down).
+     */
+    #app { position: relative; }
     .badges { display: flex; flex-wrap: wrap; gap: 4px; }
     .badge {
       background: var(--tg-theme-button-color, #2196f3);
@@ -133,6 +139,29 @@
       color: var(--tg-theme-hint-color, #888);
       margin-top: 14px;
       text-align: center;
+    }
+    .period-chip-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .period-chip {
+      background: transparent;
+      border: 1px solid var(--tg-theme-hint-color, #aaa);
+      color: var(--tg-theme-hint-color, #888);
+      border-radius: 12px;
+      padding: 3px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      line-height: 1.4;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .period-chip--active {
+      background: var(--tg-theme-button-color, #2196f3);
+      border-color: var(--tg-theme-button-color, #2196f3);
+      color: var(--tg-theme-button-text-color, #fff);
+      font-weight: 500;
     }
     .sparkline-empty,
     .sparkline-error {
@@ -364,6 +393,386 @@
     @media (prefers-reduced-motion: reduce) {
       .app-loader-arc-outer,
       .app-loader-arc-inner { animation-duration: 3s; }
+    }
+    /* Subscription editor screen */
+    .me-edit-topbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 0 8px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--tg-theme-secondary-bg-color, #eee);
+    }
+    .me-edit-back {
+      background: transparent;
+      border: 1px solid var(--tg-theme-hint-color, #aaa);
+      color: var(--tg-theme-link-color, #2196f3);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      min-height: 44px;
+    }
+    .me-edit-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--tg-theme-text-color, #222);
+    }
+    .me-edit-section-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin: 14px 0 8px;
+      color: var(--tg-theme-text-color, #222);
+    }
+    .me-edit-label {
+      display: block;
+      font-size: 12px;
+      color: var(--tg-theme-hint-color, #888);
+      margin-bottom: 4px;
+    }
+    .me-edit-select,
+    .me-edit-input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      border: 1px solid var(--tg-theme-hint-color, #ccc);
+      border-radius: 8px;
+      background: var(--tg-theme-secondary-bg-color, #f9f9f9);
+      color: var(--tg-theme-text-color, #222);
+      font-size: 14px;
+      min-height: 44px;
+      margin-bottom: 10px;
+    }
+    /*
+     * Two-step provider/pair picker.
+     * The trigger button looks like an input field. When open, an overlay
+     * with a search input + paginated list is positioned absolutely below
+     * the trigger, on top of a transparent backdrop that catches outside
+     * clicks. Both pickers share this class family; only one is open at a
+     * time (enforced by the controller).
+     */
+    .me-edit-picker {
+      position: relative;
+      margin-bottom: 10px;
+    }
+    .me-edit-picker-trigger {
+      width: 100%;
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 12px;
+      border: 1px solid var(--tg-theme-hint-color, #ccc);
+      border-radius: 8px;
+      background: var(--tg-theme-secondary-bg-color, #f9f9f9);
+      color: var(--tg-theme-text-color, #222);
+      font-size: 14px;
+      min-height: 44px;
+      cursor: pointer;
+      text-align: left;
+    }
+    .me-edit-picker-trigger:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .me-edit-picker-trigger-label {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .me-edit-picker-caret {
+      color: var(--tg-theme-hint-color, #888);
+      font-size: 11px;
+    }
+    /*
+     * Children of the trigger must not catch pointer events: the delegated
+     * #app click handler dispatches on event.target.id, which would otherwise
+     * see the inner <span> (label or caret) instead of the trigger button,
+     * making center-clicks no-ops. pointer-events: none on the children
+     * passes the click straight to the button.
+     */
+    .me-edit-picker-trigger > * {
+      pointer-events: none;
+    }
+    .me-edit-picker-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      background: transparent;
+    }
+    .me-edit-picker-overlay {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 100%;
+      margin-top: 4px;
+      z-index: 60;
+      background: var(--tg-theme-bg-color, #fff);
+      border: 1px solid var(--tg-theme-hint-color, #ccc);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+      padding: 8px;
+      max-height: 60vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .me-edit-picker-search {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      margin-bottom: 6px;
+      border: 1px solid var(--tg-theme-hint-color, #ccc);
+      border-radius: 6px;
+      background: var(--tg-theme-secondary-bg-color, #f9f9f9);
+      color: var(--tg-theme-text-color, #222);
+      font-size: 14px;
+      min-height: 36px;
+    }
+    .me-edit-picker-results {
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-height: 0; /* required so .me-edit-picker-list-area can shrink */
+    }
+    /*
+     * .me-edit-picker-list-area is the scrollable region. Pagination sits
+     * outside of it (sibling under .me-edit-picker-results) so prev/next
+     * stays pinned at the bottom of the overlay regardless of list length.
+     */
+    .me-edit-picker-list-area {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      min-height: 0;
+    }
+    .me-edit-picker-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .me-edit-picker-item {
+      padding: 12px 10px;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      color: var(--tg-theme-text-color, #222);
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    .me-edit-picker-item:hover,
+    .me-edit-picker-item:focus-visible {
+      background: var(--tg-theme-secondary-bg-color, #eef3fb);
+      outline: none;
+    }
+    .me-edit-picker-item-active {
+      background: var(--tg-theme-button-color, #2ea6ff);
+      color: var(--tg-theme-button-text-color, #fff);
+    }
+    .me-edit-picker-empty {
+      padding: 16px 10px;
+      text-align: center;
+      font-size: 13px;
+      color: var(--tg-theme-hint-color, #888);
+    }
+    .me-edit-picker-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid var(--tg-theme-hint-color, #ddd);
+    }
+    .me-edit-picker-prev,
+    .me-edit-picker-next {
+      background: var(--tg-theme-button-color, #2ea6ff);
+      color: var(--tg-theme-button-text-color, #fff);
+      border: none;
+      border-radius: 6px;
+      padding: 8px 14px;
+      min-height: 36px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .me-edit-picker-prev:disabled,
+    .me-edit-picker-next:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+    .me-edit-picker-page-info {
+      font-size: 12px;
+      color: var(--tg-theme-hint-color, #888);
+    }
+    .me-edit-cond-type-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .me-edit-cond-radio {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 13px;
+      color: var(--tg-theme-text-color, #222);
+      cursor: pointer;
+      min-height: 44px;
+      padding: 8px 10px;
+      border: 1px solid var(--tg-theme-hint-color, #ccc);
+      border-radius: 8px;
+    }
+    .me-edit-help {
+      font-size: 11px;
+      color: var(--tg-theme-hint-color, #999);
+      margin: -6px 0 10px;
+    }
+    .me-edit-form-error {
+      font-size: 12px;
+      color: #e53935;
+      margin-bottom: 8px;
+      min-height: 1.4em;
+    }
+    .me-edit-buttons {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .me-edit-save,
+    .me-edit-cancel {
+      flex: 1;
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      min-height: 44px;
+    }
+    .me-edit-save {
+      background: var(--tg-theme-button-color, #2196f3);
+      color: var(--tg-theme-button-text-color, #fff);
+      border: none;
+    }
+    .me-edit-cancel {
+      background: transparent;
+      border: 1px solid var(--tg-theme-hint-color, #ccc);
+      color: var(--tg-theme-text-color, #444);
+    }
+    .me-edit-item-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .me-edit-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--tg-theme-secondary-bg-color, #eee);
+      font-size: 13px;
+      color: var(--tg-theme-text-color, #333);
+    }
+    .me-edit-item-source {
+      font-weight: 500;
+      min-width: 70px;
+    }
+    .me-edit-item-cond {
+      flex: 1;
+      color: var(--tg-theme-hint-color, #888);
+    }
+    .me-edit-delete {
+      background: transparent;
+      border: none;
+      color: #e53935;
+      font-size: 16px;
+      cursor: pointer;
+      padding: 6px 8px;
+      min-height: 44px;
+      min-width: 44px;
+    }
+    .me-edit-empty {
+      text-align: center;
+      padding: 30px 12px;
+      color: var(--tg-theme-hint-color, #888);
+      font-size: 13px;
+    }
+    .me-edit-loading {
+      text-align: center;
+      padding: 40px 12px;
+      color: var(--tg-theme-hint-color, #888);
+      font-size: 14px;
+    }
+    /*
+     * List view (Your subscriptions) — search input, results slot, and the
+     * "+ Add new subscription" CTA at the bottom. The results slot mirrors
+     * the picker pattern so the search input survives keystrokes while the
+     * paginated rows redraw underneath.
+     */
+    .me-edit-list-search {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      border: 1px solid var(--tg-theme-hint-color, #ccc);
+      border-radius: 8px;
+      background: var(--tg-theme-secondary-bg-color, #f9f9f9);
+      color: var(--tg-theme-text-color, #222);
+      font-size: 14px;
+      min-height: 44px;
+    }
+    .me-edit-list-results {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .me-edit-list-actions {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .me-edit-list-actions .me-edit-save {
+      flex: 1;
+    }
+    /*
+     * Gear button — authenticated subscriptions screen.
+     * Absolutely positioned at the top-right of #app so it floats over the
+     * empty space to the right of the chart-card header instead of consuming
+     * its own row above the chart. #app is given position: relative below so
+     * this absolute element resolves against the app container.
+     */
+    .me-manage-gear {
+      position: absolute;
+      top: 0;
+      right: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      background: transparent;
+      border: none;
+      border-radius: 8px;
+      color: var(--tg-theme-button-color, #2ea6ff);
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    .me-manage-gear:active {
+      opacity: 0.7;
+    }
+    .me-manage-gear svg {
+      width: 20px;
+      height: 20px;
+      /*
+       * Same reason as .me-edit-picker-trigger > *: the delegated #app click
+       * handler matches on event.target.id; a click on the SVG would set
+       * target to the SVG element and miss the button id.
+       */
+      pointer-events: none;
     }
   </style>
 </head>

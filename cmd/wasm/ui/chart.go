@@ -29,11 +29,29 @@ const svgXLast = 295.0
 const svgYMin = 8.0
 const svgYMax = 52.0
 
+// allowedUIPeriods is the ordered list of period values (days) shown in the
+// chip row. Matches application.AllowedChartPeriods; the list is inlined here
+// to keep the ui package free of an import cycle with application.
+var allowedUIPeriods = []int{7, 30, 90, 180, 360}
+
 // RenderSparklineList returns the full HTML for the sparkline-list chart view.
 // One row is rendered per pair in chart.Pairs. An empty Pairs slice renders
-// the "no chart data" empty-state. The output is a self-contained HTML fragment
-// safe for innerHTML assignment.
+// the "no chart data" empty-state. The period selector row defaults to 7 days;
+// use RenderSparklineListForPeriod to supply the active selection explicitly.
 func RenderSparklineList(chart dto.MeChartResponse) string {
+	return renderSparklineListInternal(chart, 7)
+}
+
+// RenderSparklineListForPeriod is like RenderSparklineList but marks the chip
+// for period as active. period must be one of {7, 30, 90, 180, 360}; an
+// unrecognised value is silently treated as 7.
+func RenderSparklineListForPeriod(chart dto.MeChartResponse, period int) string {
+	return renderSparklineListInternal(chart, period)
+}
+
+// renderSparklineListInternal renders the full chart list with the given active
+// period chip highlighted.
+func renderSparklineListInternal(chart dto.MeChartResponse, period int) string {
 	if len(chart.Pairs) == 0 {
 		return `<div class="sparkline-empty"><p>No chart data yet.</p></div>`
 	}
@@ -48,11 +66,49 @@ func RenderSparklineList(chart dto.MeChartResponse) string {
 	fmt.Fprintf(&b, `<div class="sparkline-subtitle">%s</div>`, dateLabel)
 	b.WriteString(`</div>`)
 
+	b.WriteString(renderPeriodChips(period))
+
 	for _, row := range chart.Pairs {
 		b.WriteString(renderSparklineRow(row))
 	}
 
 	b.WriteString(`<div class="sparkline-footer">tap a row to see details →</div>`)
+	b.WriteString(`</div>`)
+	return b.String()
+}
+
+// renderPeriodChips returns the HTML for the 5-chip period selector row.
+// The chip for activePeriod carries the period-chip--active class; all chips
+// carry a data-period attribute so the delegated click handler in main.go can
+// read it without traversing child nodes.
+//
+// Period labels use a compact suffix (e.g. "7d", "30d") to fit on narrow
+// screens. The active chip falls back to 7 when activePeriod is unrecognised.
+func renderPeriodChips(activePeriod int) string {
+	// Validate: if activePeriod is not in the whitelist, treat as 7.
+	valid := false
+	for _, p := range allowedUIPeriods {
+		if activePeriod == p {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		activePeriod = 7
+	}
+
+	var b strings.Builder
+	b.WriteString(`<div class="period-chip-row">`)
+	for _, p := range allowedUIPeriods {
+		activeClass := ""
+		if p == activePeriod {
+			activeClass = ` period-chip--active`
+		}
+		fmt.Fprintf(&b,
+			`<button class="period-chip%s" type="button" data-period="%d">%dd</button>`,
+			activeClass, p, p,
+		)
+	}
 	b.WriteString(`</div>`)
 	return b.String()
 }

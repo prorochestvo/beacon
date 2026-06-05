@@ -251,6 +251,134 @@ func TestPublicSubscriptionsPage_ClosePairModal(t *testing.T) {
 	})
 }
 
+func TestPublicSubscriptionsPage_SetPeriod(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid period is stored and chart is reloaded", func(t *testing.T) {
+		t.Parallel()
+		pairs := samplePublicPairs()
+		f := &publicFetcher{
+			jsonResponse: publicChartBody("30 days", 1, 20, int64(len(pairs)), pairs),
+		}
+		page := newPublicPage(f)
+		err := page.SetPeriod(t.Context(), 30)
+		require.NoError(t, err)
+		assert.Equal(t, 30, page.State().Period)
+		assert.Contains(t, f.lastURL, "period=30", "period must appear in the request URL")
+	})
+
+	t.Run("default period is 7 in a freshly constructed page", func(t *testing.T) {
+		t.Parallel()
+		page := newPublicPage(&publicFetcher{})
+		assert.Equal(t, 7, page.State().Period)
+	})
+
+	t.Run("invalid period is clamped to default and chart is reloaded", func(t *testing.T) {
+		t.Parallel()
+		pairs := samplePublicPairs()
+		f := &publicFetcher{
+			jsonResponse: publicChartBody("7 days", 1, 20, int64(len(pairs)), pairs),
+		}
+		page := newPublicPage(f)
+		err := page.SetPeriod(t.Context(), 999)
+		require.NoError(t, err)
+		assert.Equal(t, 7, page.State().Period, "invalid period must be clamped to PublicChartDefaultPeriod")
+		assert.Contains(t, f.lastURL, "period=7")
+	})
+
+	t.Run("each AllowedChartPeriods value is accepted", func(t *testing.T) {
+		t.Parallel()
+		for _, period := range application.AllowedChartPeriods {
+			period := period
+			t.Run("", func(t *testing.T) {
+				t.Parallel()
+				pairs := samplePublicPairs()
+				f := &publicFetcher{
+					jsonResponse: publicChartBody("n days", 1, 20, int64(len(pairs)), pairs),
+				}
+				page := newPublicPage(f)
+				require.NoError(t, page.SetPeriod(t.Context(), period))
+				assert.Equal(t, period, page.State().Period)
+			})
+		}
+	})
+
+	t.Run("fetch error is propagated and period is still updated", func(t *testing.T) {
+		t.Parallel()
+		f := &publicFetcher{jsonErr: errors.New("http 503")}
+		page := newPublicPage(f)
+		err := page.SetPeriod(t.Context(), 90)
+		require.Error(t, err)
+		assert.Equal(t, 90, page.State().Period, "period must be set even when the fetch fails")
+	})
+
+	t.Run("SetPeriod resets to page 1", func(t *testing.T) {
+		t.Parallel()
+		pairs := samplePublicPairs()
+		f := &publicFetcher{
+			jsonResponse: publicChartBody("7 days", 2, 20, 40, pairs),
+		}
+		page := newPublicPage(f)
+		// Seed state so Page appears to be 2.
+		require.NoError(t, page.LoadPage(t.Context(), 2))
+		assert.Equal(t, 2, page.State().Page)
+
+		f.jsonResponse = publicChartBody("30 days", 1, 20, 40, pairs)
+		require.NoError(t, page.SetPeriod(t.Context(), 30))
+		assert.Equal(t, 1, page.State().Page, "SetPeriod must reload from page 1")
+	})
+
+	t.Run("stale chart fetch is dropped when period changes mid-flight", func(t *testing.T) {
+		// The gatedFetcher blocks the first FetchJSON call (the period=30 chart
+		// fetch) until the test releases it. While it is blocked, the test calls
+		// SetPeriod(7) — which completes immediately using the fallback response.
+		// When the blocked (stale) call is released it finds p.state.Period == 7
+		// != 30 and drops the result, so Chart remains as set by the period=7 fetch.
+		t.Parallel()
+
+		pairs7 := []dto.MeChartPairRow{
+			{Pair: "USD/KZT", Series: []dto.MeChartSeries{{Kind: "BID", Color: "#1D9E75", Latest: 449.5}}},
+		}
+		pairs30 := []dto.MeChartPairRow{
+			{Pair: "EUR/KZT", Series: []dto.MeChartSeries{{Kind: "BID", Color: "#378ADD", Latest: 530.0}}},
+		}
+		// First call (period=30) → stale; second call (period=7) → current.
+		bf := newGatedFetcher(
+			publicChartBody("30 days", 1, 20, 1, pairs30),
+			publicChartBody("7 days", 1, 20, 1, pairs7),
+		)
+		page := application.NewPublicSubscriptionsPage(apiclient.New(bf))
+
+		// Launch the period=30 fetch; it blocks inside gatedFetcher.
+		done := make(chan error, 1)
+		go func() {
+			done <- page.SetPeriod(t.Context(), 30)
+		}()
+
+		// Wait until the fetch is blocked, then switch to period=7 while the
+		// period=30 request is still in flight.
+		<-bf.started
+		require.NoError(t, page.SetPeriod(t.Context(), 7))
+
+		// period=7 fetch already completed; Chart reflects pairs7.
+		st := page.State()
+		require.NotNil(t, st.Chart, "chart from period=7 fetch must be stored")
+		assert.Equal(t, 7, st.Period)
+		require.Len(t, st.Chart.Pairs, 1)
+		assert.Equal(t, "USD/KZT", st.Chart.Pairs[0].Pair, "chart must reflect the period=7 result")
+
+		// Release the stale period=30 fetch; it must NOT overwrite the state.
+		bf.release <- struct{}{}
+		require.NoError(t, <-done)
+
+		st = page.State()
+		assert.Equal(t, 7, st.Period, "period must remain 7 after stale fetch is dropped")
+		require.NotNil(t, st.Chart)
+		require.Len(t, st.Chart.Pairs, 1)
+		assert.Equal(t, "USD/KZT", st.Chart.Pairs[0].Pair, "stale period=30 result must not overwrite Chart")
+	})
+}
+
 func TestFindPairInPublicChart(t *testing.T) {
 	t.Parallel()
 

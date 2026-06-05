@@ -13,6 +13,15 @@ import (
 // public sparkline-list chart.
 const PublicChartDefaultLimit = 20
 
+// PublicChartDefaultPeriod is the default rolling-window duration in days used
+// when no period has been selected by the user.
+const PublicChartDefaultPeriod = 7
+
+// AllowedChartPeriods is the whitelist of period values (in days) accepted by
+// both the public and authenticated chart endpoints. Any value not in this
+// slice is rejected by the server with 400.
+var AllowedChartPeriods = []int{7, 30, 90, 180, 360}
+
 // PublicSubscriptionsState is a read-only snapshot the UI layer consumes to
 // render the public (unauthenticated) sparkline list. No user-keyed data is
 // present; the state is entirely derived from the server-side /api/public/...
@@ -36,6 +45,10 @@ type PublicSubscriptionsState struct {
 	Limit int
 	// Total is the unpaginated row count from the most recent fetch.
 	Total int64
+	// Period is the rolling-window duration in days sent as ?period= to the
+	// chart endpoint. Must be one of AllowedChartPeriods; defaults to
+	// PublicChartDefaultPeriod.
+	Period int
 }
 
 // PublicSubscriptionsPage is the page controller for the unauthenticated guest
@@ -55,8 +68,9 @@ func NewPublicSubscriptionsPage(client *apiclient.Client) *PublicSubscriptionsPa
 	return &PublicSubscriptionsPage{
 		client: client,
 		state: PublicSubscriptionsState{
-			Limit: PublicChartDefaultLimit,
-			Page:  1,
+			Limit:  PublicChartDefaultLimit,
+			Page:   1,
+			Period: PublicChartDefaultPeriod,
 		},
 	}
 }
@@ -69,6 +83,10 @@ func (p *PublicSubscriptionsPage) State() PublicSubscriptionsState { return p.st
 // updates the controller state. ChartLoading is set to true before the fetch
 // and reset to false when the fetch returns, regardless of outcome. ChartError
 // is set on failure; Page, Total, and Chart are updated on success.
+//
+// If the period changes while the fetch is in flight (two rapid chip clicks),
+// the stale result is silently dropped and LoadPage returns nil without
+// overwriting state.
 func (p *PublicSubscriptionsPage) LoadPage(ctx context.Context, page int) error {
 	if page < 1 {
 		page = 1
@@ -79,14 +97,25 @@ func (p *PublicSubscriptionsPage) LoadPage(ctx context.Context, page int) error 
 	}
 
 	p.state.ChartLoading = true
-	p.state.ChartError = nil
 
-	resp, err := p.client.PublicRatesChart(ctx, page, limit)
+	// Snapshot before the fetch so we can detect a period change mid-flight.
+	period := p.state.Period
+	if period <= 0 {
+		period = PublicChartDefaultPeriod
+	}
+
+	resp, err := p.client.PublicRatesChart(ctx, page, limit, period)
 	p.state.ChartLoading = false
 	if err != nil {
 		p.state.ChartError = err
 		return err
 	}
+	// Drop the result when the period changed while the fetch was in flight.
+	// Leave ChartError untouched so a prior error survives a stale-success drop.
+	if p.state.Period != period {
+		return nil
+	}
+	p.state.ChartError = nil
 	p.state.Chart = &resp
 	p.state.Page = page
 	p.state.Total = resp.Total
@@ -111,6 +140,24 @@ func (p *PublicSubscriptionsPage) OpenPairModal(pair string) {
 // ClosePairModal clears the open modal.
 func (p *PublicSubscriptionsPage) ClosePairModal() {
 	p.state.OpenPair = nil
+}
+
+// SetPeriod updates the chart rolling-window duration and reloads page 1.
+// period must be one of AllowedChartPeriods; an unrecognised value is silently
+// clamped to PublicChartDefaultPeriod so the UI never blocks on bad input.
+func (p *PublicSubscriptionsPage) SetPeriod(ctx context.Context, period int) error {
+	valid := false
+	for _, allowed := range AllowedChartPeriods {
+		if period == allowed {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		period = PublicChartDefaultPeriod
+	}
+	p.state.Period = period
+	return p.LoadPage(ctx, 1)
 }
 
 // FindPairInPublicChart reports whether chart contains a row whose Pair field

@@ -308,4 +308,65 @@ func TestRenderSparklineList(t *testing.T) {
 		assert.Contains(t, html, "tap a row to see details")
 		assert.NotContains(t, html, "compare sources")
 	})
+
+	t.Run("period chip row is present with 7d active by default", func(t *testing.T) {
+		t.Parallel()
+		bid := mkSeries("BID", ratepair.ColorBid, 0.5, false, []dto.MeChartPoint{
+			{Value: 449.5}, {Value: 450.0},
+		})
+		row := mkRow("USD/KZT", "fiat", nil, []dto.MeChartSeries{bid})
+		html := ui.RenderSparklineList(dto.MeChartResponse{Window: "7d", Pairs: []dto.MeChartPairRow{row}})
+		assert.Contains(t, html, `period-chip-row`)
+		assert.Contains(t, html, `data-period="7"`)
+		assert.Contains(t, html, `period-chip--active`)
+		// All 5 period chips are present.
+		for _, p := range []string{"7", "30", "90", "180", "360"} {
+			assert.Contains(t, html, `data-period="`+p+`"`, "chip for period %s must be present", p)
+		}
+	})
+}
+
+func TestRenderSparklineListForPeriod(t *testing.T) {
+	t.Parallel()
+
+	singleRow := func() []dto.MeChartPairRow {
+		bid := mkSeries("BID", ratepair.ColorBid, 0.5, false, []dto.MeChartPoint{{Value: 449.5}, {Value: 450.0}})
+		return []dto.MeChartPairRow{mkRow("USD/KZT", "fiat", nil, []dto.MeChartSeries{bid})}
+	}
+
+	t.Run("active chip matches the supplied period", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderSparklineListForPeriod(dto.MeChartResponse{Window: "30 days", Pairs: singleRow()}, 30)
+		// The 30d chip must have the active class.
+		require.Contains(t, html, `period-chip--active`)
+		// Find the active chip span and verify it carries data-period="30".
+		idx := strings.Index(html, `period-chip--active`)
+		require.Greater(t, idx, 0)
+		// The active chip HTML contains data-period="30".
+		assert.Contains(t, html[max(0, idx-100):idx+100], `data-period="30"`)
+	})
+
+	t.Run("invalid period falls back to 7d active", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderSparklineListForPeriod(dto.MeChartResponse{Window: "7d", Pairs: singleRow()}, 999)
+		require.Contains(t, html, `period-chip--active`)
+		idx := strings.Index(html, `period-chip--active`)
+		assert.Contains(t, html[max(0, idx-100):idx+100], `data-period="7"`)
+	})
+
+	t.Run("empty pairs still returns empty-state (chips are not rendered)", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderSparklineListForPeriod(dto.MeChartResponse{Window: "7d", Pairs: nil}, 30)
+		assert.Contains(t, html, `sparkline-empty`)
+		assert.NotContains(t, html, `period-chip`)
+	})
+}
+
+// max returns the larger of a and b. Provided as a local helper because the
+// standard library builtin max is not available before Go 1.21 in all build targets.
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

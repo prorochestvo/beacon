@@ -385,7 +385,7 @@ func TestClient_MeRatesChart(t *testing.T) {
 			jsonResponse: []byte(`{"window":"7 days","pairs":[{"pair":"USD/KZT","category":"fiat","spread_pct":0.29,"series":[{"kind":"BID","color":"#1D9E75","latest":449.5,"delta_pct":0.1,"sparse":false,"points":[{"timestamp":"2026-01-01T00:00:00Z","value":449.5}]},{"kind":"ASK","color":"#378ADD","latest":450.0,"delta_pct":0.0,"sparse":false}]}]}`),
 		}
 		c := apiclient.New(f)
-		got, err := c.MeRatesChart(t.Context(), "test-init-data")
+		got, err := c.MeRatesChart(t.Context(), "test-init-data", 7)
 		require.NoError(t, err)
 		assert.Equal(t, "7 days", got.Window)
 		require.Len(t, got.Pairs, 1)
@@ -405,7 +405,7 @@ func TestClient_MeRatesChart(t *testing.T) {
 		t.Parallel()
 		f := &fakeFetcher{jsonResponse: []byte(`not-json`)}
 		c := apiclient.New(f)
-		_, err := c.MeRatesChart(t.Context(), "tok")
+		_, err := c.MeRatesChart(t.Context(), "tok", 7)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "decode me rates chart")
 	})
@@ -414,7 +414,7 @@ func TestClient_MeRatesChart(t *testing.T) {
 		t.Parallel()
 		f := &fakeFetcher{jsonErr: errors.New("connection refused")}
 		c := apiclient.New(f)
-		_, err := c.MeRatesChart(t.Context(), "tok")
+		_, err := c.MeRatesChart(t.Context(), "tok", 7)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "connection refused")
 	})
@@ -426,9 +426,19 @@ func TestClient_MeRatesChart(t *testing.T) {
 			jsonResponse: []byte(`{"window":"168h0m0s","pairs":[]}`),
 		}
 		c := apiclient.New(f)
-		_, err := c.MeRatesChart(t.Context(), tok)
+		_, err := c.MeRatesChart(t.Context(), tok, 7)
 		require.NoError(t, err)
 		assert.Equal(t, tok, f.lastHeaders["X-Telegram-Init-Data"])
+	})
+
+	t.Run("period=30 is forwarded in URL query string", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{jsonResponse: []byte(`{"window":"30 days","pairs":[]}`)}
+		c := apiclient.New(f)
+		got, err := c.MeRatesChart(t.Context(), "tok", 30)
+		require.NoError(t, err)
+		assert.Equal(t, "30 days", got.Window)
+		assert.Contains(t, f.lastURL, "period=30", "period must appear in the request URL")
 	})
 }
 
@@ -551,5 +561,142 @@ func TestClient_MeRatesHistory(t *testing.T) {
 		_, err := c.MeRatesHistory(t.Context(), "tok", "USD/KZT", "Kaspi", 1, 20)
 		require.NoError(t, err)
 		assert.Contains(t, f.lastURL, "source_title=Kaspi", "source_title must be present in the request URL")
+	})
+}
+
+func TestClient_MeSubscriptionsRaw(t *testing.T) {
+	t.Parallel()
+
+	t.Run("happy path decodes raw subscription list", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{
+			jsonResponse: []byte(`{"items":[{"id":"sub-1","source_name":"src_a","source_title":"Alpha","base_currency":"USD","quote_currency":"KZT","condition_type":"delta","condition_value":"5","updated_at":"2024-01-01T00:00:00Z"}]}`),
+		}
+		c := apiclient.New(f)
+		got, err := c.MeSubscriptionsRaw(t.Context(), "initdata-token")
+		require.NoError(t, err)
+		require.Len(t, got.Items, 1)
+		assert.Equal(t, "sub-1", got.Items[0].ID)
+		assert.Equal(t, "src_a", got.Items[0].SourceName)
+		assert.Equal(t, "initdata-token", f.lastHeaders["X-Telegram-Init-Data"])
+		assert.Equal(t, "/api/me/subscriptions/raw", f.lastURL)
+	})
+
+	t.Run("401 propagates as error", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{jsonErr: errors.New("http 401")}
+		c := apiclient.New(f)
+		_, err := c.MeSubscriptionsRaw(t.Context(), "bad-token")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "401")
+	})
+
+	t.Run("empty items returns non-nil slice", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{jsonResponse: []byte(`{"items":[]}`)}
+		c := apiclient.New(f)
+		got, err := c.MeSubscriptionsRaw(t.Context(), "tok")
+		require.NoError(t, err)
+		assert.NotNil(t, got.Items)
+		assert.Empty(t, got.Items)
+	})
+}
+
+func TestClient_MeSubscriptionCreate(t *testing.T) {
+	t.Parallel()
+
+	t.Run("happy path returns generated ID", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{
+			jsonResponse: []byte(`{"id":"generated-123"}`),
+		}
+		c := apiclient.New(f)
+		req := dto.MeSubscriptionCreateRequest{
+			SourceName:     "src_a",
+			ConditionType:  "delta",
+			ConditionValue: "5",
+		}
+		got, err := c.MeSubscriptionCreate(t.Context(), "tok", req)
+		require.NoError(t, err)
+		assert.Equal(t, "generated-123", got.ID)
+		assert.Equal(t, "tok", f.lastHeaders["X-Telegram-Init-Data"])
+		assert.Equal(t, "/api/me/subscriptions", f.lastURL)
+		assert.Equal(t, "POST", f.lastMethod)
+	})
+
+	t.Run("401 propagates as error", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{jsonErr: errors.New("http 401")}
+		c := apiclient.New(f)
+		_, err := c.MeSubscriptionCreate(t.Context(), "bad", dto.MeSubscriptionCreateRequest{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "401")
+	})
+}
+
+func TestClient_MeSubscriptionUpdate(t *testing.T) {
+	t.Parallel()
+
+	t.Run("happy path returns nil on 204", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{}
+		c := apiclient.New(f)
+		req := dto.MeSubscriptionUpdateRequest{ConditionType: "interval", ConditionValue: "1h"}
+		err := c.MeSubscriptionUpdate(t.Context(), "tok", "sub-abc", req)
+		require.NoError(t, err)
+		assert.Equal(t, "tok", f.lastHeaders["X-Telegram-Init-Data"])
+		assert.Contains(t, f.lastURL, "sub-abc")
+		assert.Equal(t, "PATCH", f.lastMethod)
+	})
+
+	t.Run("401 propagates as error", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{noContentErr: errors.New("http 401")}
+		c := apiclient.New(f)
+		err := c.MeSubscriptionUpdate(t.Context(), "bad", "sub-abc", dto.MeSubscriptionUpdateRequest{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "401")
+	})
+
+	t.Run("id with slash is percent-escaped in URL", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{}
+		c := apiclient.New(f)
+		err := c.MeSubscriptionUpdate(t.Context(), "tok", "a/b", dto.MeSubscriptionUpdateRequest{ConditionType: "delta", ConditionValue: "1"})
+		require.NoError(t, err)
+		assert.Contains(t, f.lastURL, "a%2Fb", "slash must be percent-escaped in path segment")
+	})
+}
+
+func TestClient_MeSubscriptionDelete(t *testing.T) {
+	t.Parallel()
+
+	t.Run("happy path returns nil on 204", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{}
+		c := apiclient.New(f)
+		err := c.MeSubscriptionDelete(t.Context(), "tok", "sub-xyz")
+		require.NoError(t, err)
+		assert.Equal(t, "tok", f.lastHeaders["X-Telegram-Init-Data"])
+		assert.Contains(t, f.lastURL, "sub-xyz")
+		assert.Equal(t, "DELETE", f.lastMethod)
+	})
+
+	t.Run("401 propagates as error", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{noContentErr: errors.New("http 401")}
+		c := apiclient.New(f)
+		err := c.MeSubscriptionDelete(t.Context(), "bad", "sub-xyz")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "401")
+	})
+
+	t.Run("id with slash is percent-escaped in URL", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{}
+		c := apiclient.New(f)
+		err := c.MeSubscriptionDelete(t.Context(), "tok", "a/b")
+		require.NoError(t, err)
+		assert.Contains(t, f.lastURL, "a%2Fb", "slash must be percent-escaped in path segment")
 	})
 }

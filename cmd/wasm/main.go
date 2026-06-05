@@ -84,6 +84,11 @@ func main() {
 		return nil
 	}))
 
+	wasmObj.Set("renderMeSubscriptionsEdit", js.FuncOf(func(_ js.Value, _ []js.Value) any {
+		go runRenderMeSubscriptionsEdit(client)
+		return nil
+	}))
+
 	js.Global().Set("_wasm", wasmObj)
 
 	select {} // keep the WASM runtime alive
@@ -696,14 +701,52 @@ func bindMeSubsHandlers(
 		redrawModal()
 	}
 
-	// Delegated click handler on the chart container: opens modal for the
-	// nearest .sparkline-row ancestor of the click target.
+	redrawChartSlot := func() {
+		if !*alive {
+			return
+		}
+		chartDiv := doc.Call("getElementById", "me-sparkline-chart")
+		if chartDiv.IsNull() || chartDiv.IsUndefined() {
+			return
+		}
+		chartDiv.Set("innerHTML", ui.RenderSparklineSlot(page.State()))
+	}
+
+	// Gear button: navigate to the subscription editor screen.
+	manageBtn := doc.Call("getElementById", "me-manage")
+	if !manageBtn.IsNull() && !manageBtn.IsUndefined() {
+		scr.addRelease(dom.On(manageBtn, "click", func(_ js.Value) {
+			js.Global().Get("_wasm").Call("renderMeSubscriptionsEdit")
+		}))
+	}
+
+	// Delegated click handler on the chart container: intercepts period-chip
+	// clicks first, then opens modal for the nearest .sparkline-row ancestor.
 	chartDiv := doc.Call("getElementById", "me-sparkline-chart")
 	if !chartDiv.IsNull() && !chartDiv.IsUndefined() {
 		scr.addRelease(dom.On(chartDiv, "click", func(ev js.Value) {
 			target := ev.Get("target")
 			if target.IsNull() || target.IsUndefined() {
 				return
+			}
+			// Period-chip click: intercept before the .sparkline-row closest walk.
+			chipEl := target.Call("closest", ".period-chip")
+			if !chipEl.IsNull() && !chipEl.IsUndefined() {
+				periodAttr := chipEl.Get("dataset").Get("period")
+				if !periodAttr.IsUndefined() {
+					periodVal, err := strconv.Atoi(periodAttr.String())
+					if err == nil {
+						go func() {
+							fetchCtx, fetchCancel := context.WithTimeout(ctx, 15*time.Second)
+							defer fetchCancel()
+							if err := page.SetPeriod(fetchCtx, periodVal); err != nil {
+								js.Global().Get("console").Call("warn", "period chip:", err.Error())
+							}
+							redrawChartSlot()
+						}()
+					}
+					return
+				}
 			}
 			row := target.Call("closest", ".sparkline-row")
 			if row.IsNull() || row.IsUndefined() {
@@ -980,13 +1023,34 @@ func bindPublicSubsHandlers(
 		redrawModal()
 	}
 
-	// Delegated click on the chart container: open modal for the nearest .sparkline-row.
+	// Delegated click on the chart container: intercepts period-chip clicks
+	// first, then opens modal for the nearest .sparkline-row ancestor.
 	chartDiv := doc.Call("getElementById", "public-sparkline-chart")
 	if !chartDiv.IsNull() && !chartDiv.IsUndefined() {
 		scr.addRelease(dom.On(chartDiv, "click", func(ev js.Value) {
 			target := ev.Get("target")
 			if target.IsNull() || target.IsUndefined() {
 				return
+			}
+			// Period-chip click: intercept before the .sparkline-row closest walk.
+			chipEl := target.Call("closest", ".period-chip")
+			if !chipEl.IsNull() && !chipEl.IsUndefined() {
+				periodAttr := chipEl.Get("dataset").Get("period")
+				if !periodAttr.IsUndefined() {
+					periodVal, err := strconv.Atoi(periodAttr.String())
+					if err == nil {
+						go func() {
+							fetchCtx, fetchCancel := context.WithTimeout(ctx, 15*time.Second)
+							defer fetchCancel()
+							if err := page.SetPeriod(fetchCtx, periodVal); err != nil {
+								js.Global().Get("console").Call("warn", "period chip:", err.Error())
+							}
+							redrawChart()
+							redrawPagination()
+						}()
+					}
+					return
+				}
 			}
 			row := target.Call("closest", ".sparkline-row")
 			if row.IsNull() || row.IsUndefined() {
@@ -1151,6 +1215,282 @@ func bindPaginatedSection(doc js.Value, sectionID string, page *application.Sour
 					sec.Set("innerHTML", ui.RenderDailyEventsSection(page.State()))
 				}
 			}()
+		}
+	}))
+}
+
+// runRenderMeSubscriptionsEdit is the entry point for the subscription editor
+// screen. Reads initData once at mount, renders the skeleton immediately, loads
+// the subscription list + active sources in a background goroutine, then wires
+// event handlers. Must be called from a goroutine — never from the main goroutine.
+func runRenderMeSubscriptionsEdit(client *apiclient.Client) {
+	callWebAppIfDefined()
+
+	initData := readInitData()
+
+	screenCtx, cancelScreen := context.WithCancel(context.Background())
+	doc := js.Global().Get("document")
+	app := doc.Call("getElementById", "app")
+
+	scr := mountScreen()
+	scr.addRelease(cancelScreen)
+
+	page := application.NewMeSubscriptionsEditPage(client, initData)
+
+	// alive guards DOM writes against stale screens after navigation.
+	alive := true
+	scr.addRelease(func() { alive = false })
+
+	redraw := func() {
+		if !alive {
+			return
+		}
+		app.Set("innerHTML", ui.RenderMeSubscriptionsEdit(page.State()))
+	}
+
+	// Render skeleton immediately.
+	redraw()
+
+	// Load data in background so the skeleton is visible right away.
+	go func() {
+		fetchCtx, fetchCancel := context.WithTimeout(screenCtx, 15*time.Second)
+		defer fetchCancel()
+		if err := page.LoadInitial(fetchCtx); err != nil {
+			js.Global().Get("console").Call("warn", "edit LoadInitial:", err.Error())
+		}
+		redraw()
+		bindMeSubsEditHandlers(screenCtx, doc, app, page, scr, &alive, redraw)
+	}()
+}
+
+// bindMeSubsEditHandlers wires all event handlers for the subscription editor screen.
+//
+// All interactions are delegated to the stable #app container so that the listeners
+// survive repeated innerHTML replacements performed by redraw(). Newly rendered
+// child nodes are always inside #app, so delegated events bubble up correctly
+// without requiring re-binding after each redraw.
+//
+// Back button (#me-edit-back): calls _wasm.renderMeSubscriptions() to navigate back.
+// Source select (#me-edit-source): updates draft source name via SetDraftSource.
+// Condition-type radios: update draft condition type via SetDraftConditionType; full
+// re-render on change so the placeholder and help text update immediately.
+// Value input (#me-edit-value): updates draft condition value via SetDraftConditionValue
+// on every input event without re-rendering (preserves cursor position).
+// Save (#me-edit-save): calls SaveDraft; re-renders on success or failure.
+// Cancel/Clear (#me-edit-cancel): clears the draft by re-constructing the form area.
+// Delete buttons (.me-edit-delete): reads data-id; calls window.Telegram.WebApp.showConfirm
+// when available, else falls back to window.confirm; calls DeleteRow and re-renders on
+// confirmation.
+//
+// ctx is the screen-lifetime context. alive is a pointer into runRenderMeSubscriptionsEdit's
+// alive bool. redraw repaints the full app element from the current page state.
+func bindMeSubsEditHandlers(
+	ctx context.Context,
+	_ js.Value,
+	app js.Value,
+	page *application.MeSubscriptionsEditPage,
+	scr *screen,
+	_ *bool,
+	redraw func(),
+) {
+	// Delegated click handler on the stable #app container.
+	// Every button/link inside the editor routes here via event bubbling.
+	scr.addRelease(dom.On(app, "click", func(ev js.Value) {
+		target := ev.Get("target")
+		if target.IsNull() || target.IsUndefined() {
+			return
+		}
+		id := target.Get("id").String()
+		switch id {
+		case "me-edit-back":
+			// In the form view, Back returns to the list view; in the list
+			// view, Back leaves the editor for the main Mini App screen.
+			if page.State().ActiveView == application.EditViewForm {
+				page.ShowListView()
+				redraw()
+			} else {
+				js.Global().Get("_wasm").Call("renderMeSubscriptions")
+			}
+		case "me-edit-add":
+			page.ShowFormView()
+			redraw()
+		case "me-edit-save":
+			go func() {
+				fetchCtx, fetchCancel := context.WithTimeout(ctx, 15*time.Second)
+				defer fetchCancel()
+				if err := page.SaveDraft(fetchCtx); err != nil {
+					js.Global().Get("console").Call("warn", "save subscription:", err.Error())
+				}
+				redraw()
+			}()
+		case "me-edit-cancel":
+			page.ClearDraft()
+			redraw()
+		case "me-edit-provider-trigger":
+			page.OpenProviderPicker()
+			redraw()
+		case "me-edit-pair-trigger":
+			page.OpenPairPicker()
+			redraw()
+		case "me-edit-picker-backdrop":
+			page.ClosePickers()
+			redraw()
+		default:
+			// Picker item click: dispatch by data-provider or data-source-name
+			// before falling through to the delete-button path. closest() walks
+			// up so child nodes inside the <li> still resolve correctly.
+			item := target.Call("closest", ".me-edit-picker-item")
+			if !item.IsNull() && !item.IsUndefined() {
+				ds := item.Get("dataset")
+				if pv := ds.Get("provider"); !pv.IsUndefined() {
+					page.ChooseProvider(pv.String())
+					redraw()
+					return
+				}
+				if sn := ds.Get("sourceName"); !sn.IsUndefined() {
+					page.ChoosePair(sn.String())
+					redraw()
+					return
+				}
+			}
+
+			// Pagination prev/next: read data-kind and data-page; ignore the
+			// click when the button is disabled (HTML attr already blocks the
+			// browser, but JS may dispatch synthetic events).
+			pageBtn := target.Call("closest", ".me-edit-picker-prev")
+			if pageBtn.IsNull() || pageBtn.IsUndefined() {
+				pageBtn = target.Call("closest", ".me-edit-picker-next")
+			}
+			if !pageBtn.IsNull() && !pageBtn.IsUndefined() {
+				if pageBtn.Get("disabled").Bool() {
+					return
+				}
+				ds := pageBtn.Get("dataset")
+				kindVal := ds.Get("kind")
+				pageVal := ds.Get("page")
+				if kindVal.IsUndefined() || pageVal.IsUndefined() {
+					return
+				}
+				pageNum, err := strconv.Atoi(pageVal.String())
+				if err != nil || pageNum < 1 {
+					return
+				}
+				switch kindVal.String() {
+				case "provider":
+					page.SetProviderPage(pageNum)
+				case "pair":
+					page.SetPairPage(pageNum)
+				case "list":
+					page.SetListPage(pageNum)
+				}
+				redraw()
+				return
+			}
+
+			// Delete button: walk up to the nearest .me-edit-delete to handle
+			// clicks on child elements inside the button.
+			delBtn := target.Call("closest", ".me-edit-delete")
+			if delBtn.IsNull() || delBtn.IsUndefined() {
+				return
+			}
+			rowID := delBtn.Get("dataset").Get("id").String()
+			if rowID == "" {
+				return
+			}
+
+			confirmAndDelete := func(confirmed bool) {
+				if !confirmed {
+					return
+				}
+				go func() {
+					fetchCtx, fetchCancel := context.WithTimeout(ctx, 15*time.Second)
+					defer fetchCancel()
+					if err := page.DeleteRow(fetchCtx, rowID); err != nil {
+						js.Global().Get("console").Call("warn", "delete subscription:", err.Error())
+					}
+					redraw()
+				}()
+			}
+
+			// Use Telegram WebApp.showConfirm when available (async/callback);
+			// fall back to synchronous window.confirm.
+			webApp := js.Global().Get("Telegram").Get("WebApp")
+			if !webApp.IsUndefined() && !webApp.IsNull() {
+				showConfirm := webApp.Get("showConfirm")
+				if !showConfirm.IsUndefined() && !showConfirm.IsNull() {
+					// js.FuncOf is Released inside the callback after it fires once
+					// to avoid leaking the WASM function-table slot.
+					var cb js.Func
+					cb = js.FuncOf(func(_ js.Value, args []js.Value) any {
+						cb.Release()
+						confirmed := len(args) > 0 && args[0].Bool()
+						confirmAndDelete(confirmed)
+						return nil
+					})
+					webApp.Call("showConfirm", "Delete this subscription?", cb)
+					return
+				}
+			}
+			// Synchronous fallback.
+			confirmed := js.Global().Call("confirm", "Delete this subscription?").Bool()
+			confirmAndDelete(confirmed)
+		}
+	}))
+
+	// Delegated change handler on the stable #app container.
+	// Handles condition-type radio changes; the legacy source <select> is gone
+	// (replaced by the picker overlays which fire click events, not change).
+	scr.addRelease(dom.On(app, "change", func(ev js.Value) {
+		t := ev.Get("target")
+		if t.IsNull() || t.IsUndefined() {
+			return
+		}
+		// Condition-type and direction radios are matched by name; they share
+		// the same group-class but route to different controller methods.
+		switch t.Get("name").String() {
+		case "me-edit-cond-type":
+			page.SetDraftConditionType(t.Get("value").String())
+			redraw()
+		case "me-edit-direction":
+			page.SetDraftDirection(t.Get("value").String())
+			redraw()
+		}
+	}))
+
+	// Delegated input handler on the stable #app container. Three sites:
+	//   1. #me-edit-value — condition-value keystrokes. No redraw; the value
+	//      input does not feed any visible list.
+	//   2. #me-edit-provider-search and #me-edit-pair-search — picker query
+	//      keystrokes. A FULL redraw would recreate the search input element
+	//      and lose caret position, so these update only the matching results
+	//      slot (#me-edit-{provider,pair}-results-slot) and leave the input
+	//      element alone.
+	scr.addRelease(dom.On(app, "input", func(ev js.Value) {
+		t := ev.Get("target")
+		if t.IsNull() || t.IsUndefined() {
+			return
+		}
+		switch t.Get("id").String() {
+		case "me-edit-value":
+			page.SetDraftConditionValue(t.Get("value").String())
+		case "me-edit-provider-search":
+			page.SetProviderQuery(t.Get("value").String())
+			slot := js.Global().Get("document").Call("getElementById", "me-edit-provider-results-slot")
+			if !slot.IsNull() && !slot.IsUndefined() {
+				slot.Set("innerHTML", ui.RenderProviderResultsSlot(page.State()))
+			}
+		case "me-edit-pair-search":
+			page.SetPairQuery(t.Get("value").String())
+			slot := js.Global().Get("document").Call("getElementById", "me-edit-pair-results-slot")
+			if !slot.IsNull() && !slot.IsUndefined() {
+				slot.Set("innerHTML", ui.RenderPairResultsSlot(page.State()))
+			}
+		case "me-edit-list-search":
+			page.SetListQuery(t.Get("value").String())
+			slot := js.Global().Get("document").Call("getElementById", "me-edit-list-results-slot")
+			if !slot.IsNull() && !slot.IsUndefined() {
+				slot.Set("innerHTML", ui.RenderEditListResultsSlot(page.State()))
+			}
 		}
 	}))
 }

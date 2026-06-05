@@ -15,8 +15,12 @@ import (
 	"github.com/seilbekskindirov/monitor/internal/domain/ratepair"
 )
 
-// bucketCount is the number of equal-width time buckets used when downsampling
-// a 7-day series into sparkline points. Tunable in one place.
+// bucketCount is the fixed number of equal-width time buckets used when
+// downsampling a sparkline series, regardless of the selected period.
+// Keeping this constant makes the visual density of the sparkline independent
+// of the horizon: a 360-day chart has 12 buckets of ≈30 days each, and a
+// 7-day chart has 12 buckets of ≈14 hours each. This is intentional — period
+// selection is about horizon, not resolution. See Trade-off #3 in the plan.
 const bucketCount = 12
 
 // SubscriptionsLoader loads a user's subscriptions.
@@ -128,10 +132,19 @@ func NewService(subs SubscriptionsLoader, sources SourcesLoader, values ValuesLo
 	return &Service{subs: subs, sources: sources, values: values, history: history, publicSources: publicSources, now: now}
 }
 
-// ObtainMeChart loads the calling user's subscriptions, fetches the most
-// recent 7 days of rate data for every subscribed pair, downsamples each
-// direction into bucketCount points, groups BID and ASK for the same
-// canonical pair into one PairRow, and returns the sorted rows.
+// ObtainMeChart loads the calling user's subscriptions and builds a sparkline
+// chart covering the last 7 days. It is a convenience wrapper around
+// ObtainMeChartForPeriod with periodDays=7.
+func (s *Service) ObtainMeChart(ctx context.Context, userID string) (*MeChart, error) {
+	return s.ObtainMeChartForPeriod(ctx, userID, 7)
+}
+
+// ObtainMeChartForPeriod loads the calling user's subscriptions, fetches
+// periodDays of rate data for every subscribed pair, downsamples each direction
+// into bucketCount points, groups BID and ASK for the same canonical pair into
+// one PairRow, and returns the sorted rows. periodDays should be one of the
+// whitelisted values {7, 30, 90, 180, 360}; validation is the caller's
+// responsibility (the handler layer enforces it).
 //
 // Pipeline:
 //  1. Load user subscriptions via subs.ObtainRateUserSubscriptionsByUserID.
@@ -139,7 +152,7 @@ func NewService(subs SubscriptionsLoader, sources SourcesLoader, values ValuesLo
 //  3. Dedupe (base, quote, kind) triples; one series per triple regardless
 //     of how many sources serve it.
 //  4. Load rate values for all (source_name, base, quote, kind) keys since
-//     now - ChartWindow via values.ObtainValuesForPairsSince.
+//     now - periodDays*24h via values.ObtainValuesForPairsSince.
 //  5. Group values by (base, quote, kind); when multiple sources contribute a
 //     value at the same timestamp, the last row (highest ID) wins.
 //  6. Downsample each group into bucketCount equal-width time buckets
@@ -151,7 +164,7 @@ func NewService(subs SubscriptionsLoader, sources SourcesLoader, values ValuesLo
 //  9. Determine the display label as BID-natural direction.
 //  10. Compute SpreadPct when both directions are present and non-zero.
 //  11. Sort rows fiat-before-metal, then canonical-pair-ascending.
-func (s *Service) ObtainMeChart(ctx context.Context, userID string) (*MeChart, error) {
+func (s *Service) ObtainMeChartForPeriod(ctx context.Context, userID string, periodDays int64) (*MeChart, error) {
 	subs, err := s.subs.ObtainRateUserSubscriptionsByUserID(ctx, domain.UserTypeTelegram, userID)
 	if err != nil {
 		return nil, err
@@ -194,7 +207,8 @@ func (s *Service) ObtainMeChart(ctx context.Context, userID string) (*MeChart, e
 	// Dedupe to unique (base, quote, kind) triples.
 	uniquePairs := dedupePairTriples(allKeys)
 
-	rows, err := s.buildPairRows(ctx, allKeys, uniquePairs)
+	since := s.now().Add(-time.Duration(periodDays) * 24 * time.Hour)
+	rows, err := s.buildPairRows(ctx, allKeys, uniquePairs, since)
 	if err != nil {
 		return nil, err
 	}
@@ -203,16 +217,28 @@ func (s *Service) ObtainMeChart(ctx context.Context, userID string) (*MeChart, e
 }
 
 // ObtainPublicChart enumerates every distinct (base, quote, kind) triple across
-// active sources, downsamples each into a 7-day sparkline, groups BID/ASK into
-// one PairRow per canonical pair, sorts via ratepair.Less, then slices to the
-// requested page. Returns the page and the unpaginated total of PairRows (the
-// post-grouping count; BID+ASK for the same canonical pair collapse to one row,
-// so total ≤ len(triples)). Returns a non-nil *PublicChart even when the result
-// is empty or the page is out of range.
+// active sources and builds a 7-day sparkline list. It is a convenience wrapper
+// around ObtainPublicChartForPeriod with periodDays=7.
 //
 // page and limit are both normalised internally: page < 1 defaults to 1, limit
 // < 1 defaults to 20, limit > 100 is clamped to 100.
 func (s *Service) ObtainPublicChart(ctx context.Context, page, limit int64) (*PublicChart, int64, error) {
+	return s.ObtainPublicChartForPeriod(ctx, page, limit, 7)
+}
+
+// ObtainPublicChartForPeriod enumerates every distinct (base, quote, kind) triple
+// across active sources, downsamples each into a sparkline covering periodDays,
+// groups BID/ASK into one PairRow per canonical pair, sorts via ratepair.Less,
+// then slices to the requested page. Returns the page and the unpaginated total
+// of PairRows (the post-grouping count; BID+ASK for the same canonical pair
+// collapse to one row, so total ≤ len(triples)). Returns a non-nil *PublicChart
+// even when the result is empty or the page is out of range.
+//
+// periodDays should be one of the whitelisted values {7, 30, 90, 180, 360};
+// validation is the caller's responsibility (the handler layer enforces it).
+// page and limit are both normalised internally: page < 1 defaults to 1, limit
+// < 1 defaults to 20, limit > 100 is clamped to 100.
+func (s *Service) ObtainPublicChartForPeriod(ctx context.Context, page, limit, periodDays int64) (*PublicChart, int64, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -233,7 +259,8 @@ func (s *Service) ObtainPublicChart(ctx context.Context, page, limit int64) (*Pu
 
 	uniquePairs := dedupePairTriples(triples)
 
-	rows, err := s.buildPairRows(ctx, triples, uniquePairs)
+	since := s.now().Add(-time.Duration(periodDays) * 24 * time.Hour)
+	rows, err := s.buildPairRows(ctx, triples, uniquePairs, since)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -251,24 +278,24 @@ func (s *Service) ObtainPublicChart(ctx context.Context, page, limit int64) (*Pu
 }
 
 // buildPairRows runs the shared downsampling, BID/ASK grouping, and
-// sort pipeline used by both ObtainMeChart and ObtainPublicChart. allKeys is
-// the list of (source, base, quote, kind) query targets; uniquePairs is the
-// deduplicated set of (base, quote, kind) triples for which series should be
-// built. Returns a non-nil slice (possibly empty) sorted by ratepair.Less.
+// sort pipeline used by ObtainMeChartForPeriod and ObtainPublicChartForPeriod.
+// allKeys is the list of (source, base, quote, kind) query targets; uniquePairs
+// is the deduplicated set of (base, quote, kind) triples for which series should
+// be built; since is the lower bound of the time window (now - period). Returns
+// a non-nil slice (possibly empty) sorted by ratepair.Less.
 //
 // The sort uses sort.SliceStable so that two PairRows with equal ratepair.Less
 // ordering remain in the order they were produced by the grouping loop. In
 // practice this is moot — ratepair.Less uses canonical pair as a tiebreaker —
 // but it makes page boundaries deterministic in the presence of any future
-// ties, which matters for ObtainPublicChart where the sorted slice is then
-// split into pages.
-func (s *Service) buildPairRows(ctx context.Context, allKeys []domain.SourcePairKey, uniquePairs []ratepair.Pair) ([]PairRow, error) {
+// ties, which matters for ObtainPublicChartForPeriod where the sorted slice is
+// then split into pages.
+func (s *Service) buildPairRows(ctx context.Context, allKeys []domain.SourcePairKey, uniquePairs []ratepair.Pair, since time.Time) ([]PairRow, error) {
 	if len(allKeys) == 0 {
 		return []PairRow{}, nil
 	}
 
 	now := s.now()
-	since := now.Add(-ratepair.ChartWindow)
 
 	rawValues, err := s.values.ObtainValuesForPairsSince(ctx, allKeys, since)
 	if err != nil {

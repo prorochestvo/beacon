@@ -38,6 +38,9 @@ func NewGateway(
 // meSubscriptionRepo is a pass-through interface from the concrete repository layer.
 type meSubscriptionRepo interface {
 	ObtainRateUserSubscriptionsByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.RateUserSubscription, error)
+	ObtainRateUserSubscriptionByID(ctx context.Context, id string) (*domain.RateUserSubscription, error)
+	RetainRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
+	RemoveRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
 }
 
 // meSourceRepo is a pass-through interface for source look-ups.

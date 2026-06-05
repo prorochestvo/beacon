@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -91,6 +92,9 @@ type rateService interface {
 
 type meSubscriptionRepository interface {
 	ObtainRateUserSubscriptionsByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.RateUserSubscription, error)
+	ObtainRateUserSubscriptionByID(ctx context.Context, id string) (*domain.RateUserSubscription, error)
+	RetainRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
+	RemoveRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
 }
 
 type meSourceRepository interface {
@@ -109,10 +113,13 @@ type meProfileRepository interface {
 
 // meChartService is the application service contract consumed by GetMeRatesChart,
 // GetMeRatesHistory, and GetPublicRatesChart. It is satisfied by *appchart.Service.
+// Only the period-aware variants are used by handlers; the default-period wrappers
+// (ObtainMeChart, ObtainPublicChart) live on the concrete type but are not part
+// of this interface.
 type meChartService interface {
-	ObtainMeChart(ctx context.Context, userID string) (*appchart.MeChart, error)
+	ObtainMeChartForPeriod(ctx context.Context, userID string, periodDays int64) (*appchart.MeChart, error)
 	ObtainMeHistory(ctx context.Context, userID, pair, sourceTitle string, page, limit int64) (*appchart.MeHistoryResult, error)
-	ObtainPublicChart(ctx context.Context, page, limit int64) (*appchart.PublicChart, int64, error)
+	ObtainPublicChartForPeriod(ctx context.Context, page, limit, periodDays int64) (*appchart.PublicChart, int64, error)
 }
 
 // Healthz reports whether the service can reach its dependencies. Returns
@@ -673,6 +680,257 @@ func (h *Handler) ListMeSubscriptions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ListMeSubscriptionsRaw returns the caller's own subscriptions as one row per
+// condition, each carrying its stable subscription ID. Unlike ListMeSubscriptions,
+// which groups all conditions for a source into a single enriched row, this
+// endpoint exposes the raw per-condition granularity needed by the editor screen.
+// Items are sorted source_name ASC, updated_at DESC so the editor groups rows
+// visually by source without additional client-side work.
+//
+// GET /api/me/subscriptions/raw
+// Auth: X-Telegram-Init-Data header (same HMAC scheme as ListMeSubscriptions).
+func (h *Handler) ListMeSubscriptionsRaw(w http.ResponseWriter, r *http.Request) {
+	initData := r.Header.Get("X-Telegram-Init-Data")
+	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
+	if err != nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	tgUserID := strconv.FormatInt(userID, 10)
+	subs, err := h.meSubRepo.ObtainRateUserSubscriptionsByUserID(r.Context(), domain.UserTypeTelegram, tgUserID)
+	if err != nil {
+		h.internalError(w, err)
+		return
+	}
+
+	// Collect distinct source names for a bulk metadata load (avoids N+1).
+	seen := make(map[string]struct{}, len(subs))
+	sourceNames := make([]string, 0, len(subs))
+	for _, s := range subs {
+		if _, ok := seen[s.SourceName]; !ok {
+			seen[s.SourceName] = struct{}{}
+			sourceNames = append(sourceNames, s.SourceName)
+		}
+	}
+	sourceMap, err := h.meSourceRepo.ObtainRateSourcesByNames(r.Context(), sourceNames)
+	if err != nil {
+		h.internalError(w, err)
+		return
+	}
+
+	// Sort: source_name ASC, updated_at DESC.
+	sort.Slice(subs, func(i, j int) bool {
+		if subs[i].SourceName != subs[j].SourceName {
+			return subs[i].SourceName < subs[j].SourceName
+		}
+		return subs[i].UpdatedAt.After(subs[j].UpdatedAt)
+	})
+
+	items := make([]dto.MeSubscriptionEditRow, 0, len(subs))
+	for _, s := range subs {
+		row := dto.MeSubscriptionEditRow{
+			ID:             s.ID,
+			SourceName:     s.SourceName,
+			ConditionType:  string(s.ConditionType),
+			ConditionValue: s.ConditionValue,
+			UpdatedAt:      s.UpdatedAt.UTC().Format(time.RFC3339),
+		}
+		if src, ok := sourceMap[s.SourceName]; ok {
+			row.SourceTitle = src.Title
+			row.BaseCurrency = src.BaseCurrency
+			row.QuoteCurrency = src.QuoteCurrency
+		}
+		items = append(items, row)
+	}
+
+	writeJSON(w, dto.MeSubscriptionsRawResponse{Items: items})
+}
+
+// CreateMeSubscription creates a new subscription owned by the authenticated caller.
+//
+// POST /api/me/subscriptions
+// Auth: X-Telegram-Init-Data header (same HMAC scheme as ListMeSubscriptions).
+// Body: {"source_name":"...", "condition_type":"...", "condition_value":"..."}
+//
+// 201 Created with {"id":"<generated>"} on success.
+// 400 on malformed body, unknown source, or invalid condition.
+// 401 on missing/invalid initData.
+// 500 on persistence failure.
+func (h *Handler) CreateMeSubscription(w http.ResponseWriter, r *http.Request) {
+	initData := r.Header.Get("X-Telegram-Init-Data")
+	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
+	if err != nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	chatIDStr := strconv.FormatInt(userID, 10)
+
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10) // 4 KiB
+	var body dto.MeSubscriptionCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Guard against FK failure: verify the source exists before inserting.
+	src, err := h.meSourceRepo.ObtainRateSourceByName(r.Context(), body.SourceName)
+	if err != nil {
+		h.internalError(w, fmt.Errorf("CreateMeSubscription source lookup: %w", err))
+		return
+	}
+	if src == nil {
+		pub := internal.NewPublicError("unknown source")
+		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
+		return
+	}
+
+	record := domain.RateUserSubscription{
+		UserType:       domain.UserTypeTelegram,
+		UserID:         chatIDStr,
+		SourceName:     body.SourceName,
+		ConditionType:  domain.SubscriptionConditionType(body.ConditionType),
+		ConditionValue: body.ConditionValue,
+	}
+	if err := record.Validate(); err != nil {
+		pub := internal.NewPublicError(fmt.Sprintf("invalid condition value for %s: check the format and try again", record.ConditionType))
+		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := h.meSubRepo.RetainRateUserSubscription(r.Context(), &record); err != nil {
+		h.internalError(w, fmt.Errorf("CreateMeSubscription retain: %w", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(dto.MeSubscriptionCreateResponse{ID: record.ID}); err != nil {
+		h.logger.Print(errors.Join(
+			fmt.Errorf("encode CreateMeSubscription response: %w", err),
+			internal.NewTraceError(),
+		))
+	}
+}
+
+// meSubscriptionOwnershipCheck loads the subscription by id, verifies the
+// caller owns it, and returns it. On not-found or ownership mismatch it writes
+// a 404 and returns nil. On repo error it writes 500 and returns nil.
+// Callers must return when this function returns nil.
+func (h *Handler) meSubscriptionOwnershipCheck(w http.ResponseWriter, r *http.Request, id, chatIDStr string) *domain.RateUserSubscription {
+	sub, err := h.meSubRepo.ObtainRateUserSubscriptionByID(r.Context(), id)
+	if err != nil {
+		h.internalError(w, fmt.Errorf("subscription lookup: %w", err))
+		return nil
+	}
+	if sub == nil || sub.UserID != chatIDStr {
+		// Return 404 (not 403) to avoid disclosing the existence of another
+		// user's subscription. Both "no such row" and "wrong owner" use the
+		// same PublicError message so the distinction is invisible externally.
+		pub := internal.NewPublicError("subscription not found")
+		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusNotFound)
+		return nil
+	}
+	return sub
+}
+
+// UpdateMeSubscription updates the condition fields of an existing subscription
+// owned by the authenticated caller.
+//
+// PATCH /api/me/subscriptions/{id}
+// Auth: X-Telegram-Init-Data header.
+// Body: {"condition_type":"...", "condition_value":"..."}
+//
+// 204 No Content on success.
+// 400 on malformed body or invalid condition.
+// 401 on auth failure.
+// 404 on missing subscription or cross-user access (same response — no existence disclosure).
+// 500 on persistence failure.
+func (h *Handler) UpdateMeSubscription(w http.ResponseWriter, r *http.Request) {
+	initData := r.Header.Get("X-Telegram-Init-Data")
+	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
+	if err != nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	chatIDStr := strconv.FormatInt(userID, 10)
+
+	// Cap the request body before any reads — including the ownership DB query —
+	// so an authenticated owner cannot hold the connection open with a large body
+	// during the lookup window.
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10) // 4 KiB
+
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"error":"missing subscription id"}`, http.StatusBadRequest)
+		return
+	}
+
+	sub := h.meSubscriptionOwnershipCheck(w, r, id, chatIDStr)
+	if sub == nil {
+		return
+	}
+	var body dto.MeSubscriptionUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	sub.ConditionType = domain.SubscriptionConditionType(body.ConditionType)
+	sub.ConditionValue = body.ConditionValue
+	if err := sub.Validate(); err != nil {
+		pub := internal.NewPublicError(fmt.Sprintf("invalid condition value for %s: check the format and try again", sub.ConditionType))
+		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := h.meSubRepo.RetainRateUserSubscription(r.Context(), sub); err != nil {
+		h.internalError(w, fmt.Errorf("UpdateMeSubscription retain: %w", err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DeleteMeSubscription removes a subscription owned by the authenticated caller.
+//
+// DELETE /api/me/subscriptions/{id}
+// Auth: X-Telegram-Init-Data header.
+//
+// 204 No Content on success.
+// 401 on auth failure.
+// 404 on missing subscription or cross-user access.
+// 500 on persistence failure.
+//
+// Deleting a subscription does NOT remove rate_user_events rows for that
+// user/source — events are FK'd to rate_sources, not to individual
+// subscription rows, so they are treated as historical truth and left intact.
+func (h *Handler) DeleteMeSubscription(w http.ResponseWriter, r *http.Request) {
+	initData := r.Header.Get("X-Telegram-Init-Data")
+	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
+	if err != nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	chatIDStr := strconv.FormatInt(userID, 10)
+
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"error":"missing subscription id"}`, http.StatusBadRequest)
+		return
+	}
+
+	sub := h.meSubscriptionOwnershipCheck(w, r, id, chatIDStr)
+	if sub == nil {
+		return
+	}
+
+	if err := h.meSubRepo.RemoveRateUserSubscription(r.Context(), sub); err != nil {
+		h.internalError(w, fmt.Errorf("DeleteMeSubscription remove: %w", err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // UpsertMeProfile stores the caller's IANA timezone so notification timestamps
 // can be rendered in their local time. Fire-and-forget from the Mini App on
 // every mount: the client sends whatever Intl.DateTimeFormat resolves to and
@@ -736,16 +994,21 @@ func (h *Handler) UpsertMeProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetMeRatesChart returns the sparkline-list chart data for the calling user's
-// subscribed currency pairs over the last 7 days. BID and ASK for the same
-// canonical pair appear as a single row with two series entries.
+// subscribed currency pairs. The time window is controlled by the optional
+// ?period= query parameter (must be one of 7, 30, 90, 180, 360; omitting it
+// defaults to 7). BID and ASK for the same canonical pair appear as a single
+// row with two series entries.
 //
-// GET /api/me/rates/chart
+// GET /api/me/rates/chart?period=N
 // Auth: X-Telegram-Init-Data header only. The HMAC-signed payload must never
 // be passed via query string (it would appear in access logs and Referer headers).
 //
 // The pair display label is always BID-natural (e.g. "USD/KZT") regardless of
 // which directions are subscribed. The label assignment is owned by the service
 // layer, not this handler.
+//
+// Returns 400 with a PublicError body when period is present but not in the
+// whitelist {7, 30, 90, 180, 360}.
 func (h *Handler) GetMeRatesChart(w http.ResponseWriter, r *http.Request) {
 	initData := r.Header.Get("X-Telegram-Init-Data")
 
@@ -760,8 +1023,19 @@ func (h *Handler) GetMeRatesChart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	periodDays, err := parseChartPeriod(r.URL.Query().Get("period"))
+	if err != nil {
+		var pub *internal.PublicError
+		if errors.As(err, &pub) {
+			http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
+			return
+		}
+		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
+		return
+	}
+
 	tgUserID := strconv.FormatInt(userID, 10)
-	ch, err := h.meChartSvc.ObtainMeChart(r.Context(), tgUserID)
+	ch, err := h.meChartSvc.ObtainMeChartForPeriod(r.Context(), tgUserID, periodDays)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			// Client navigated away or the request timed out before the service
@@ -807,7 +1081,7 @@ func (h *Handler) GetMeRatesChart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, dto.MeChartResponse{
-		Window: "7 days",
+		Window: fmt.Sprintf("%d days", periodDays),
 		Pairs:  pairRows,
 	})
 }
@@ -892,12 +1166,14 @@ func (h *Handler) GetMeRatesHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetPublicRatesChart returns the paginated sparkline-list chart for every
-// distinct active (base, quote, kind) triple in the system over the last 7 days.
-// No authentication is required.
+// distinct active (base, quote, kind) triple in the system. The time window is
+// controlled by the optional ?period= query parameter (must be one of
+// 7, 30, 90, 180, 360; omitting it defaults to 7). No authentication is required.
 //
-// GET /api/public/rates/chart?page=N&limit=L
+// GET /api/public/rates/chart?page=N&limit=L&period=P
 //
 //   - 400 on non-integer limit.
+//   - 400 on period present but not in whitelist {7, 30, 90, 180, 360}.
 //   - 499 on ctx canceled / deadline exceeded.
 //   - 500 on service-layer failures.
 func (h *Handler) GetPublicRatesChart(w http.ResponseWriter, r *http.Request) {
@@ -914,7 +1190,18 @@ func (h *Handler) GetPublicRatesChart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ch, total, err := h.meChartSvc.ObtainPublicChart(r.Context(), page, limit)
+	periodDays, err := parseChartPeriod(r.URL.Query().Get("period"))
+	if err != nil {
+		var pub *internal.PublicError
+		if errors.As(err, &pub) {
+			http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
+			return
+		}
+		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
+		return
+	}
+
+	ch, total, err := h.meChartSvc.ObtainPublicChartForPeriod(r.Context(), page, limit, periodDays)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			http.Error(w, `{"error":"request cancelled"}`, 499)
@@ -956,7 +1243,7 @@ func (h *Handler) GetPublicRatesChart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, dto.PublicChartResponse{
-		Window: "7 days",
+		Window: fmt.Sprintf("%d days", periodDays),
 		Page:   int(page),
 		Limit:  int(limit),
 		Total:  total,
@@ -1108,6 +1395,30 @@ func parsePublicChartLimit(raw string) (int64, error) {
 		n = publicChartMaxLimit
 	}
 	return n, nil
+}
+
+// allowedChartPeriods is the whitelist of accepted period values for the chart
+// endpoints. Only these exact integers are valid; any other value returns 400.
+var allowedChartPeriods = []int64{7, 30, 90, 180, 360}
+
+// parseChartPeriod parses the raw ?period= query value and returns the integer.
+// An empty string (parameter absent or empty) returns 7 (the default). Any
+// non-empty string that is not one of {7, 30, 90, 180, 360} returns a
+// PublicError so the handler can surface it inline to the client.
+func parseChartPeriod(raw string) (int64, error) {
+	if raw == "" {
+		return 7, nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, internal.NewPublicError("period must be one of 7, 30, 90, 180, 360")
+	}
+	for _, allowed := range allowedChartPeriods {
+		if n == allowed {
+			return n, nil
+		}
+	}
+	return 0, internal.NewPublicError("period must be one of 7, 30, 90, 180, 360")
 }
 
 // parsePageSize parses a "page_size" query parameter, clamped to [1, 50], default 10.

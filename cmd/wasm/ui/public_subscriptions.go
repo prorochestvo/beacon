@@ -44,7 +44,7 @@ func RenderPublicSparklineSlot(state application.PublicSubscriptionsState) strin
 	if state.Chart == nil {
 		return `<div class="sparkline-empty">No chart data yet.</div>`
 	}
-	return renderPublicSparklineList(*state.Chart)
+	return renderPublicSparklineList(*state.Chart, state.Period)
 }
 
 // RenderPublicPagination returns the pagination control HTML for the public
@@ -146,15 +146,15 @@ func RenderPublicPairModal(state application.PublicSubscriptionsState) string {
 }
 
 // renderPublicSparklineList returns the full HTML for the public sparkline-list
-// view. Mirrors RenderSparklineList but accepts a PublicChartResponse instead
-// of MeChartResponse.
-func renderPublicSparklineList(chart dto.PublicChartResponse) string {
-	// Reuse the existing RenderSparklineList by converting to MeChartResponse.
+// view. Mirrors RenderSparklineListForPeriod but accepts a PublicChartResponse
+// and the active period value instead of MeChartResponse.
+func renderPublicSparklineList(chart dto.PublicChartResponse, period int) string {
+	// Reuse RenderSparklineListForPeriod by converting to MeChartResponse.
 	// Both types share the same Pairs type ([]MeChartPairRow), Window string,
 	// and rendering logic. The conversion is zero-allocation at the call site
 	// because MeChartResponse.Pairs points to the same backing array.
-	return RenderSparklineList(dto.MeChartResponse{
+	return RenderSparklineListForPeriod(dto.MeChartResponse{
 		Window: chart.Window,
 		Pairs:  chart.Pairs,
-	})
+	}, period)
 }

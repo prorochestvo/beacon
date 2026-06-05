@@ -137,8 +137,12 @@ const (
 	ColorDeltaDown = "#A32D2D"
 )
 
-// ChartWindow is the rolling time window used for the sparkline chart.
-// All chart endpoints use this constant; change it here to retune globally.
+// ChartWindow is the default rolling time window used for the sparkline chart.
+//
+// Deprecated: callers should pass a periodDays parameter to the service methods
+// that accept it (ObtainMeChartForPeriod, ObtainPublicChartForPeriod). This
+// constant remains in place as a semantic default so existing call-sites and
+// test fixtures that reference it continue to compile during the migration.
 const ChartWindow = 7 * 24 * time.Hour
 
 // ColorForPair returns a stable hex color for the given base currency code.

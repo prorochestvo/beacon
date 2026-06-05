@@ -171,9 +171,17 @@ func TestMeSubscriptionsURL(t *testing.T) {
 func TestMeRatesChartURL(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns fixed endpoint with no query string", func(t *testing.T) {
+	t.Run("encodes period as query param", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, "/api/me/rates/chart", meRatesChartURL())
+		path, q := parseQuery(t, meRatesChartURL(7))
+		assert.Equal(t, "/api/me/rates/chart", path)
+		assert.Equal(t, "7", q.Get("period"))
+	})
+
+	t.Run("period=30 is encoded correctly", func(t *testing.T) {
+		t.Parallel()
+		_, q := parseQuery(t, meRatesChartURL(30))
+		assert.Equal(t, "30", q.Get("period"))
 	})
 }
 
@@ -236,20 +244,22 @@ func TestMeRatesHistoryURL(t *testing.T) {
 func TestPublicRatesChartURL(t *testing.T) {
 	t.Parallel()
 
-	t.Run("encodes page and limit as query params", func(t *testing.T) {
+	t.Run("encodes page, limit, and period as query params", func(t *testing.T) {
 		t.Parallel()
-		path, q := parseQuery(t, publicRatesChartURL(2, 50))
+		path, q := parseQuery(t, publicRatesChartURL(2, 50, 90))
 		assert.Equal(t, "/api/public/rates/chart", path)
 		assert.Equal(t, "2", q.Get("page"))
 		assert.Equal(t, "50", q.Get("limit"))
+		assert.Equal(t, "90", q.Get("period"))
 	})
 
-	t.Run("page 1 limit 20 are encoded correctly", func(t *testing.T) {
+	t.Run("page 1 limit 20 period 7 are encoded correctly", func(t *testing.T) {
 		t.Parallel()
-		path, q := parseQuery(t, publicRatesChartURL(1, 20))
+		path, q := parseQuery(t, publicRatesChartURL(1, 20, 7))
 		assert.Equal(t, "/api/public/rates/chart", path)
 		assert.Equal(t, "1", q.Get("page"))
 		assert.Equal(t, "20", q.Get("limit"))
+		assert.Equal(t, "7", q.Get("period"))
 	})
 }
 
@@ -267,5 +277,44 @@ func TestMeSubscriptionsHeaders(t *testing.T) {
 		t.Parallel()
 		h := meSubscriptionsHeaders("")
 		assert.Equal(t, "", h["X-Telegram-Init-Data"])
+	})
+}
+
+func TestMeSubscriptionsCreateURL(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns POST endpoint with no query string", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "/api/me/subscriptions", meSubscriptionsCreateURL())
+	})
+}
+
+func TestMeSubscriptionsRawURL(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns per-condition list endpoint", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "/api/me/subscriptions/raw", meSubscriptionsRawURL())
+	})
+}
+
+func TestMeSubscriptionByIDURL(t *testing.T) {
+	t.Parallel()
+
+	t.Run("encodes plain id as path segment", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "/api/me/subscriptions/sub-001", meSubscriptionByIDURL("sub-001"))
+	})
+
+	t.Run("percent-escapes id containing slash so it cannot inject a new path segment", func(t *testing.T) {
+		t.Parallel()
+		raw := meSubscriptionByIDURL("a/b")
+		assert.Equal(t, "/api/me/subscriptions/a%2Fb", raw)
+	})
+
+	t.Run("percent-escapes id containing hash so fragment is not stripped", func(t *testing.T) {
+		t.Parallel()
+		raw := meSubscriptionByIDURL("a#b")
+		assert.Contains(t, raw, "%23", "hash must be percent-encoded to avoid fragment stripping")
 	})
 }

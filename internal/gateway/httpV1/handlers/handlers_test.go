@@ -921,8 +921,13 @@ func (m *mockRateService) ObtainLastNExecutionHistoryErrors(_ context.Context, _
 
 // mockMeSubRepo is a test double for meSubscriptionRepository.
 type mockMeSubRepo struct {
-	subs map[string][]domain.RateUserSubscription
-	err  error
+	subs      map[string][]domain.RateUserSubscription
+	byID      map[string]*domain.RateUserSubscription
+	retained  []*domain.RateUserSubscription
+	removed   []*domain.RateUserSubscription
+	err       error
+	retainErr error
+	removeErr error
 }
 
 func (m *mockMeSubRepo) ObtainRateUserSubscriptionsByUserID(_ context.Context, _ domain.UserType, userID string) ([]domain.RateUserSubscription, error) {
@@ -930,6 +935,35 @@ func (m *mockMeSubRepo) ObtainRateUserSubscriptionsByUserID(_ context.Context, _
 		return nil, m.err
 	}
 	return m.subs[userID], nil
+}
+
+func (m *mockMeSubRepo) ObtainRateUserSubscriptionByID(_ context.Context, id string) (*domain.RateUserSubscription, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.byID == nil {
+		return nil, nil
+	}
+	return m.byID[id], nil
+}
+
+func (m *mockMeSubRepo) RetainRateUserSubscription(_ context.Context, record *domain.RateUserSubscription) error {
+	if m.retainErr != nil {
+		return m.retainErr
+	}
+	if record.ID == "" {
+		record.ID = "generated-id"
+	}
+	m.retained = append(m.retained, record)
+	return nil
+}
+
+func (m *mockMeSubRepo) RemoveRateUserSubscription(_ context.Context, record *domain.RateUserSubscription) error {
+	if m.removeErr != nil {
+		return m.removeErr
+	}
+	m.removed = append(m.removed, record)
+	return nil
 }
 
 // mockMeSourceRepo is a test double for meSourceRepository.
@@ -1338,7 +1372,7 @@ type mockMeChartService struct {
 	}
 }
 
-func (m *mockMeChartService) ObtainMeChart(_ context.Context, _ string) (*appchart.MeChart, error) {
+func (m *mockMeChartService) ObtainMeChartForPeriod(_ context.Context, _ string, _ int64) (*appchart.MeChart, error) {
 	return m.chart, m.err
 }
 
@@ -1347,7 +1381,7 @@ func (m *mockMeChartService) ObtainMeHistory(_ context.Context, _, _, sourceTitl
 	return m.history, m.err
 }
 
-func (m *mockMeChartService) ObtainPublicChart(_ context.Context, _, _ int64) (*appchart.PublicChart, int64, error) {
+func (m *mockMeChartService) ObtainPublicChartForPeriod(_ context.Context, _, _, _ int64) (*appchart.PublicChart, int64, error) {
 	return m.publicChart, m.publicTotal, m.err
 }
 
@@ -1595,6 +1629,296 @@ func TestGetMeRatesChart(t *testing.T) {
 
 		require.Equal(t, http.StatusUnauthorized, rr.Code)
 	})
+
+	t.Run("no period param defaults to 7 days window", func(t *testing.T) {
+		t.Parallel()
+		chartSvc := &mockMeChartService{chart: &appchart.MeChart{Pairs: []appchart.PairRow{}}}
+		h, err := NewHandler(&mockRateService{}, "token", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, chartSvc)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(1)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
+		req.Header.Set("X-Telegram-Init-Data", "valid")
+		rr := httptest.NewRecorder()
+		h.GetMeRatesChart(rr, req)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		var body dto.MeChartResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+		require.Equal(t, "7 days", body.Window)
+	})
+
+	t.Run("explicit period=30 yields Window 30 days", func(t *testing.T) {
+		t.Parallel()
+		chartSvc := &mockMeChartService{chart: &appchart.MeChart{Pairs: []appchart.PairRow{}}}
+		h, err := NewHandler(&mockRateService{}, "token", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, chartSvc)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(1)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart?period=30", nil)
+		req.Header.Set("X-Telegram-Init-Data", "valid")
+		rr := httptest.NewRecorder()
+		h.GetMeRatesChart(rr, req)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		var body dto.MeChartResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+		require.Equal(t, "30 days", body.Window)
+	})
+
+	t.Run("invalid integer period returns 400", func(t *testing.T) {
+		t.Parallel()
+		h, err := NewHandler(&mockRateService{}, "token", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, &mockMeChartService{})
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(1)
+
+		for _, bad := range []string{"45", "-1", "0", "361"} {
+			bad := bad
+			t.Run(bad, func(t *testing.T) {
+				t.Parallel()
+				req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart?period="+bad, nil)
+				req.Header.Set("X-Telegram-Init-Data", "valid")
+				rr := httptest.NewRecorder()
+				h.GetMeRatesChart(rr, req)
+				require.Equal(t, http.StatusBadRequest, rr.Code)
+				require.Contains(t, rr.Body.String(), "period must be one of 7, 30, 90, 180, 360")
+			})
+		}
+	})
+
+	t.Run("non-integer period returns 400", func(t *testing.T) {
+		t.Parallel()
+		h, err := NewHandler(&mockRateService{}, "token", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, &mockMeChartService{})
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(1)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart?period=7d", nil)
+		req.Header.Set("X-Telegram-Init-Data", "valid")
+		rr := httptest.NewRecorder()
+		h.GetMeRatesChart(rr, req)
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		require.Contains(t, rr.Body.String(), "period must be one of 7, 30, 90, 180, 360")
+	})
+
+	t.Run("empty period value defaults to 7", func(t *testing.T) {
+		t.Parallel()
+		chartSvc := &mockMeChartService{chart: &appchart.MeChart{Pairs: []appchart.PairRow{}}}
+		h, err := NewHandler(&mockRateService{}, "token", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, chartSvc)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(1)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart?period=", nil)
+		req.Header.Set("X-Telegram-Init-Data", "valid")
+		rr := httptest.NewRecorder()
+		h.GetMeRatesChart(rr, req)
+		require.Equal(t, http.StatusOK, rr.Code)
+		var body dto.MeChartResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+		require.Equal(t, "7 days", body.Window)
+	})
+}
+
+func TestGetPublicRatesChart(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no period param defaults to 7 days window", func(t *testing.T) {
+		t.Parallel()
+		chartSvc := &mockMeChartService{publicChart: &appchart.PublicChart{Pairs: []appchart.PairRow{}}, publicTotal: 0}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, chartSvc)
+		require.NoError(t, err)
+
+		rr := httptest.NewRecorder()
+		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart", nil))
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		var body dto.PublicChartResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+		require.Equal(t, "7 days", body.Window)
+	})
+
+	t.Run("explicit period=90 yields Window 90 days", func(t *testing.T) {
+		t.Parallel()
+		chartSvc := &mockMeChartService{publicChart: &appchart.PublicChart{Pairs: []appchart.PairRow{}}}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, chartSvc)
+		require.NoError(t, err)
+
+		rr := httptest.NewRecorder()
+		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?period=90", nil))
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		var body dto.PublicChartResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+		require.Equal(t, "90 days", body.Window)
+	})
+
+	t.Run("invalid period returns 400", func(t *testing.T) {
+		t.Parallel()
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, &mockMeChartService{})
+		require.NoError(t, err)
+
+		for _, bad := range []string{"45", "7d", "-1"} {
+			bad := bad
+			t.Run(bad, func(t *testing.T) {
+				t.Parallel()
+				rr := httptest.NewRecorder()
+				h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?period="+bad, nil))
+				require.Equal(t, http.StatusBadRequest, rr.Code)
+				require.Contains(t, rr.Body.String(), "period must be one of 7, 30, 90, 180, 360")
+			})
+		}
+	})
+
+	t.Run("empty period defaults to 7", func(t *testing.T) {
+		t.Parallel()
+		chartSvc := &mockMeChartService{publicChart: &appchart.PublicChart{Pairs: []appchart.PairRow{}}}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, chartSvc)
+		require.NoError(t, err)
+
+		rr := httptest.NewRecorder()
+		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?period=", nil))
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		var body dto.PublicChartResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+		require.Equal(t, "7 days", body.Window)
+	})
+
+	t.Run("503 when chart service is nil", func(t *testing.T) {
+		t.Parallel()
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+
+		rr := httptest.NewRecorder()
+		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart", nil))
+
+		require.Equal(t, http.StatusServiceUnavailable, rr.Code)
+	})
+
+	t.Run("500 on service error", func(t *testing.T) {
+		t.Parallel()
+		chartSvc := &mockMeChartService{err: errors.New("db dead")}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, chartSvc)
+		require.NoError(t, err)
+
+		rr := httptest.NewRecorder()
+		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart", nil))
+
+		require.Equal(t, http.StatusInternalServerError, rr.Code)
+	})
+
+	t.Run("499 on context cancelled", func(t *testing.T) {
+		t.Parallel()
+		chartSvc := &mockMeChartService{err: context.Canceled}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, chartSvc)
+		require.NoError(t, err)
+
+		rr := httptest.NewRecorder()
+		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart", nil))
+
+		require.Equal(t, 499, rr.Code)
+		assert.Contains(t, rr.Body.String(), "request cancelled")
+	})
+
+	t.Run("happy path returns paginated rows", func(t *testing.T) {
+		t.Parallel()
+		pc := &appchart.PublicChart{
+			Pairs: []appchart.PairRow{
+				{Pair: "USD/KZT", Series: []appchart.SeriesRow{{Kind: "BID", Color: "#1D9E75"}}},
+				{Pair: "EUR/KZT", Series: []appchart.SeriesRow{{Kind: "BID", Color: "#1D9E75"}}},
+			},
+		}
+		svc := &mockMeChartService{publicChart: pc, publicTotal: 2}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, svc)
+		require.NoError(t, err)
+
+		rr := httptest.NewRecorder()
+		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart", nil))
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
+		var resp dto.PublicChartResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		assert.Equal(t, "7 days", resp.Window)
+		assert.EqualValues(t, 1, resp.Page)
+		assert.EqualValues(t, 20, resp.Limit)
+		assert.EqualValues(t, 2, resp.Total)
+		assert.Len(t, resp.Pairs, 2)
+	})
+
+	t.Run("page greater than 1 is forwarded", func(t *testing.T) {
+		t.Parallel()
+		svc := &mockMeChartService{
+			publicChart: &appchart.PublicChart{Pairs: []appchart.PairRow{{Pair: "USD/KZT"}}},
+			publicTotal: 25,
+		}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, svc)
+		require.NoError(t, err)
+
+		rr := httptest.NewRecorder()
+		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?page=2", nil))
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		var resp dto.PublicChartResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		assert.EqualValues(t, 2, resp.Page)
+	})
+
+	t.Run("limit cap clamps to 100", func(t *testing.T) {
+		t.Parallel()
+		svc := &mockMeChartService{publicChart: &appchart.PublicChart{Pairs: []appchart.PairRow{}}}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, svc)
+		require.NoError(t, err)
+
+		rr := httptest.NewRecorder()
+		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?limit=999", nil))
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		var resp dto.PublicChartResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		assert.EqualValues(t, 100, resp.Limit)
+	})
+
+	t.Run("non-integer limit returns 400", func(t *testing.T) {
+		t.Parallel()
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, &mockMeChartService{})
+		require.NoError(t, err)
+
+		rr := httptest.NewRecorder()
+		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?limit=abc", nil))
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		publicErr := internal.NewPublicError("limit must be a number")
+		assert.Contains(t, rr.Body.String(), publicErr.Details())
+	})
+
+	t.Run("page overflow is clamped", func(t *testing.T) {
+		t.Parallel()
+		svc := &mockMeChartService{publicChart: &appchart.PublicChart{Pairs: []appchart.PairRow{}}}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, svc)
+		require.NoError(t, err)
+
+		rr := httptest.NewRecorder()
+		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?page=9223372036854775807", nil))
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		var resp dto.PublicChartResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		assert.EqualValues(t, int64(1)<<30, resp.Page)
+	})
+
+	t.Run("service returns plain error returns 500", func(t *testing.T) {
+		t.Parallel()
+		svc := &mockMeChartService{err: errors.New("db dead")}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, svc)
+		require.NoError(t, err)
+
+		rr := httptest.NewRecorder()
+		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart", nil))
+
+		require.Equal(t, http.StatusInternalServerError, rr.Code)
+		const errFallbackMessage = `{"error":"internal error"}` + "\n"
+		assert.Equal(t, errFallbackMessage, rr.Body.String())
+	})
 }
 
 func TestHandler_GetMeRatesHistory(t *testing.T) {
@@ -1833,178 +2157,657 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 	})
 }
 
-func TestGetPublicRatesChart(t *testing.T) {
+func TestHandler_ListMeSubscriptionsRaw(t *testing.T) {
 	t.Parallel()
 
-	t.Run("happy path returns paginated rows", func(t *testing.T) {
-		t.Parallel()
+	const callerID = int64(555)
+	callerIDStr := strconv.FormatInt(callerID, 10)
 
-		pc := &appchart.PublicChart{
-			Pairs: []appchart.PairRow{
-				{Pair: "USD/KZT", Series: []appchart.SeriesRow{{Kind: "BID", Color: "#1D9E75"}}},
-				{Pair: "EUR/KZT", Series: []appchart.SeriesRow{{Kind: "BID", Color: "#1D9E75"}}},
+	srcA := &domain.RateSource{Name: "src_a", Title: "Alpha", BaseCurrency: "USD", QuoteCurrency: "KZT"}
+	srcB := &domain.RateSource{Name: "src_b", Title: "Beta", BaseCurrency: "EUR", QuoteCurrency: "KZT"}
+
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+
+	makeSub := func(id, srcName, ct, cv string, updAt time.Time) domain.RateUserSubscription {
+		return domain.RateUserSubscription{
+			ID:             id,
+			UserType:       domain.UserTypeTelegram,
+			UserID:         callerIDStr,
+			SourceName:     srcName,
+			ConditionType:  domain.SubscriptionConditionType(ct),
+			ConditionValue: cv,
+			UpdatedAt:      updAt,
+		}
+	}
+
+	t.Run("401 on missing initData", func(t *testing.T) {
+		t.Parallel()
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysRejectInitData
+
+		rr := httptest.NewRecorder()
+		h.ListMeSubscriptionsRaw(rr, httptest.NewRequest(http.MethodGet, "/api/me/subscriptions/raw", nil))
+		require.Equal(t, http.StatusUnauthorized, rr.Code)
+		require.Contains(t, rr.Body.String(), "unauthorized")
+	})
+
+	t.Run("200 empty items when user has no subscriptions", func(t *testing.T) {
+		t.Parallel()
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions/raw", nil)
+		req.Header.Set("X-Telegram-Init-Data", "valid")
+		rr := httptest.NewRecorder()
+		h.ListMeSubscriptionsRaw(rr, req)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		var body dto.MeSubscriptionsRawResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+		require.NotNil(t, body.Items)
+		assert.Empty(t, body.Items)
+	})
+
+	t.Run("200 happy path returns per-condition rows with source metadata", func(t *testing.T) {
+		t.Parallel()
+		subRepo := &mockMeSubRepo{
+			subs: map[string][]domain.RateUserSubscription{
+				callerIDStr: {
+					makeSub("id-1", "src_a", "delta", "0.5", now),
+					makeSub("id-2", "src_b", "interval", "1h", now.Add(-time.Hour)),
+				},
 			},
 		}
-		svc := &mockMeChartService{publicChart: pc, publicTotal: 2}
-		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, svc)
-		require.NoError(t, err)
-
-		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart", nil))
-
-		require.Equal(t, http.StatusOK, rr.Code)
-		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
-		var resp dto.PublicChartResponse
-		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
-		assert.Equal(t, "7 days", resp.Window)
-		assert.EqualValues(t, 1, resp.Page)
-		assert.EqualValues(t, 20, resp.Limit)
-		assert.EqualValues(t, 2, resp.Total)
-		assert.Len(t, resp.Pairs, 2)
-	})
-
-	t.Run("page greater than 1 advances offset", func(t *testing.T) {
-		t.Parallel()
-
-		svc := &mockMeChartService{
-			publicChart: &appchart.PublicChart{Pairs: []appchart.PairRow{{Pair: "USD/KZT"}}},
-			publicTotal: 25,
+		sourceRepo := &mockMeSourceRepo{
+			sources: map[string]*domain.RateSource{"src_a": srcA, "src_b": srcB},
 		}
-		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, svc)
-		require.NoError(t, err)
 
+		h, err := NewHandler(&mockRateService{}, "", subRepo, sourceRepo, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions/raw", nil)
+		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?page=2", nil))
+		h.ListMeSubscriptionsRaw(rr, req)
 
 		require.Equal(t, http.StatusOK, rr.Code)
-		var resp dto.PublicChartResponse
-		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
-		assert.EqualValues(t, 2, resp.Page)
+		var body dto.MeSubscriptionsRawResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+		require.Len(t, body.Items, 2)
+
+		assert.Equal(t, "id-1", body.Items[0].ID)
+		assert.Equal(t, "src_a", body.Items[0].SourceName)
+		assert.Equal(t, "Alpha", body.Items[0].SourceTitle)
+		assert.Equal(t, "USD", body.Items[0].BaseCurrency)
+		assert.Equal(t, "KZT", body.Items[0].QuoteCurrency)
+		assert.Equal(t, "delta", body.Items[0].ConditionType)
+		assert.Equal(t, "0.5", body.Items[0].ConditionValue)
+		assert.NotEmpty(t, body.Items[0].UpdatedAt)
 	})
 
-	t.Run("limit cap clamps to 100", func(t *testing.T) {
+	t.Run("items sorted source_name ASC updated_at DESC", func(t *testing.T) {
 		t.Parallel()
-
-		svc := &mockMeChartService{
-			publicChart: &appchart.PublicChart{Pairs: []appchart.PairRow{}},
-			publicTotal: 0,
+		sub1 := makeSub("z1", "src_b", "delta", "1", now)
+		sub2 := makeSub("z2", "src_a", "delta", "2", now.Add(-time.Hour))
+		sub3 := makeSub("z3", "src_a", "interval", "1h", now) // newer within src_a
+		subRepo := &mockMeSubRepo{
+			subs: map[string][]domain.RateUserSubscription{
+				callerIDStr: {sub1, sub2, sub3},
+			},
 		}
-		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, svc)
-		require.NoError(t, err)
-
-		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?limit=999", nil))
-
-		require.Equal(t, http.StatusOK, rr.Code)
-		var resp dto.PublicChartResponse
-		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
-		// The service mock ignores the limit; the handler must have passed 100 (clamped).
-		assert.EqualValues(t, 100, resp.Limit)
-	})
-
-	t.Run("zero limit falls back to default 20", func(t *testing.T) {
-		t.Parallel()
-
-		svc := &mockMeChartService{
-			publicChart: &appchart.PublicChart{Pairs: []appchart.PairRow{}},
-			publicTotal: 0,
+		sourceRepo := &mockMeSourceRepo{
+			sources: map[string]*domain.RateSource{"src_a": srcA, "src_b": srcB},
 		}
-		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, svc)
-		require.NoError(t, err)
 
+		h, err := NewHandler(&mockRateService{}, "", subRepo, sourceRepo, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions/raw", nil)
+		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?limit=0", nil))
+		h.ListMeSubscriptionsRaw(rr, req)
 
 		require.Equal(t, http.StatusOK, rr.Code)
-		var resp dto.PublicChartResponse
-		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
-		assert.EqualValues(t, 20, resp.Limit)
+		var body dto.MeSubscriptionsRawResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+		require.Len(t, body.Items, 3)
+
+		// src_a rows come before src_b (ASC), and within src_a the newer row first (DESC).
+		assert.Equal(t, "src_a", body.Items[0].SourceName)
+		assert.Equal(t, "z3", body.Items[0].ID, "newer src_a row must come first")
+		assert.Equal(t, "src_a", body.Items[1].SourceName)
+		assert.Equal(t, "z2", body.Items[1].ID)
+		assert.Equal(t, "src_b", body.Items[2].SourceName)
 	})
 
-	t.Run("negative limit falls back to default 20", func(t *testing.T) {
+	t.Run("500 on repo failure", func(t *testing.T) {
 		t.Parallel()
+		subRepo := &mockMeSubRepo{err: errors.New("db down")}
 
-		svc := &mockMeChartService{
-			publicChart: &appchart.PublicChart{Pairs: []appchart.PairRow{}},
-			publicTotal: 0,
-		}
-		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, svc)
+		h, err := NewHandler(&mockRateService{}, "", subRepo, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
 		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+		h.logger = log.New(log.Writer(), "", 0) // suppress output in test run
 
+		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions/raw", nil)
+		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?limit=-5", nil))
-
-		require.Equal(t, http.StatusOK, rr.Code)
-		var resp dto.PublicChartResponse
-		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
-		assert.EqualValues(t, 20, resp.Limit)
-	})
-
-	t.Run("page overflow is clamped before reaching the service", func(t *testing.T) {
-		t.Parallel()
-
-		// parsePage clamps at 1<<30 so (page-1)*limit cannot overflow int64
-		// into a negative SQLite OFFSET (which would force a full scan).
-		svc := &mockMeChartService{
-			publicChart: &appchart.PublicChart{Pairs: []appchart.PairRow{}},
-			publicTotal: 0,
-		}
-		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, svc)
-		require.NoError(t, err)
-
-		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?page=9223372036854775807", nil))
-
-		require.Equal(t, http.StatusOK, rr.Code)
-		var resp dto.PublicChartResponse
-		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
-		assert.EqualValues(t, int64(1)<<30, resp.Page, "page must be clamped to the parser maximum")
-	})
-
-	t.Run("non-integer limit returns 400 with PublicError text", func(t *testing.T) {
-		t.Parallel()
-
-		svc := &mockMeChartService{}
-		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, svc)
-		require.NoError(t, err)
-
-		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?limit=abc", nil))
-
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-		// The response body must contain the exact PublicError text, not the fallback.
-		publicErr := internal.NewPublicError("limit must be a number")
-		assert.Contains(t, rr.Body.String(), publicErr.Details())
-	})
-
-	t.Run("service returns context.Canceled returns 499", func(t *testing.T) {
-		t.Parallel()
-
-		svc := &mockMeChartService{err: context.Canceled}
-		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, svc)
-		require.NoError(t, err)
-
-		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart", nil))
-
-		require.Equal(t, 499, rr.Code)
-		assert.Contains(t, rr.Body.String(), "request cancelled")
-	})
-
-	t.Run("service returns plain error returns 500 with fallback message", func(t *testing.T) {
-		t.Parallel()
-
-		svc := &mockMeChartService{err: errors.New("db dead")}
-		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, svc)
-		require.NoError(t, err)
-
-		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart", nil))
+		h.ListMeSubscriptionsRaw(rr, req)
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
-		// http.Error appends a trailing newline; lock in the exact wire format
-		// so a future refactor of internalError can't quietly drift the body.
-		const errFallbackMessage = `{"error":"internal error"}` + "\n"
-		assert.Equal(t, errFallbackMessage, rr.Body.String())
+		require.Contains(t, rr.Body.String(), "internal error")
+	})
+}
+
+func TestHandler_CreateMeSubscription(t *testing.T) {
+	t.Parallel()
+
+	const callerID = int64(42)
+	callerIDStr := strconv.FormatInt(callerID, 10)
+
+	validSrc := &domain.RateSource{
+		Name:          "src_a",
+		Title:         "Source A",
+		BaseCurrency:  "USD",
+		QuoteCurrency: "KZT",
+		Active:        true,
+	}
+
+	newReq := func(body string) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/api/me/subscriptions", strings.NewReader(body))
+		req.Header.Set("X-Telegram-Init-Data", "valid")
+		req.Header.Set("Content-Type", "application/json")
+		return req
+	}
+
+	t.Run("201 created with generated ID", func(t *testing.T) {
+		t.Parallel()
+
+		subRepo := &mockMeSubRepo{}
+		sourceRepo := &mockMeSourceRepo{sources: map[string]*domain.RateSource{"src_a": validSrc}}
+
+		h, err := NewHandler(&mockRateService{}, "", subRepo, sourceRepo, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		rr := httptest.NewRecorder()
+		h.CreateMeSubscription(rr, newReq(`{"source_name":"src_a","condition_type":"delta","condition_value":"5"}`))
+
+		require.Equal(t, http.StatusCreated, rr.Code)
+		var resp dto.MeSubscriptionCreateResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		assert.NotEmpty(t, resp.ID)
+
+		require.Len(t, subRepo.retained, 1)
+		assert.Equal(t, callerIDStr, subRepo.retained[0].UserID)
+		assert.Equal(t, domain.UserTypeTelegram, subRepo.retained[0].UserType)
+		assert.Equal(t, "src_a", subRepo.retained[0].SourceName)
+		assert.Equal(t, domain.ConditionTypeDelta, subRepo.retained[0].ConditionType)
+		assert.Equal(t, "5", subRepo.retained[0].ConditionValue)
+	})
+
+	t.Run("401 on missing initData", func(t *testing.T) {
+		t.Parallel()
+
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysRejectInitData
+
+		req := httptest.NewRequest(http.MethodPost, "/api/me/subscriptions", strings.NewReader(`{}`))
+		rr := httptest.NewRecorder()
+		h.CreateMeSubscription(rr, req)
+
+		require.Equal(t, http.StatusUnauthorized, rr.Code)
+		require.Contains(t, rr.Body.String(), "unauthorized")
+	})
+
+	t.Run("400 on malformed JSON body", func(t *testing.T) {
+		t.Parallel()
+
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		rr := httptest.NewRecorder()
+		h.CreateMeSubscription(rr, newReq(`not-json`))
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		require.Contains(t, rr.Body.String(), "invalid request body")
+	})
+
+	t.Run("400 on unknown source", func(t *testing.T) {
+		t.Parallel()
+
+		sourceRepo := &mockMeSourceRepo{sources: map[string]*domain.RateSource{}} // source not present
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, sourceRepo, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		rr := httptest.NewRecorder()
+		h.CreateMeSubscription(rr, newReq(`{"source_name":"no_such","condition_type":"delta","condition_value":"5"}`))
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		require.Contains(t, rr.Body.String(), "unknown source")
+	})
+
+	t.Run("400 on invalid condition type", func(t *testing.T) {
+		t.Parallel()
+
+		sourceRepo := &mockMeSourceRepo{sources: map[string]*domain.RateSource{"src_a": validSrc}}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, sourceRepo, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		rr := httptest.NewRecorder()
+		h.CreateMeSubscription(rr, newReq(`{"source_name":"src_a","condition_type":"bogus","condition_value":"5"}`))
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		require.Contains(t, rr.Body.String(), "invalid condition")
+	})
+
+	t.Run("400 on invalid condition value delta", func(t *testing.T) {
+		t.Parallel()
+
+		sourceRepo := &mockMeSourceRepo{sources: map[string]*domain.RateSource{"src_a": validSrc}}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, sourceRepo, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		rr := httptest.NewRecorder()
+		h.CreateMeSubscription(rr, newReq(`{"source_name":"src_a","condition_type":"delta","condition_value":"not-a-number"}`))
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		require.Contains(t, rr.Body.String(), "invalid condition")
+	})
+
+	t.Run("400 on invalid condition value interval", func(t *testing.T) {
+		t.Parallel()
+
+		sourceRepo := &mockMeSourceRepo{sources: map[string]*domain.RateSource{"src_a": validSrc}}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, sourceRepo, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		rr := httptest.NewRecorder()
+		h.CreateMeSubscription(rr, newReq(`{"source_name":"src_a","condition_type":"interval","condition_value":"30s"}`))
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		require.Contains(t, rr.Body.String(), "invalid condition")
+	})
+
+	t.Run("400 on invalid condition value daily", func(t *testing.T) {
+		t.Parallel()
+
+		sourceRepo := &mockMeSourceRepo{sources: map[string]*domain.RateSource{"src_a": validSrc}}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, sourceRepo, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		rr := httptest.NewRecorder()
+		h.CreateMeSubscription(rr, newReq(`{"source_name":"src_a","condition_type":"daily","condition_value":"not-a-time"}`))
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		require.Contains(t, rr.Body.String(), "invalid condition")
+	})
+
+	t.Run("500 on source repo failure", func(t *testing.T) {
+		t.Parallel()
+
+		sourceRepo := &mockMeSourceRepo{err: errors.New("db down")}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, sourceRepo, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+		h.logger = log.New(log.Writer(), "", 0)
+
+		rr := httptest.NewRecorder()
+		h.CreateMeSubscription(rr, newReq(`{"source_name":"src_a","condition_type":"delta","condition_value":"5"}`))
+
+		require.Equal(t, http.StatusInternalServerError, rr.Code)
+		require.Contains(t, rr.Body.String(), "internal error")
+	})
+
+	t.Run("500 on retain repo failure", func(t *testing.T) {
+		t.Parallel()
+
+		subRepo := &mockMeSubRepo{retainErr: errors.New("db down")}
+		sourceRepo := &mockMeSourceRepo{sources: map[string]*domain.RateSource{"src_a": validSrc}}
+
+		h, err := NewHandler(&mockRateService{}, "", subRepo, sourceRepo, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+		h.logger = log.New(log.Writer(), "", 0)
+
+		rr := httptest.NewRecorder()
+		h.CreateMeSubscription(rr, newReq(`{"source_name":"src_a","condition_type":"delta","condition_value":"5"}`))
+
+		require.Equal(t, http.StatusInternalServerError, rr.Code)
+		require.Contains(t, rr.Body.String(), "internal error")
+	})
+}
+
+func TestHandler_UpdateMeSubscription(t *testing.T) {
+	t.Parallel()
+
+	const callerID = int64(10)
+	const otherID = int64(20)
+	callerIDStr := strconv.FormatInt(callerID, 10)
+	otherIDStr := strconv.FormatInt(otherID, 10)
+
+	existingSub := &domain.RateUserSubscription{
+		ID:             "sub-001",
+		UserType:       domain.UserTypeTelegram,
+		UserID:         callerIDStr,
+		SourceName:     "src_a",
+		ConditionType:  domain.ConditionTypeDelta,
+		ConditionValue: "5",
+	}
+
+	newReq := func(id, body string) *http.Request {
+		req := httptest.NewRequest(http.MethodPatch, "/api/me/subscriptions/"+id, strings.NewReader(body))
+		req.Header.Set("X-Telegram-Init-Data", "valid")
+		req.Header.Set("Content-Type", "application/json")
+		req.SetPathValue("id", id)
+		return req
+	}
+
+	t.Run("204 on successful update", func(t *testing.T) {
+		t.Parallel()
+
+		sub := *existingSub
+		subRepo := &mockMeSubRepo{
+			byID: map[string]*domain.RateUserSubscription{"sub-001": &sub},
+		}
+		h, err := NewHandler(&mockRateService{}, "", subRepo, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		rr := httptest.NewRecorder()
+		h.UpdateMeSubscription(rr, newReq("sub-001", `{"condition_type":"interval","condition_value":"1h"}`))
+
+		require.Equal(t, http.StatusNoContent, rr.Code)
+		require.Len(t, subRepo.retained, 1)
+		assert.Equal(t, domain.ConditionTypeInterval, subRepo.retained[0].ConditionType)
+		assert.Equal(t, "1h", subRepo.retained[0].ConditionValue)
+	})
+
+	t.Run("401 on missing initData", func(t *testing.T) {
+		t.Parallel()
+
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysRejectInitData
+
+		req := httptest.NewRequest(http.MethodPatch, "/api/me/subscriptions/sub-001", strings.NewReader(`{}`))
+		req.SetPathValue("id", "sub-001")
+		rr := httptest.NewRecorder()
+		h.UpdateMeSubscription(rr, req)
+
+		require.Equal(t, http.StatusUnauthorized, rr.Code)
+		require.Contains(t, rr.Body.String(), "unauthorized")
+	})
+
+	t.Run("404 on missing subscription", func(t *testing.T) {
+		t.Parallel()
+
+		subRepo := &mockMeSubRepo{byID: map[string]*domain.RateUserSubscription{}}
+		h, err := NewHandler(&mockRateService{}, "", subRepo, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		rr := httptest.NewRecorder()
+		h.UpdateMeSubscription(rr, newReq("no-such", `{"condition_type":"delta","condition_value":"1"}`))
+
+		require.Equal(t, http.StatusNotFound, rr.Code)
+		require.Contains(t, rr.Body.String(), "subscription not found")
+	})
+
+	t.Run("404 on cross-user access (ownership mismatch)", func(t *testing.T) {
+		t.Parallel()
+
+		otherSub := &domain.RateUserSubscription{
+			ID:             "sub-other",
+			UserType:       domain.UserTypeTelegram,
+			UserID:         otherIDStr,
+			SourceName:     "src_a",
+			ConditionType:  domain.ConditionTypeDelta,
+			ConditionValue: "3",
+		}
+		subRepo := &mockMeSubRepo{byID: map[string]*domain.RateUserSubscription{"sub-other": otherSub}}
+		h, err := NewHandler(&mockRateService{}, "", subRepo, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID) // caller != owner
+
+		rr := httptest.NewRecorder()
+		h.UpdateMeSubscription(rr, newReq("sub-other", `{"condition_type":"delta","condition_value":"1"}`))
+
+		require.Equal(t, http.StatusNotFound, rr.Code)
+		require.Contains(t, rr.Body.String(), "subscription not found")
+	})
+
+	t.Run("400 on malformed body", func(t *testing.T) {
+		t.Parallel()
+
+		sub := *existingSub
+		subRepo := &mockMeSubRepo{byID: map[string]*domain.RateUserSubscription{"sub-001": &sub}}
+		h, err := NewHandler(&mockRateService{}, "", subRepo, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		rr := httptest.NewRecorder()
+		h.UpdateMeSubscription(rr, newReq("sub-001", `not-json`))
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		require.Contains(t, rr.Body.String(), "invalid request body")
+	})
+
+	t.Run("400 on invalid condition", func(t *testing.T) {
+		t.Parallel()
+
+		sub := *existingSub
+		subRepo := &mockMeSubRepo{byID: map[string]*domain.RateUserSubscription{"sub-001": &sub}}
+		h, err := NewHandler(&mockRateService{}, "", subRepo, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		rr := httptest.NewRecorder()
+		h.UpdateMeSubscription(rr, newReq("sub-001", `{"condition_type":"unknown","condition_value":"x"}`))
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		require.Contains(t, rr.Body.String(), "invalid condition")
+	})
+
+	t.Run("500 on lookup failure", func(t *testing.T) {
+		t.Parallel()
+
+		subRepo := &mockMeSubRepo{err: errors.New("db down")}
+		h, err := NewHandler(&mockRateService{}, "", subRepo, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+		h.logger = log.New(log.Writer(), "", 0)
+
+		rr := httptest.NewRecorder()
+		h.UpdateMeSubscription(rr, newReq("sub-001", `{"condition_type":"delta","condition_value":"1"}`))
+
+		require.Equal(t, http.StatusInternalServerError, rr.Code)
+		require.Contains(t, rr.Body.String(), "internal error")
+	})
+
+	t.Run("500 on retain failure", func(t *testing.T) {
+		t.Parallel()
+
+		sub := *existingSub
+		subRepo := &mockMeSubRepo{
+			byID:      map[string]*domain.RateUserSubscription{"sub-001": &sub},
+			retainErr: errors.New("db down"),
+		}
+		h, err := NewHandler(&mockRateService{}, "", subRepo, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+		h.logger = log.New(log.Writer(), "", 0)
+
+		rr := httptest.NewRecorder()
+		h.UpdateMeSubscription(rr, newReq("sub-001", `{"condition_type":"interval","condition_value":"1h"}`))
+
+		require.Equal(t, http.StatusInternalServerError, rr.Code)
+		require.Contains(t, rr.Body.String(), "internal error")
+	})
+
+	t.Run("400 on body exceeding 4 KiB", func(t *testing.T) {
+		t.Parallel()
+
+		sub := *existingSub
+		subRepo := &mockMeSubRepo{byID: map[string]*domain.RateUserSubscription{"sub-001": &sub}}
+		h, err := NewHandler(&mockRateService{}, "", subRepo, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		// 5 KiB body — exceeds the 4 KiB MaxBytesReader limit.
+		bigBody := strings.Repeat("x", 5<<10)
+		req := httptest.NewRequest(http.MethodPatch, "/api/me/subscriptions/sub-001", strings.NewReader(bigBody))
+		req.Header.Set("X-Telegram-Init-Data", "valid")
+		req.Header.Set("Content-Type", "application/json")
+		req.SetPathValue("id", "sub-001")
+
+		rr := httptest.NewRecorder()
+		h.UpdateMeSubscription(rr, req)
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		require.Contains(t, rr.Body.String(), "invalid request body")
+	})
+}
+
+func TestHandler_DeleteMeSubscription(t *testing.T) {
+	t.Parallel()
+
+	const callerID = int64(10)
+	const otherID = int64(20)
+	callerIDStr := strconv.FormatInt(callerID, 10)
+	otherIDStr := strconv.FormatInt(otherID, 10)
+
+	existingSub := &domain.RateUserSubscription{
+		ID:             "sub-001",
+		UserType:       domain.UserTypeTelegram,
+		UserID:         callerIDStr,
+		SourceName:     "src_a",
+		ConditionType:  domain.ConditionTypeDelta,
+		ConditionValue: "5",
+	}
+
+	newReq := func(id string) *http.Request {
+		req := httptest.NewRequest(http.MethodDelete, "/api/me/subscriptions/"+id, nil)
+		req.Header.Set("X-Telegram-Init-Data", "valid")
+		req.SetPathValue("id", id)
+		return req
+	}
+
+	t.Run("204 on successful delete", func(t *testing.T) {
+		t.Parallel()
+
+		sub := *existingSub
+		subRepo := &mockMeSubRepo{byID: map[string]*domain.RateUserSubscription{"sub-001": &sub}}
+		h, err := NewHandler(&mockRateService{}, "", subRepo, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		rr := httptest.NewRecorder()
+		h.DeleteMeSubscription(rr, newReq("sub-001"))
+
+		require.Equal(t, http.StatusNoContent, rr.Code)
+		require.Len(t, subRepo.removed, 1)
+		assert.Equal(t, "sub-001", subRepo.removed[0].ID)
+	})
+
+	t.Run("401 on missing initData", func(t *testing.T) {
+		t.Parallel()
+
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysRejectInitData
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/me/subscriptions/sub-001", nil)
+		req.SetPathValue("id", "sub-001")
+		rr := httptest.NewRecorder()
+		h.DeleteMeSubscription(rr, req)
+
+		require.Equal(t, http.StatusUnauthorized, rr.Code)
+		require.Contains(t, rr.Body.String(), "unauthorized")
+	})
+
+	t.Run("404 on missing subscription", func(t *testing.T) {
+		t.Parallel()
+
+		subRepo := &mockMeSubRepo{byID: map[string]*domain.RateUserSubscription{}}
+		h, err := NewHandler(&mockRateService{}, "", subRepo, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		rr := httptest.NewRecorder()
+		h.DeleteMeSubscription(rr, newReq("no-such"))
+
+		require.Equal(t, http.StatusNotFound, rr.Code)
+		require.Contains(t, rr.Body.String(), "subscription not found")
+	})
+
+	t.Run("404 on cross-user access (ownership mismatch)", func(t *testing.T) {
+		t.Parallel()
+
+		otherSub := &domain.RateUserSubscription{
+			ID:             "sub-other",
+			UserType:       domain.UserTypeTelegram,
+			UserID:         otherIDStr,
+			SourceName:     "src_a",
+			ConditionType:  domain.ConditionTypeDelta,
+			ConditionValue: "3",
+		}
+		subRepo := &mockMeSubRepo{byID: map[string]*domain.RateUserSubscription{"sub-other": otherSub}}
+		h, err := NewHandler(&mockRateService{}, "", subRepo, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+
+		rr := httptest.NewRecorder()
+		h.DeleteMeSubscription(rr, newReq("sub-other"))
+
+		require.Equal(t, http.StatusNotFound, rr.Code)
+		require.Contains(t, rr.Body.String(), "subscription not found")
+	})
+
+	t.Run("500 on lookup failure", func(t *testing.T) {
+		t.Parallel()
+
+		subRepo := &mockMeSubRepo{err: errors.New("db down")}
+		h, err := NewHandler(&mockRateService{}, "", subRepo, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+		h.logger = log.New(log.Writer(), "", 0)
+
+		rr := httptest.NewRecorder()
+		h.DeleteMeSubscription(rr, newReq("sub-001"))
+
+		require.Equal(t, http.StatusInternalServerError, rr.Code)
+		require.Contains(t, rr.Body.String(), "internal error")
+	})
+
+	t.Run("500 on remove failure", func(t *testing.T) {
+		t.Parallel()
+
+		sub := *existingSub
+		subRepo := &mockMeSubRepo{
+			byID:      map[string]*domain.RateUserSubscription{"sub-001": &sub},
+			removeErr: errors.New("db down"),
+		}
+		h, err := NewHandler(&mockRateService{}, "", subRepo, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil)
+		require.NoError(t, err)
+		h.validateInitData = alwaysValidateInitData(callerID)
+		h.logger = log.New(log.Writer(), "", 0)
+
+		rr := httptest.NewRecorder()
+		h.DeleteMeSubscription(rr, newReq("sub-001"))
+
+		require.Equal(t, http.StatusInternalServerError, rr.Code)
+		require.Contains(t, rr.Body.String(), "internal error")
 	})
 }

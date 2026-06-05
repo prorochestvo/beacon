@@ -335,6 +335,19 @@ GROUP BY s.%[2]s, s.%[3]s;`,
 	return result, nil
 }
 
+// ObtainRateUserSubscriptionByID fetches a single subscription by its primary
+// key. Returns (nil, nil) when no record with that ID exists; (nil, err) on a
+// real database failure.
+func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionByID(ctx context.Context, id string) (*domain.RateUserSubscription, error) {
+	tx, err := r.db.ReadOnlyTransaction(ctx)
+	if err != nil {
+		return nil, errors.Join(err, internal.NewStackTraceError())
+	}
+	defer printRollbackError(tx)
+
+	return rateUserSubscriptionQueryRowContext(tx, ctx, "WHERE "+rateUserSubscriptionIdFieldName+" = ?;", id)
+}
+
 // RemoveRateUserSubscription deletes the given subscription record by ID.
 func (r *RateUserSubscriptionRepository) RemoveRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error {
 	if record == nil {

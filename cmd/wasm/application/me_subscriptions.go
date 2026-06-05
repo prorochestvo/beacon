@@ -66,6 +66,11 @@ type MeSubscriptionsState struct {
 	// HistoryError is the most recent non-nil history fetch error. Nil on success.
 	HistoryError error
 
+	// Period is the rolling-window duration in days sent as ?period= to the
+	// me chart endpoint. Must be one of AllowedChartPeriods; defaults to
+	// PublicChartDefaultPeriod (7).
+	Period int
+
 	// SelectedSourceTitle is the provider title currently used as a history filter.
 	// An empty string means no filter (all sources). Set by SetHistorySourceTitle;
 	// reset to "" when OpenHistory or OpenPairModal is called.
@@ -109,6 +114,9 @@ func NewMeSubscriptionsPage(client *apiclient.Client, initData string, pageSize 
 		client:   client,
 		initData: initData,
 		pageSize: pageSize,
+		state: MeSubscriptionsState{
+			Period: PublicChartDefaultPeriod,
+		},
 	}
 }
 
@@ -283,16 +291,30 @@ func (p *MeSubscriptionsPage) SetHistorySourceTitle(ctx context.Context, sourceT
 // After a successful fetch, if OpenPair is set but the new chart no longer
 // contains a matching pair, OpenPair is cleared so the modal slot stays honest.
 // The caller is responsible for re-rendering after this call returns.
+//
+// If the period changes while the fetch is in flight (two rapid chip clicks),
+// the stale result is silently dropped and LoadSparklineChart returns nil without
+// overwriting state — same guard pattern as LoadHistory uses for OpenPair.
 func (p *MeSubscriptionsPage) LoadSparklineChart(ctx context.Context) error {
 	p.state.ChartLoading = true
-	p.state.ChartError = nil
 
-	resp, err := p.client.MeRatesChart(ctx, p.initData)
+	// Snapshot before the fetch so we can detect a period change mid-flight.
+	period := p.state.Period
+	if period <= 0 {
+		period = PublicChartDefaultPeriod
+	}
+	resp, err := p.client.MeRatesChart(ctx, p.initData, period)
 	p.state.ChartLoading = false
 	if err != nil {
 		p.state.ChartError = err
 		return err
 	}
+	// Drop the result when the period changed while the fetch was in flight.
+	// Leave ChartError untouched so a prior error survives a stale-success drop.
+	if p.state.Period != period {
+		return nil
+	}
+	p.state.ChartError = nil
 	p.state.Chart = &resp
 
 	// Auto-clear the open modal (and history state) when the refreshed chart no
@@ -302,6 +324,24 @@ func (p *MeSubscriptionsPage) LoadSparklineChart(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// SetPeriod updates the chart rolling-window duration and reloads the sparkline
+// chart. period must be one of AllowedChartPeriods; an unrecognised value is
+// silently clamped to PublicChartDefaultPeriod so the UI never stalls on bad input.
+func (p *MeSubscriptionsPage) SetPeriod(ctx context.Context, period int) error {
+	valid := false
+	for _, allowed := range AllowedChartPeriods {
+		if period == allowed {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		period = PublicChartDefaultPeriod
+	}
+	p.state.Period = period
+	return p.LoadSparklineChart(ctx)
 }
 
 // FindPairInChart reports whether chart contains a row whose Pair field equals pair.

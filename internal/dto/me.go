@@ -21,6 +21,61 @@ type MeSubscriptionsResponse struct {
 	Total    int64               `json:"total"`
 }
 
+// MeSubscriptionEditRow is one row in the per-condition subscriptions list
+// returned by GET /api/me/subscriptions/raw. Unlike MeSubscriptionRow, each
+// row maps to exactly one domain.RateUserSubscription so the stable ID field
+// can be used for PATCH and DELETE operations.
+//
+// UserID is never returned — the endpoint is scoped to the authenticated caller.
+// LatestPrice and LatestAt are intentionally omitted: the editor does not need
+// them and including them duplicates the join cost already paid by ListMeSubscriptions.
+type MeSubscriptionEditRow struct {
+	ID             string `json:"id"`
+	SourceName     string `json:"source_name"`
+	SourceTitle    string `json:"source_title"`
+	BaseCurrency   string `json:"base_currency"`
+	QuoteCurrency  string `json:"quote_currency"`
+	ConditionType  string `json:"condition_type"`
+	ConditionValue string `json:"condition_value"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
+// MeSubscriptionsRawResponse is the JSON envelope returned by
+// GET /api/me/subscriptions/raw. Items is always a non-nil slice.
+type MeSubscriptionsRawResponse struct {
+	Items []MeSubscriptionEditRow `json:"items"`
+}
+
+// MeSubscriptionCreateRequest is the JSON body for POST /api/me/subscriptions.
+//
+// SourceName must match an existing active rate source. ConditionType must be
+// one of the recognised domain.SubscriptionConditionType values. ConditionValue
+// is validated by domain.RateUserSubscription.Validate() server-side.
+//
+// UserID is never accepted in the request body — it is derived from the
+// verified X-Telegram-Init-Data chat_id.
+type MeSubscriptionCreateRequest struct {
+	SourceName     string `json:"source_name"`
+	ConditionType  string `json:"condition_type"`
+	ConditionValue string `json:"condition_value"`
+}
+
+// MeSubscriptionCreateResponse is the JSON envelope for a successful
+// POST /api/me/subscriptions (201 Created). Contains only the generated
+// subscription ID so the client can navigate to PATCH/DELETE without
+// re-fetching the full list.
+type MeSubscriptionCreateResponse struct {
+	ID string `json:"id"`
+}
+
+// MeSubscriptionUpdateRequest is the JSON body for
+// PATCH /api/me/subscriptions/{id}. Only condition fields may be updated;
+// SourceName is intentionally excluded (changing source is a delete+create).
+type MeSubscriptionUpdateRequest struct {
+	ConditionType  string `json:"condition_type"`
+	ConditionValue string `json:"condition_value"`
+}
+
 // MeProfileRequest is the JSON body for POST /api/me/profile.
 //
 // Timezone is an IANA name resolvable by time.LoadLocation

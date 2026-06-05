@@ -988,6 +988,137 @@ func TestMeSubscriptionsPage_HistoryPrevPage(t *testing.T) {
 	})
 }
 
+func TestMeSubscriptionsPage_SetPeriod(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid period is stored and chart is reloaded", func(t *testing.T) {
+		t.Parallel()
+		pairs := []dto.MeChartPairRow{
+			{Pair: "USD/KZT", Series: []dto.MeChartSeries{{Kind: "BID", Color: "#1D9E75", Latest: 487.0}}},
+		}
+		f := &meSubsFakeFetcher{
+			urlResponses: map[string][]byte{
+				"/api/me/rates/chart": meChartResponse("30 days", pairs),
+			},
+			jsonResponse: meSubsResponse(nil, 0, 1, 10),
+		}
+		page := newMePage(f, "valid-init-data")
+		err := page.SetPeriod(t.Context(), 30)
+		require.NoError(t, err)
+		assert.Equal(t, 30, page.State().Period)
+		assert.Contains(t, f.lastURL, "period=30", "period must appear in the request URL")
+	})
+
+	t.Run("default period is 7 in a freshly constructed page", func(t *testing.T) {
+		t.Parallel()
+		page := newMePage(&meSubsFakeFetcher{}, "init")
+		assert.Equal(t, 7, page.State().Period)
+	})
+
+	t.Run("invalid period is clamped to default and chart is reloaded", func(t *testing.T) {
+		t.Parallel()
+		pairs := []dto.MeChartPairRow{
+			{Pair: "USD/KZT", Series: []dto.MeChartSeries{{Kind: "BID", Color: "#1D9E75", Latest: 487.0}}},
+		}
+		f := &meSubsFakeFetcher{
+			urlResponses: map[string][]byte{
+				"/api/me/rates/chart": meChartResponse("7 days", pairs),
+			},
+			jsonResponse: meSubsResponse(nil, 0, 1, 10),
+		}
+		page := newMePage(f, "valid-init-data")
+		err := page.SetPeriod(t.Context(), 999)
+		require.NoError(t, err)
+		assert.Equal(t, 7, page.State().Period, "invalid period must be clamped to PublicChartDefaultPeriod")
+		assert.Contains(t, f.lastURL, "period=7")
+	})
+
+	t.Run("each AllowedChartPeriods value is accepted", func(t *testing.T) {
+		t.Parallel()
+		for _, period := range application.AllowedChartPeriods {
+			period := period
+			t.Run("", func(t *testing.T) {
+				t.Parallel()
+				pairs := []dto.MeChartPairRow{
+					{Pair: "USD/KZT", Series: []dto.MeChartSeries{{Kind: "BID", Color: "#1D9E75", Latest: 487.0}}},
+				}
+				f := &meSubsFakeFetcher{
+					urlResponses: map[string][]byte{
+						"/api/me/rates/chart": meChartResponse("n days", pairs),
+					},
+					jsonResponse: meSubsResponse(nil, 0, 1, 10),
+				}
+				page := newMePage(f, "valid-init-data")
+				require.NoError(t, page.SetPeriod(t.Context(), period))
+				assert.Equal(t, period, page.State().Period)
+			})
+		}
+	})
+
+	t.Run("fetch error propagates and period is still updated", func(t *testing.T) {
+		t.Parallel()
+		f := &meSubsFakeFetcher{
+			urlErr: map[string]error{
+				"/api/me/rates/chart": errors.New("http 503"),
+			},
+			jsonResponse: meSubsResponse(nil, 0, 1, 10),
+		}
+		page := newMePage(f, "valid-init-data")
+		err := page.SetPeriod(t.Context(), 90)
+		require.Error(t, err)
+		assert.Equal(t, 90, page.State().Period, "period must be set even when the fetch fails")
+	})
+
+	t.Run("stale chart fetch is dropped when period changes mid-flight", func(t *testing.T) {
+		// The gatedFetcher blocks the first FetchJSON call (the period=30 chart
+		// fetch) until the test releases it. While it is blocked, the test calls
+		// SetPeriod(7) — which completes immediately because the fallback response
+		// is used for the second call. When the blocked (stale) call is released
+		// it finds p.state.Period == 7 != 30 and drops the result, leaving Chart
+		// as set by the period=7 fetch.
+		t.Parallel()
+
+		pairs7 := []dto.MeChartPairRow{
+			{Pair: "USD/KZT", Series: []dto.MeChartSeries{{Kind: "BID", Color: "#1D9E75", Latest: 487.0}}},
+		}
+		pairs30 := []dto.MeChartPairRow{
+			{Pair: "EUR/KZT", Series: []dto.MeChartSeries{{Kind: "BID", Color: "#378ADD", Latest: 530.0}}},
+		}
+		// First call (period=30) → stale; second call (period=7) → current.
+		bf := newGatedFetcher(meChartResponse("30 days", pairs30), meChartResponse("7 days", pairs7))
+		c := apiclient.New(bf)
+		page := application.NewMeSubscriptionsPage(c, "tok", 10)
+
+		// Launch the period=30 fetch; it blocks immediately inside gatedFetcher.
+		done := make(chan error, 1)
+		go func() {
+			done <- page.SetPeriod(t.Context(), 30)
+		}()
+
+		// Wait until the fetch is blocked, then switch to period=7 while the
+		// period=30 request is still in flight.
+		<-bf.started
+		require.NoError(t, page.SetPeriod(t.Context(), 7))
+
+		// period=7 fetch already completed; Chart reflects pairs7.
+		st := page.State()
+		require.NotNil(t, st.Chart, "chart from period=7 fetch must be stored")
+		assert.Equal(t, 7, st.Period)
+		require.Len(t, st.Chart.Pairs, 1)
+		assert.Equal(t, "USD/KZT", st.Chart.Pairs[0].Pair, "chart must reflect the period=7 result")
+
+		// Release the stale period=30 fetch; it must NOT overwrite the state.
+		bf.release <- struct{}{}
+		require.NoError(t, <-done)
+
+		st = page.State()
+		assert.Equal(t, 7, st.Period, "period must remain 7 after stale fetch is dropped")
+		require.NotNil(t, st.Chart)
+		require.Len(t, st.Chart.Pairs, 1)
+		assert.Equal(t, "USD/KZT", st.Chart.Pairs[0].Pair, "stale period=30 result must not overwrite Chart")
+	})
+}
+
 func TestFindPairInChart(t *testing.T) {
 	t.Parallel()
 

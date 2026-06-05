@@ -167,6 +167,43 @@ func TestRateUserSubscriptionRepository_RemoveRateUserSubscription(t *testing.T)
 	})
 }
 
+func TestRateUserSubscriptionRepository_ObtainRateUserSubscriptionByID(t *testing.T) {
+	t.Parallel()
+
+	r, err := NewRateUserSubscriptionRepository(stubSQLiteDB(t, "src-byid"))
+	require.NoError(t, err)
+	require.NotNil(t, r)
+
+	t.Run("returns record when found", func(t *testing.T) {
+		t.Parallel()
+		sub := &domain.RateUserSubscription{
+			UserType:       domain.UserTypeTelegram,
+			UserID:         "user-byid-1",
+			SourceName:     "src-byid",
+			ConditionType:  domain.ConditionTypeDelta,
+			ConditionValue: "0.3",
+		}
+		require.NoError(t, r.RetainRateUserSubscription(t.Context(), sub))
+		require.NotEmpty(t, sub.ID)
+
+		got, err := r.ObtainRateUserSubscriptionByID(t.Context(), sub.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Equal(t, sub.ID, got.ID)
+		require.Equal(t, sub.UserID, got.UserID)
+		require.Equal(t, sub.SourceName, got.SourceName)
+		require.Equal(t, sub.ConditionType, got.ConditionType)
+		require.Equal(t, sub.ConditionValue, got.ConditionValue)
+	})
+
+	t.Run("returns nil nil for unknown id", func(t *testing.T) {
+		t.Parallel()
+		got, err := r.ObtainRateUserSubscriptionByID(t.Context(), "no-such-id")
+		require.NoError(t, err)
+		require.Nil(t, got)
+	})
+}
+
 func TestRateUserSubscriptionRepository_ObtainRateUserSubscriptionsByUserID(t *testing.T) {
 	t.Parallel()
 
@@ -395,6 +432,11 @@ func TestRateUserSubscriptionRepository_TransactionErrors(t *testing.T) {
 	t.Run("RemoveRateUserSubscription propagates transaction error", func(t *testing.T) {
 		t.Parallel()
 		err := newBrokenRepo(t).RemoveRateUserSubscription(t.Context(), &domain.RateUserSubscription{UserType: domain.UserTypeTelegram, UserID: "u", SourceName: "s"})
+		require.Error(t, err)
+	})
+	t.Run("ObtainRateUserSubscriptionByID propagates transaction error", func(t *testing.T) {
+		t.Parallel()
+		_, err := newBrokenRepo(t).ObtainRateUserSubscriptionByID(t.Context(), "any-id")
 		require.Error(t, err)
 	})
 }
