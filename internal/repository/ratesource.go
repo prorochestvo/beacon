@@ -8,11 +8,9 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/seilbekskindirov/monitor/internal"
 	"github.com/seilbekskindirov/monitor/internal/domain"
-	"github.com/twinj/uuid"
 )
 
 // NewRateSourceRepository returns a repository for the rate_sources table.
@@ -378,11 +376,6 @@ const (
 		rateSourceRuleMetadataFieldName + " " +
 		"\nFROM " + rateSourceTableName
 )
-
-func generateRateSourceID() string {
-	now := time.Now().UTC()
-	return fmt.Sprintf("RS%04d%02d%02d%02d%02d%02dZ%dT%X", now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute(), now.Second(), now.Nanosecond(), uuid.NewV4().Bytes())
-}
 
 func rateSourceCount(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
 	query := "SELECT\n" +

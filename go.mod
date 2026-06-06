@@ -13,7 +13,6 @@ require (
 	github.com/shirou/gopsutil/v4 v4.26.2
 	github.com/stretchr/testify v1.11.1
 	github.com/twinj/uuid v1.0.0
-	gonum.org/v1/gonum v0.15.0
 	modernc.org/sqlite v1.29.9
 )
 

@@ -57,9 +57,10 @@ also serves `GET /healthz` which runs a cheap repository read and
 returns `{"status":"ok"}` (200) when the database is reachable or
 `{"status":"unavailable"}` (503) otherwise.
 
-`internal/logger.SetTelegramHandler` tags forwarded error alerts with
-the source label `fx_rate_monitor.error` (renamed from a legacy tag in
-the 2026-05-21 audit pass — update any tag-based filters accordingly).
+Error-level log entries are written to the rotating log file only.
+No automatic Telegram alert hook is wired today — monitor the log
+files directly or configure an external alert on systemd unit
+failure (`OnFailure=`) to page on critical issues.
 
 ## Backup & restore
 

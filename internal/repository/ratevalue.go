@@ -11,7 +11,7 @@ import (
 
 	"github.com/seilbekskindirov/monitor/internal"
 	"github.com/seilbekskindirov/monitor/internal/domain"
-	"github.com/twinj/uuid"
+	"github.com/seilbekskindirov/monitor/internal/domain/identity"
 )
 
 // NewRateValueRepository returns a repository for the rate_values table.
@@ -186,7 +186,7 @@ func (r *RateValueRepository) RetainRateValue(ctx context.Context, record *domai
 	}
 
 	if record.ID == "" {
-		record.ID = generateRateValueID()
+		record.ID = identity.New(identity.KindRateValue)
 	}
 	record.Timestamp = time.Now().UTC()
 
@@ -506,11 +506,6 @@ const (
 		"\nFROM " + rateValueTableName
 )
 
-func generateRateValueID() string {
-	now := time.Now().UTC()
-	return fmt.Sprintf("RV%04d%02d%02d%02d%02d%02dZ%dT%X", now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute(), now.Second(), now.Nanosecond(), uuid.NewV4().Bytes())
-}
-
 func rateValueCount(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
 	query := "SELECT\n" +
 		" COUNT(*)\n" +
@@ -580,35 +575,4 @@ func rateValueQueryContext(tx *sql.Tx, ctx context.Context, condition string, ar
 	}
 
 	return
-}
-
-func rateValueQueryRowContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (*domain.RateValue, error) {
-	query := rateValueSqlSelect + "\n" + condition
-
-	var item domain.RateValue
-	var timestamp string
-	err := tx.QueryRowContext(ctx, query, args...).Scan(
-		&item.ID,
-		&item.SourceName,
-		&item.BaseCurrency,
-		&item.QuoteCurrency,
-		&item.Price,
-		&timestamp,
-	)
-	if err != nil && errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	} else if err != nil {
-		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
-		return nil, err
-	}
-
-	item.Timestamp, err = time.Parse(time.RFC3339, timestamp)
-	if err != nil {
-		err = fmt.Errorf("rate %s has invalid timestamp %s: %w", item.ID, timestamp, err)
-		err = errors.Join(err, internal.NewTraceError())
-		return nil, err
-	}
-
-	return &item, nil
 }

@@ -48,69 +48,6 @@ func TestCategoryOf(t *testing.T) {
 	})
 }
 
-func TestColorForPair(t *testing.T) {
-	t.Parallel()
-
-	t.Run("same input produces same output on multiple calls", func(t *testing.T) {
-		t.Parallel()
-		c1 := ratepair.ColorForPair("USD")
-		c2 := ratepair.ColorForPair("USD")
-		c3 := ratepair.ColorForPair("USD")
-		assert.Equal(t, c1, c2)
-		assert.Equal(t, c2, c3)
-	})
-
-	t.Run("fiat base produces a color from FiatPalette", func(t *testing.T) {
-		t.Parallel()
-		color := ratepair.ColorForPair("USD")
-		assert.Contains(t, ratepair.FiatPalette, color)
-	})
-
-	t.Run("metal base produces a color from MetalPalette", func(t *testing.T) {
-		t.Parallel()
-		color := ratepair.ColorForPair("GOLD")
-		assert.Contains(t, ratepair.MetalPalette, color)
-	})
-
-	t.Run("case-insensitive input produces the same color", func(t *testing.T) {
-		t.Parallel()
-		assert.Equal(t, ratepair.ColorForPair("USD"), ratepair.ColorForPair("usd"))
-		assert.Equal(t, ratepair.ColorForPair("USD"), ratepair.ColorForPair("Usd"))
-		assert.Equal(t, ratepair.ColorForPair("GOLD"), ratepair.ColorForPair("gold"))
-	})
-
-	t.Run("different bases may produce different colors", func(t *testing.T) {
-		t.Parallel()
-		// USD and EUR are likely different colors; at least one pair should differ.
-		// We cannot guarantee this absolutely but the FNV hash over a 6-element
-		// palette makes collisions unlikely for typical FX bases.
-		colors := make(map[string]bool)
-		for _, base := range []string{"USD", "EUR", "GBP", "JPY", "RUB"} {
-			colors[ratepair.ColorForPair(base)] = true
-		}
-		// At least 2 distinct colors across 5 bases (pigeonhole would give 1 at minimum).
-		assert.Greater(t, len(colors), 1)
-	})
-
-	t.Run("returned color is a valid hex string from the relevant palette", func(t *testing.T) {
-		t.Parallel()
-		for _, base := range []string{"USD", "EUR", "GOLD", "SILVER", "KZT"} {
-			color := ratepair.ColorForPair(base)
-			require.True(t, len(color) > 0, "color for %s must not be empty", base)
-			require.Equal(t, '#', rune(color[0]), "color for %s must start with #", base)
-		}
-	})
-
-	t.Run("pinned palette index: hash function change must break this test", func(t *testing.T) {
-		t.Parallel()
-		// FNV-32a("USD") % 6 == 5; FNV-32a("GOLD") % 4 == 3.
-		// If the hash function or palette layout ever changes, these assertions
-		// will fail loudly and force an intentional update.
-		assert.Equal(t, ratepair.FiatPalette[5], ratepair.ColorForPair("USD"))
-		assert.Equal(t, ratepair.MetalPalette[3], ratepair.ColorForPair("GOLD"))
-	})
-}
-
 func TestDedupe(t *testing.T) {
 	t.Parallel()
 

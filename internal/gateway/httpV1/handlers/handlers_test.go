@@ -1037,7 +1037,6 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 	t.Parallel()
 
 	const callerUserID = int64(111)
-	const otherUserID = int64(222)
 	callerIDStr := "111"
 	otherIDStr := "222"
 

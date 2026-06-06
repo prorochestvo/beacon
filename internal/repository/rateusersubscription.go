@@ -11,7 +11,7 @@ import (
 
 	"github.com/seilbekskindirov/monitor/internal"
 	"github.com/seilbekskindirov/monitor/internal/domain"
-	"github.com/twinj/uuid"
+	"github.com/seilbekskindirov/monitor/internal/domain/identity"
 )
 
 // NewRateUserSubscriptionRepository returns a repository for the rate_user_subscriptions table.
@@ -100,7 +100,7 @@ func (r *RateUserSubscriptionRepository) RetainRateUserSubscription(ctx context.
 	now := time.Now().UTC()
 
 	if record.ID == "" {
-		record.ID = generateRateUserSubscriptionID()
+		record.ID = identity.New(identity.KindRateUserSubscription)
 	}
 	if record.CreatedAt.IsZero() {
 		record.CreatedAt = now
@@ -403,11 +403,6 @@ const (
 		rateUserSubscriptionCreatedAtFieldName +
 		"\nFROM " + rateUserSubscriptionTableName
 )
-
-func generateRateUserSubscriptionID() string {
-	now := time.Now().UTC()
-	return fmt.Sprintf("RUS%04d%02d%02d%02d%02d%02dZ%dT%X", now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute(), now.Second(), now.Nanosecond(), uuid.NewV4().Bytes())
-}
 
 func rateUserSubscriptionCount(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
 	query := "SELECT\n" +

@@ -11,7 +11,7 @@ import (
 
 	"github.com/seilbekskindirov/monitor/internal"
 	"github.com/seilbekskindirov/monitor/internal/domain"
-	"github.com/twinj/uuid"
+	"github.com/seilbekskindirov/monitor/internal/domain/identity"
 )
 
 // NewExecutionHistoryRepository returns a repository for the execution_history table.
@@ -209,7 +209,7 @@ func (r *ExecutionHistoryRepository) RetainExecutionHistory(ctx context.Context,
 	}
 
 	if record.ID == "" {
-		record.ID = generateExecutionHistoryID()
+		record.ID = identity.New(identity.KindExecutionHistory)
 	}
 	if record.Timestamp.IsZero() {
 		record.Timestamp = time.Now().UTC()
@@ -336,11 +336,6 @@ const (
 		"\nFROM " + executionHistoryTableName
 )
 
-func generateExecutionHistoryID() string {
-	now := time.Now().UTC()
-	return fmt.Sprintf("H%04d%02d%02d%02d%02d%02dZ%dT%X", now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute(), now.Second(), now.Nanosecond(), uuid.NewV4().Bytes())
-}
-
 func executionHistoryCount(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
 	query := "SELECT\n" +
 		" COUNT(*)\n" +
@@ -404,29 +399,4 @@ func executionHistoryQueryContext(tx *sql.Tx, ctx context.Context, condition str
 	}
 
 	return
-}
-
-func executionHistoryQueryRowContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (*domain.ExecutionHistory, error) {
-	query := executionHistorySqlSelect + "\n" + condition
-
-	var item domain.ExecutionHistory
-	var timestamp int64
-	err := tx.QueryRowContext(ctx, query, args...).Scan(
-		&item.ID,
-		&item.SourceName,
-		&item.Success,
-		&item.Error,
-		&timestamp,
-	)
-	if err != nil && errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	} else if err != nil {
-		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
-		return nil, err
-	}
-
-	item.Timestamp = time.Unix(timestamp, 0).UTC()
-
-	return &item, nil
 }

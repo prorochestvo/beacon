@@ -1,12 +1,11 @@
 // Package internal provides shared cross-cutting utilities: structured errors
-// with stack traces, user-facing PublicError, HTTP-code errors, and the logger
-// factory. It is imported by every application layer; keep it dependency-light.
+// with stack traces, user-facing PublicError, and the logger factory.
+// It is imported by every application layer; keep it dependency-light.
 package internal
 
 import (
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path"
 	"runtime"
@@ -65,21 +64,6 @@ func (e *PublicError) Details() string { return e.details }
 
 // Error implements the error interface.
 func (e *PublicError) Error() string { return e.details }
-
-// NewHttpCodeError creates a new HttpCodeError with the given status code.
-func NewHttpCodeError(code int) *HttpCodeError { return &HttpCodeError{code: code} }
-
-// HttpCodeError represents an error with an associated HTTP status code.
-// It is useful for mapping errors to HTTP responses.
-type HttpCodeError struct {
-	code int
-}
-
-// StatusCode returns the HTTP status code.
-func (e *HttpCodeError) StatusCode() int { return e.code }
-
-// Error returns the HTTP status text corresponding to the status code.
-func (e *HttpCodeError) Error() string { return http.StatusText(e.code) }
 
 // NewStackTraceError creates a new StackTraceError with the full stack trace.
 // It captures the complete call stack and system information at the time of creation.

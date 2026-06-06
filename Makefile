@@ -152,8 +152,6 @@ format:
 clean:
 	rm -f ./build/monitor ./build/collector ./build/notifier ./build/migrator ./build/web ./build/monitor.db
 	rm -f ./build/doctor
-	# transitional: stale pre-merge binary, drop after one release cycle
-	rm -f ./build/rulegen
 	rm -f ./cmd/web/static/app.wasm ./cmd/web/static/wasm_exec.js
 	rm -rf ./build/static
 	go mod tidy

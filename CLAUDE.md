@@ -214,7 +214,6 @@ step, not a startup-time step.
 - `github.com/patrickmn/go-cache` — in-memory cache
 - `github.com/shirou/gopsutil/v4` — host/process stats for diagnostics
 - `github.com/twinj/uuid` — UUID generation
-- `gonum.org/v1/gonum` — numerics for the rate forecaster
 - `github.com/stretchr/testify` — test assertions
 - Go version: `1.26`
 

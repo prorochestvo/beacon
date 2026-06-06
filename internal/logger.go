@@ -3,7 +3,6 @@ package internal
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path"
@@ -89,27 +88,6 @@ func ParseLogLevel(s string) loginjector.LogLevel {
 		return LogLevelCritical
 	default:
 		return LogLevelInfo
-	}
-}
-
-// Logger wraps loginjector.Logger with an optional Telegram alert hook.
-type Logger struct {
-	*loginjector.Logger
-	telegramHookID loginjector.HookID
-}
-
-// SetTelegramHandler attaches a Telegram notification hook to the logger.
-// Error-level and severe-level log entries are forwarded to the specified Telegram chat.
-func (l *Logger) SetTelegramHandler(token, chatID string) {
-	hndl := loginjector.TelegramHandler(token, chatID, "error", "fx_rate_monitor.error")
-	l.telegramHookID = l.Logger.Hook(hndl, LogLevelError, LogLevelSevere)
-}
-
-// CloseOrLogError closes c and writes any resulting error to w.
-func CloseOrLogError(w io.Writer, c io.Closer) {
-	if err := c.Close(); err != nil {
-		logMsg := fmt.Sprintf("error closing resource: %s\n", err.Error())
-		_, _ = w.Write([]byte(logMsg))
 	}
 }
 

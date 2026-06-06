@@ -13,7 +13,7 @@ import (
 
 	"github.com/seilbekskindirov/monitor/internal"
 	"github.com/seilbekskindirov/monitor/internal/domain"
-	"github.com/twinj/uuid"
+	"github.com/seilbekskindirov/monitor/internal/domain/identity"
 )
 
 // NewRateUserEventRepository returns a repository for the rate_user_events table.
@@ -298,7 +298,7 @@ func (r *RateUserEventRepository) RetainRateUserEvent(ctx context.Context, recor
 	}
 
 	if record.ID == "" {
-		record.ID = generateRateUserEventID()
+		record.ID = identity.New(identity.KindRateUserEvent)
 	}
 	if record.CreatedAt.IsZero() {
 		record.CreatedAt = time.Now().UTC()
@@ -502,11 +502,6 @@ func sourceNameForDB(s string) any {
 		return nil
 	}
 	return s
-}
-
-func generateRateUserEventID() string {
-	now := time.Now().UTC()
-	return fmt.Sprintf("RUE%04d%02d%02d%02d%02d%02dZ%dT%X", now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute(), now.Second(), now.Nanosecond(), uuid.NewV4().Bytes())
 }
 
 func rateUserEventCount(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {

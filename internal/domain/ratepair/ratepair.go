@@ -5,7 +5,6 @@
 package ratepair
 
 import (
-	"hash/fnv"
 	"strings"
 	"time"
 
@@ -104,28 +103,6 @@ func Dedupe(in []Pair) []Pair {
 	return out
 }
 
-// FiatPalette is the ordered list of hex colors assigned to fiat-currency pairs.
-// ColorForPair selects from this palette for bases where CategoryOf returns CategoryFiat.
-// Array type prevents mutation through callsite append.
-var FiatPalette = [6]string{
-	"#378ADD",
-	"#7F77DD",
-	"#1D9E75",
-	"#D85A30",
-	"#D4537E",
-	"#639922",
-}
-
-// MetalPalette is the ordered list of hex colors assigned to metal pairs.
-// ColorForPair selects from this palette for bases where CategoryOf returns CategoryMetal.
-// Array type prevents mutation through callsite append.
-var MetalPalette = [4]string{
-	"#BA7517",
-	"#5F5E5A",
-	"#993C1D",
-	"#888780",
-}
-
 const (
 	// ColorBid is the semantic line color for BID series across all pairs.
 	ColorBid = "#1D9E75"
@@ -144,27 +121,6 @@ const (
 // constant remains in place as a semantic default so existing call-sites and
 // test fixtures that reference it continue to compile during the migration.
 const ChartWindow = 7 * 24 * time.Hour
-
-// ColorForPair returns a stable hex color for the given base currency code.
-// The color is chosen from FiatPalette or MetalPalette depending on the
-// base's category, using an FNV-32a hash of the uppercased base modulo the
-// palette length. FNV-32a (stdlib hash/fnv) is deterministic across Go
-// releases and process restarts, unlike maphash.
-//
-// All arithmetic stays in uint32 so the function is safe on GOARCH=wasm
-// where int is 32 bits and casting Sum32() to int could overflow to
-// math.MinInt32, making a negative index that the if-guard cannot correct.
-func ColorForPair(base string) string {
-	upper := strings.ToUpper(base)
-	h := fnv.New32a()
-	h.Write([]byte(upper))
-	palette := FiatPalette[:]
-	if CategoryOf(upper) == CategoryMetal {
-		palette = MetalPalette[:]
-	}
-	idx := h.Sum32() % uint32(len(palette))
-	return palette[idx]
-}
 
 // canonicalPair returns "MIN/MAX" of the two codes (uppercased) so that
 // USD/KZT and KZT/USD share the same canonical key.

@@ -44,7 +44,7 @@ internal/
   gateway/       # http.ServeMux wiring; httpV1/{handlers,routes}
   repository/    # one repo per table; each owns its own DDL via Migration()
   infrastructure/# sqlitedb client + migrator, telegrambot client
-  tools/         # rateextractor, rateforecaster, labelfmt, tgwebapp, threadsafe
+  tools/         # rateextractor, labelfmt, tgwebapp, threadsafe
   errors.go      # PublicError / TraceError / StackTraceError / HttpCodeError
   logger.go      # cyclic file logger built on loginjector
 configs/         # nginx, systemd, sources example

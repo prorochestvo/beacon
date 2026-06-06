@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"net/http"
 	"strings"
 	"testing"
 
@@ -10,7 +9,6 @@ import (
 
 var _ error = &PublicError{}
 var _ error = &TraceError{}
-var _ error = &HttpCodeError{}
 var _ error = &StackTraceError{}
 
 func TestNewTraceError(t *testing.T) {
@@ -68,50 +66,6 @@ func TestPublicError_Error(t *testing.T) {
 	details := "invalid request"
 	err := NewPublicError(details)
 	require.Equal(t, details, err.Error())
-}
-
-func TestNewHttpCodeError(t *testing.T) {
-	tests := []struct {
-		name         string
-		code         int
-		expectedText string
-	}{
-		{
-			name:         "200 OK",
-			code:         http.StatusOK,
-			expectedText: "OK",
-		},
-		{
-			name:         "404 Not Found",
-			code:         http.StatusNotFound,
-			expectedText: "Not Found",
-		},
-		{
-			name:         "500 Internal Server Error",
-			code:         http.StatusInternalServerError,
-			expectedText: "Internal Server Error",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := NewHttpCodeError(tt.code)
-			require.Equal(t, tt.code, err.StatusCode())
-			require.Equal(t, tt.expectedText, err.Error())
-		})
-	}
-}
-
-func TestHttpCodeError_StatusCode(t *testing.T) {
-	code := http.StatusBadRequest
-	err := NewHttpCodeError(code)
-	require.Equal(t, code, err.StatusCode())
-}
-
-func TestHttpCodeError_Error(t *testing.T) {
-	err := NewHttpCodeError(http.StatusUnauthorized)
-	expected := http.StatusText(http.StatusUnauthorized)
-	require.Equal(t, expected, err.Error())
 }
 
 func TestNewStackTraceError(t *testing.T) {
@@ -176,12 +130,6 @@ func BenchmarkNewTraceError(b *testing.B) {
 func BenchmarkNewPublicError(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = NewPublicError("test", "error", "message")
-	}
-}
-
-func BenchmarkNewHttpCodeError(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		_ = NewHttpCodeError(http.StatusInternalServerError)
 	}
 }
 
