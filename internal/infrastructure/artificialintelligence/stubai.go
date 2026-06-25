@@ -6,9 +6,9 @@ import (
 )
 
 // stubAIDefaultResponse is a hard-coded JSON string conforming to
-// RateExtractionRuleSchema(). It is used as the canned response for the stub
-// client so the service can run end-to-end without a real AI API key. The
-// schema_test.go file asserts that this value stays aligned with the schema.
+// RateExtractionRuleSchema(), used as the stub client's canned response so the
+// service can run end-to-end without a real AI API key. schema_test.go asserts
+// this value stays aligned with the schema.
 const stubAIDefaultResponse = `{"rules":[{"method":"regex","pattern":"USD / KZT[\\s\\S]{1,500}?<div[^>]*>(\\d+\\.\\d+)</div>"}]}`
 
 func newStubAIClient(completeResponse string) (AIClient, error) {

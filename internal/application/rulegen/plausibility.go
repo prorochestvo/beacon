@@ -1,7 +1,7 @@
 package rulegen
 
-// currencyPair is the map key. Using a struct instead of a string like
-// "USD/KZT" avoids format ambiguity and produces allocation-free lookups.
+// currencyPair is the map key. A struct rather than a "USD/KZT" string avoids
+// format ambiguity and gives allocation-free lookups.
 type currencyPair struct {
 	Base  string
 	Quote string
@@ -16,15 +16,14 @@ type valueRange struct {
 
 // plausibleRanges maps every (base, quote) pair seeded in
 // migrations/202605.007.rate_sources.seed_initial.sql to an inclusive [Lo, Hi]
-// float64 window (see migrations/ for the current seed filename). Pairs absent from the table fall through to the universal
+// float64 window (see migrations/ for the current seed filename). Pairs absent
+// from the table fall through to the universal
 // (MinPlausibleRateValue, MaxPlausibleRateValue] check in the executor, so
-// unknown pairs are never hard-rejected by this table.
+// unknown pairs are never hard-rejected here.
 //
 // Scope boundary: internal/tools/rateextractor and
-// internal/application/sourceaudit deliberately do NOT use this table. Both
-// call sites have their own history-based plausibility checks that cover the
-// production use case; bringing a static table there would be an out-of-scope
-// refactor. Adding a new rate source means adding (or
+// internal/application/sourceaudit deliberately do NOT use this table — both
+// have their own history-based checks. Adding a rate source means adding (or
 // intentionally omitting) its pair here and documenting the decision.
 var plausibleRanges = map[currencyPair]valueRange{
 	// KZT-quoted majors
@@ -54,13 +53,12 @@ var plausibleRanges = map[currencyPair]valueRange{
 // given base/quote pair. When ok is false the pair is not in the table and the
 // caller must fall back to the universal range check.
 //
-// Lookup is case-sensitive: ISO codes are always uppercase in this codebase.
-// A lowercase code ("usd", "kzt") indicates a bug upstream and will not match,
-// which surfaces the problem loudly rather than silently accepting it.
+// Lookup is case-sensitive: ISO codes are always uppercase here, so a lowercase
+// code ("usd") indicates an upstream bug and will not match — surfacing it
+// loudly rather than silently accepting it.
 //
-// Bounds semantics: a rate value v is acceptable when lo <= v <= hi (inclusive
-// on both ends). A boundary value of exactly lo should not be rejected —
-// historically reachable exchange rates sometimes land on round numbers.
+// Bounds are inclusive: a value v is acceptable when lo <= v <= hi. A boundary
+// value of exactly lo must not be rejected — real rates land on round numbers.
 func plausibleRangeFor(base, quote string) (lo, hi float64, ok bool) {
 	r, ok := plausibleRanges[currencyPair{Base: base, Quote: quote}]
 	if !ok {

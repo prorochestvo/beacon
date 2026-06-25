@@ -11,7 +11,7 @@ const RateExtractionRuleSchemaName = "rate_extraction_rule"
 //
 // The schema is built fresh per call so callers cannot mutate a shared map.
 //
-// Note: method values "regex" and "json" map exactly to domain.MethodRegex and
+// Method values "regex" and "json" map to domain.MethodRegex and
 // domain.MethodJSONPath. The enum is intentionally narrow — parse_float and
 // store_as_rate are excluded because the executor only implements regex and json.
 func RateExtractionRuleSchema() map[string]any {

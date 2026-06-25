@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// buildInitData produces a correctly-signed initData string for testing.
-// It mirrors the Telegram WebApp signing algorithm exactly.
+// buildInitData produces a correctly-signed initData string, mirroring the
+// Telegram WebApp signing algorithm exactly.
 func buildInitData(botToken string, fields map[string]string, authDate int64) string {
 	fields["auth_date"] = fmt.Sprintf("%d", authDate)
 

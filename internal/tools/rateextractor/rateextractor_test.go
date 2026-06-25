@@ -567,16 +567,14 @@ func TestRateExtractor_Run(t *testing.T) {
 		require.NotContains(t, err.Error(), "page is nil")
 	})
 	t.Run("empty body yields non-nil slice so page-is-nil guard is unreachable via transport", func(t *testing.T) {
-		// The guard `if err == nil { err = errors.New("page is nil") }` in Run
-		// defends against a hypothetical fetchHtmlPage returning (nil, nil).
-		// In practice, fetchHtmlPage returns nil only on error, and io.ReadAll on
-		// an empty body yields []byte{} (non-nil), so payload == nil is unreachable
-		// through the HTTP path. We exercise the defensive branch by injecting a
-		// custom RoundTripper whose body returns (0, io.EOF) immediately; io.ReadAll
-		// of that yields []byte{} rather than nil, so the nil guard still does not
-		// fire and we instead get a parse error on the empty payload. This subtest
-		// documents that the nil-synthesis branch is unreachable from outside the
-		// package via the transport API, and asserts the adjacent empty-body behaviour.
+		// Run's guard `if err == nil { err = errors.New("page is nil") }` defends
+		// against a hypothetical fetchHtmlPage returning (nil, nil). In practice
+		// fetchHtmlPage returns nil only on error, and io.ReadAll of an empty body
+		// yields []byte{} (non-nil), so payload == nil is unreachable via the HTTP
+		// path. A RoundTripper whose body returns (0, io.EOF) still yields []byte{},
+		// so the guard does not fire and we get a parse error on the empty payload.
+		// This documents the branch as unreachable through the transport API and
+		// asserts the adjacent empty-body behaviour.
 		t.Parallel()
 
 		transport := &emptyBodyTransport{}
@@ -595,9 +593,9 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		})
 
-		// io.ReadAll returns []byte{} for an empty body — not nil — so the
-		// payload-nil guard does not fire. The extractor fails later (no regex
-		// match on empty payload). The error must NOT contain "page is nil".
+		// io.ReadAll returns []byte{}, not nil, so the payload-nil guard does not
+		// fire; the extractor fails later (no regex match). The error must NOT
+		// contain "page is nil".
 		require.Error(t, err)
 		require.NotContains(t, err.Error(), "page is nil")
 	})
@@ -727,10 +725,10 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		// Pre-populate the cache with the same key but an empty value so that:
+		// Pre-populate the cache key with an empty value so:
 		//   1. Fetch() finds the key but the empty-byte guard skips the cache hit.
-		//   2. After the real HTTP fetch, Push() fails (key already exists in go-cache.Add).
-		//   3. fetchHtmlPage logs the error and still returns the fetched body with nil error.
+		//   2. The post-fetch Push() fails (key already exists in go-cache.Add).
+		//   3. fetchHtmlPage logs the error and still returns the body with nil error.
 		cacheKey := fmt.Sprintf("GET:%s", srv.URL)
 		require.NoError(t, ext.cache.Push(cacheKey, []byte{}))
 
@@ -888,11 +886,9 @@ func (m *mockRateValueRepository) RetainRateValue(_ context.Context, rate *domai
 	return nil
 }
 
-// emptyBodyTransport is an http.RoundTripper that returns a 200 response with
-// an empty body (Read immediately returns (0, io.EOF)). Used in the
-// "empty body yields non-nil slice so page-is-nil guard is unreachable via transport"
-// subtest to verify that io.ReadAll of an empty body yields []byte{} (not nil),
-// meaning the payload-nil guard in Run is unreachable from this transport path.
+// emptyBodyTransport is an http.RoundTripper returning a 200 with an empty body
+// (Read returns (0, io.EOF)). It lets the page-is-nil subtest verify io.ReadAll
+// yields []byte{} (not nil), so Run's payload-nil guard is unreachable here.
 type emptyBodyTransport struct{}
 
 var _ http.RoundTripper = &emptyBodyTransport{}

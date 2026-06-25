@@ -63,7 +63,7 @@ func TestPlausibleRangeFor(t *testing.T) {
 		t.Parallel()
 		lo, hi, ok := plausibleRangeFor("USD", "KZT")
 		require.True(t, ok)
-		// The smoke-test incident: value=19.1671 was silently accepted before this table.
+		// Smoke-test incident: 19.1671 was silently accepted before this table.
 		assert.Less(t, 19.1671, lo, "19.1671 must be below the lo bound")
 		// A real-world BCC USD/KZT rate.
 		assert.GreaterOrEqual(t, 469.0, lo)

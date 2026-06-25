@@ -9,10 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// captureLogOutput swaps the global log writer for a buffer for the duration
-// of one test, then restores the original on t.Cleanup. Necessary because
-// ResolveURL emits its startup line via log.Printf (the same sink every other
-// startup line uses), and there is no per-call logger seam to mock.
+// captureLogOutput swaps the global log writer for a buffer for one test,
+// restoring the original on t.Cleanup. Needed because ResolveURL emits via
+// log.Printf and exposes no per-call logger seam to mock.
 func captureLogOutput(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
@@ -46,12 +45,10 @@ func TestRedactURL(t *testing.T) {
 	})
 }
 
-// TestResolveURL does not call t.Parallel at the top level because subtests
-// use t.Setenv, which mutates process environment and is incompatible with
-// parallel execution under a parallel parent.
+// TestResolveURL omits top-level t.Parallel because subtests use t.Setenv,
+// which mutates process environment and cannot run under a parallel parent.
 func TestResolveURL(t *testing.T) {
-	// Use test-specific env names to avoid colliding with any PROXY_URL that an
-	// operator may have set in their shell during development.
+	// Test-specific env names avoid colliding with an operator's own PROXY_URL.
 
 	t.Run("unset env returns empty string and logs not configured", func(t *testing.T) {
 		// PROXY_URL_TEST_ABSENT_XYZ is intentionally never set in this process.
@@ -64,11 +61,10 @@ func TestResolveURL(t *testing.T) {
 
 	t.Run("valid URL is returned and logged with credentials redacted", func(t *testing.T) {
 		const localEnv = "PROXY_URL_TEST_VALID"
-		// dsninjector strips userinfo when reconstructing the URL from its parsed
-		// components (Driver + "://" + Addr), so the credential-free host:port is
-		// what ResolveURL returns and logs. RedactURL is a no-op on an already
-		// credential-free URL, but it guards against callers that assemble the URL
-		// differently. The important invariant: s3cret never appears in the log.
+		// dsninjector reconstructs the URL from Driver + "://" + Addr, dropping
+		// userinfo, so ResolveURL returns/logs a credential-free host:port and
+		// RedactURL is a no-op here (it still guards callers that assemble the URL
+		// differently). The invariant: s3cret never appears in the log.
 		t.Setenv(localEnv, "http://user:s3cret@127.0.0.1:7788")
 
 		logBuf := captureLogOutput(t)

@@ -467,10 +467,8 @@ func TestService_ObtainMeChart(t *testing.T) {
 
 	t.Run("all 12 buckets are filled when data exists in the effective window", func(t *testing.T) {
 		t.Parallel()
-		// effectiveSince is capped to ts3 (the first sample), so the window starts
-		// at ts3, not at since. Bucket 0 is therefore always populated (the invariant
-		// guaranteed by the effective-since cap), and all subsequent buckets are
-		// forward-filled from the two samples. len(Points) must equal bucketCount.
+		// effectiveSince caps to ts3 (first sample), so bucket 0 is always populated
+		// and later buckets forward-fill from the two samples. len(Points) == bucketCount.
 		since := fixedNow.Add(-ratepair.ChartWindow)
 		step := ratepair.ChartWindow / 12
 		ts3 := since.Add(3*step + step/2)
@@ -492,8 +490,8 @@ func TestService_ObtainMeChart(t *testing.T) {
 		require.Len(t, result.Pairs[0].Series, 1)
 		sr := result.Pairs[0].Series[0]
 		assert.False(t, sr.Sparse)
-		// Post-capping invariant: bucket 0 is always populated, so all 12 buckets
-		// are emitted. effectiveSince == ts3; ts3 lands in bucket 0, ts4 in bucket 1.
+		// Bucket 0 always populated, so all 12 emitted. effectiveSince == ts3;
+		// ts3 lands in bucket 0, ts4 in bucket 1.
 		assert.Len(t, sr.Points, 12, "post-capping invariant: bucket 0 is always populated")
 		assert.Equal(t, 300.0, sr.Points[0].Value, "first bucket must carry the first sample value")
 		lastVal := sr.Points[len(sr.Points)-1].Value
@@ -692,9 +690,9 @@ func TestService_ObtainMeChart(t *testing.T) {
 	})
 
 	t.Run("effective window: coverage exactly equals period — effectiveSince==since, effective_days equals period", func(t *testing.T) {
-		// First sample is exactly at since. Because deduped[0].Timestamp is NOT After(since)
-		// (it is Equal, not After), effectiveSince stays equal to since. This means
-		// EffectiveDays == periodDays and bucketing is bit-identical to the all-data case.
+		// First sample exactly at since: deduped[0].Timestamp is Equal, not After,
+		// so effectiveSince stays == since. Hence EffectiveDays == periodDays and
+		// bucketing is bit-identical to the all-data case.
 		t.Parallel()
 		const periodDays = 7
 		since := fixedNow.Add(-time.Duration(periodDays) * 24 * time.Hour)

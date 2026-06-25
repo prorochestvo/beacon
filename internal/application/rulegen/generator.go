@@ -16,23 +16,21 @@ import (
 )
 
 // ErrUnsupportedFetcherKind is returned by Generate when the source requires a
-// fetcher that this build does not implement (e.g. "headless" / chromedp).
-// Callers can distinguish this from a transient generation failure via
-// errors.Is(err, ErrUnsupportedFetcherKind) and exit with a different code.
+// fetcher this build does not implement (e.g. "headless" / chromedp). Callers
+// distinguish it from a transient failure via errors.Is and exit differently.
 var ErrUnsupportedFetcherKind = errors.New("rulegen: unsupported fetcher kind")
 
 // ErrSourceNotFound is returned when the named source is absent from the
-// database. Callers use errors.Is to distinguish "no such source" from
-// internal DB failures.
+// database. Callers use errors.Is to distinguish it from internal DB failures.
 var ErrSourceNotFound = errors.New("rulegen: source not found")
 
 // ErrAttemptsExhausted is returned when every primary and fallback attempt
 // was made and none produced a rule that executed against the live body.
 var ErrAttemptsExhausted = errors.New("rulegen: all attempts exhausted")
 
-// Fetcher performs HTTP GETs and returns the raw response body.
-// The rulegen package defines its own narrow interface rather than importing
-// sourceaudit.Fetcher to avoid a cross-application dependency.
+// Fetcher performs HTTP GETs and returns the raw response body. rulegen defines
+// its own narrow interface rather than importing sourceaudit.Fetcher to avoid a
+// cross-application dependency.
 type Fetcher interface {
 	Fetch(ctx context.Context, url string) ([]byte, error)
 }
@@ -73,16 +71,14 @@ type rateSourceRepository interface {
 	RetainRateSource(ctx context.Context, record *domain.RateSource) error
 }
 
-// NewGenerator constructs a Generator. maxPrimaryAttempts must be >= 1 and
-// maxFallbackAttempts must be >= 1. primary must not be nil. If fallback is nil,
-// NewStubClient() is used so the loop logic is uniform regardless of fallback
-// configuration.
+// NewGenerator constructs a Generator. maxPrimaryAttempts and
+// maxFallbackAttempts must each be >= 1; primary must not be nil. A nil fallback
+// gets NewStubClient() so the loop logic stays uniform.
 //
-// plainFetcher handles sources with fetcher_kind="" or "plain".
-// chromedpFetcherFor is a factory that constructs a per-source ChromedpFetcher
-// with the given waitSelector baked in. It handles sources with fetcher_kind="chromedp".
-// Either slot may be nil; Generate returns ErrUnsupportedFetcherKind when the
-// required slot is nil.
+// plainFetcher handles fetcher_kind="" or "plain"; chromedpFetcherFor is a
+// factory building a per-source ChromedpFetcher with the given waitSelector,
+// handling fetcher_kind="chromedp". Either slot may be nil; Generate returns
+// ErrUnsupportedFetcherKind when the required slot is nil.
 func NewGenerator(
 	primary, fallback artificialintelligence.AIClient,
 	plainFetcher Fetcher,
@@ -122,12 +118,12 @@ func NewGenerator(
 	}, nil
 }
 
-// Generate runs the audit loop for the named source. If forceFallback is true
-// it skips primary and goes straight to one fallback attempt.
+// Generate runs the audit loop for the named source. forceFallback skips
+// primary and goes straight to fallback.
 //
-// On success the accepted rule and metadata are persisted to the source row
-// and the Result is returned. On failure (all attempts exhausted) a non-nil
-// error is returned and nothing is persisted.
+// On success the accepted rule and metadata are persisted and the Result is
+// returned. On failure (all attempts exhausted) a non-nil error is returned and
+// nothing is persisted.
 func (g *Generator) Generate(ctx context.Context, sourceName string, forceFallback bool) (*Result, error) {
 	src, err := g.sourceRepo.ObtainRateSourceByName(ctx, sourceName)
 	if err != nil {
@@ -137,13 +133,10 @@ func (g *Generator) Generate(ctx context.Context, sourceName string, forceFallba
 		return nil, fmt.Errorf("rulegen: source %q not found: %w", sourceName, ErrSourceNotFound)
 	}
 
-	// Select the fetcher based on the source's fetcher_kind.
-	// "" and "plain" both route to the plain HTTP fetcher; "plain" is the
-	// canonical value while "" is the defensive default for legacy rows.
-	// "chromedp" routes to the headless Chrome fetcher.
-	// Either slot may be nil when this build does not include the required
-	// fetcher — Generate returns ErrUnsupportedFetcherKind so callers can
-	// distinguish this from a transient generation failure and exit with code 2.
+	// Select the fetcher by fetcher_kind. "" and "plain" route to the plain
+	// HTTP fetcher ("plain" canonical, "" the defensive default for legacy
+	// rows); "chromedp" routes to headless Chrome. A nil required slot yields
+	// ErrUnsupportedFetcherKind so callers can exit with code 2.
 	var activeFetcher Fetcher
 	switch src.FetcherKind {
 	case "", "plain":
@@ -178,12 +171,11 @@ func (g *Generator) Generate(ctx context.Context, sourceName string, forceFallba
 		return nil, fmt.Errorf("rulegen: fetch %s: %w", src.URL, err)
 	}
 
-	// The co-location guard in Locate requires a currency anchor within
-	// ±defaultCoLocationBytes of a tier-1 hit, so anchors that appear in
-	// marketing sections far from the rate table are automatically rejected.
-	// <div class="text-lg is included because every seeded BCC rule uses it
-	// as the structural marker immediately preceding the currency code and
-	// rate value — the co-location guard ensures we pick the rate-table
+	// Locate's co-location guard requires a currency anchor within
+	// ±defaultCoLocationBytes of a tier-1 hit, rejecting anchors in marketing
+	// sections far from the rate table. `<div class="text-lg` is included
+	// because every seeded BCC rule uses it as the structural marker preceding
+	// the currency code and rate value — the guard then picks the rate-table
 	// occurrence, not a marketing heading.
 	structural := []string{
 		"<table", "<tbody", "<tr ",
@@ -451,10 +443,9 @@ func parseRulesResponse(response string) ([]domain.RateSourceRule, error) {
 	return rules, nil
 }
 
-// validateRulePatterns runs regexp.Compile on every MethodRegex rule. It
-// returns a descriptive error on the first compile failure so the audit
-// loop can feed an RE2-specific hint back to the LLM without exercising
-// the executor.
+// validateRulePatterns runs regexp.Compile on every MethodRegex rule, returning
+// a descriptive error on the first compile failure so the audit loop can feed an
+// RE2-specific hint back to the LLM without exercising the executor.
 func validateRulePatterns(rules []domain.RateSourceRule) error {
 	for i, r := range rules {
 		if r.Method != domain.MethodRegex {
@@ -489,9 +480,9 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen] + "…"
 }
 
-// validateSourceURL rejects any URL whose scheme is not http or https. It
-// prevents SSRF when the source URL originates from the database. Empty or
-// malformed URLs are also rejected.
+// validateSourceURL rejects any URL whose scheme is not http or https
+// (preventing SSRF from a database-sourced URL); empty or malformed URLs are
+// rejected too.
 func validateSourceURL(rawURL string) error {
 	if rawURL == "" {
 		return fmt.Errorf("source URL must not be empty")

@@ -12,8 +12,7 @@ import (
 )
 
 // Client is a typed HTTP client for the /api/... routes consumed by the WASM frontend.
-// Construct one per WASM lifetime via New and inject it into the application layer.
-// The client is free of DOM concerns; transport is delegated to the Fetcher.
+// Construct one per WASM lifetime via New. Free of DOM concerns; transport is delegated to the Fetcher.
 type Client struct {
 	fetcher Fetcher
 }
@@ -120,9 +119,8 @@ func (c *Client) SetSourceActive(ctx context.Context, name string, active bool) 
 }
 
 // MeSubscriptions fetches the caller's own subscriptions enriched with the latest rate
-// values. initData is the Telegram WebApp initData string read by the caller from
-// window.Telegram.WebApp.initData; this method sets the X-Telegram-Init-Data header
-// from that parameter — it does not read js.Global() itself.
+// values. initData is the Telegram WebApp initData string; this method sets the
+// X-Telegram-Init-Data header from it — it does not read js.Global() itself.
 func (c *Client) MeSubscriptions(ctx context.Context, initData string, page, pageSize int, q string) (dto.MeSubscriptionsResponse, error) {
 	raw, err := c.fetcher.FetchJSON(ctx, "GET", meSubscriptionsURL(page, pageSize, q), nil, meSubscriptionsHeaders(initData))
 	if err != nil {
@@ -137,12 +135,12 @@ func (c *Client) MeSubscriptions(ctx context.Context, initData string, page, pag
 
 // UpdateMeProfile sends the caller's IANA timezone and BCP-47 locale to the
 // server. Fire-and-forget from the Mini App mount path: the server validates
-// and persists, the client ignores everything but a non-nil error. initData
+// and persists; the client ignores everything but a non-nil error. initData
 // carries the WebApp HMAC header same as MeSubscriptions.
 //
-// Locale may be empty when the browser does not expose Intl; the server
-// stores it verbatim either way. By project policy this call never carries
-// username / display name — see the no-PII memory.
+// Locale may be empty when the browser does not expose Intl; the server stores
+// it verbatim either way. By project policy this call never carries username /
+// display name — see the no-PII memory.
 func (c *Client) UpdateMeProfile(ctx context.Context, initData, timezone, locale string) error {
 	return c.fetcher.FetchNoContent(ctx, "POST", meProfileURL(),
 		dto.MeProfileRequest{Timezone: timezone, Locale: locale},
@@ -150,10 +148,9 @@ func (c *Client) UpdateMeProfile(ctx context.Context, initData, timezone, locale
 }
 
 // MeRatesChart fetches the sparkline-list chart data for the calling user's
-// subscribed currency pairs. initData is the Telegram WebApp initData string;
-// it is forwarded via the X-Telegram-Init-Data header (never as a query
-// parameter — see the privacy notes in routes.go). period is the rolling window
-// in days; must be one of {7, 30, 90, 180, 360}.
+// subscribed currency pairs. initData is forwarded via the X-Telegram-Init-Data
+// header (never as a query parameter — see the privacy notes in routes.go).
+// period is the rolling window in days; must be one of {7, 30, 90, 180, 360}.
 func (c *Client) MeRatesChart(ctx context.Context, initData string, period int) (dto.MeChartResponse, error) {
 	raw, err := c.fetcher.FetchJSON(ctx, "GET", meRatesChartURL(period), nil, meSubscriptionsHeaders(initData))
 	if err != nil {
@@ -183,10 +180,9 @@ func (c *Client) PublicRatesChart(ctx context.Context, page, limit, period int) 
 }
 
 // MeRatesHistory fetches one page of per-pair rate-collection events for the
-// calling user. initData is the Telegram WebApp initData string; pair is a
-// canonical "BASE/QUOTE" label; sourceTitle is an optional provider-title filter
-// (empty string omits the query parameter); page is 1-based; limit is bounded
-// server-side at 100. Returns the parsed JSON envelope.
+// calling user. pair is a canonical "BASE/QUOTE" label; sourceTitle is an
+// optional provider-title filter (empty string omits the query parameter);
+// page is 1-based; limit is bounded server-side at 100.
 func (c *Client) MeRatesHistory(ctx context.Context, initData, pair, sourceTitle string, page, limit int) (dto.MeHistoryResponse, error) {
 	raw, err := c.fetcher.FetchJSON(ctx, "GET", meRatesHistoryURL(pair, sourceTitle, page, limit), nil, meSubscriptionsHeaders(initData))
 	if err != nil {
@@ -200,8 +196,8 @@ func (c *Client) MeRatesHistory(ctx context.Context, initData, pair, sourceTitle
 }
 
 // MeSubscriptionsRaw fetches the caller's subscriptions as one row per condition
-// with a stable ID field, for use by the editor screen. initData is the Telegram
-// WebApp initData string forwarded via X-Telegram-Init-Data (never query string).
+// with a stable ID field, for use by the editor screen. initData is forwarded
+// via X-Telegram-Init-Data (never query string).
 func (c *Client) MeSubscriptionsRaw(ctx context.Context, initData string) (dto.MeSubscriptionsRawResponse, error) {
 	raw, err := c.fetcher.FetchJSON(ctx, "GET", meSubscriptionsRawURL(), nil, meSubscriptionsHeaders(initData))
 	if err != nil {

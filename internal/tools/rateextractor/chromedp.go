@@ -32,16 +32,14 @@ type ChromedpRateExtractor struct {
 	failedURLsMu sync.Mutex
 }
 
-// NewChromedpRateExtractor constructs a ChromedpRateExtractor. chromiumPath may
-// be empty, in which case chromedp searches PATH for a suitable binary. proxyURL
-// is an optional HTTP proxy URL string (e.g. "http://127.0.0.1:7788"); pass ""
-// to run Chromium without a proxy. logger receives one-line diagnostic messages
-// per fetch; pass io.Discard to silence them. Caller must supply a non-nil repo.
+// NewChromedpRateExtractor constructs a ChromedpRateExtractor. Empty chromiumPath
+// lets chromedp search PATH. proxyURL is an optional HTTP proxy URL (e.g.
+// "http://127.0.0.1:7788"); "" runs Chromium without a proxy. logger receives a
+// one-line diagnostic per fetch; pass io.Discard to silence. repo must be non-nil.
 //
-// The extractor maintains a per-process negative URL cache (tombstone): once a URL fails
-// inside one process, subsequent fetches in the same process short-circuit. This is designed
-// for short-lived one-shot processes; do not reuse an extractor instance across cron
-// invocations in a long-running daemon.
+// The extractor keeps a per-process negative URL cache (tombstone): once a URL
+// fails, later fetches in the same process short-circuit. Built for short-lived
+// one-shot processes; do not reuse an instance across cron invocations in a daemon.
 func NewChromedpRateExtractor(chromiumPath string, proxyURL string, logger io.Writer, repo rateValueRepository) *ChromedpRateExtractor {
 	if logger == nil {
 		logger = io.Discard
@@ -56,44 +54,40 @@ func NewChromedpRateExtractor(chromiumPath string, proxyURL string, logger io.Wr
 }
 
 // Run renders source.URL via headless Chrome with a one-shot allocator and
-// applies the extraction pipeline. Prefer RunBatch when multiple sources are
-// processed in one tick — it amortises Chromium cold-start across the batch.
+// applies the extraction pipeline. Prefer RunBatch when processing multiple
+// sources in one tick — it amortises Chromium cold-start across the batch.
 //
 // Errors from RunBatch are not re-wrapped: they already carry the
-// "chromedp extractor: ..." / "chromedp fetch ..." prefix produced inside.
+// "chromedp extractor: ..." / "chromedp fetch ..." prefix.
 func (e *ChromedpRateExtractor) Run(ctx context.Context, source *domain.RateSource) error {
 	return e.RunBatch(ctx, []*domain.RateSource{source})[source.Name]
 }
 
-// RunBatch fetches and persists every source in batch under one shared
-// Chromium subprocess. The result map is keyed by source.Name; a nil or
-// absent entry signals success. An empty batch is a fast no-op — Chromium
-// is never launched, so a tick with only plain sources pays zero
-// chromedp cost.
+// RunBatch fetches and persists every source under one shared Chromium
+// subprocess. The result map is keyed by source.Name; a nil or absent entry
+// signals success. An empty batch is a fast no-op — Chromium is never launched,
+// so a tick with only plain sources pays zero chromedp cost.
 //
-// Sources are processed sequentially: chromedp browser contexts derived
-// from one ExecAllocator share a single CDP websocket and are not safe
-// to use concurrently. Each source gets a fresh chromedp.NewContext so
-// cookies, storage, and per-target options do not leak between rates.
+// Sources are processed sequentially: browser contexts from one ExecAllocator
+// share a single CDP websocket and are not safe to use concurrently. Each source
+// gets a fresh chromedp.NewContext so cookies, storage, and per-target options
+// do not leak between rates.
 //
-// The shared ExecAllocator (and its Chromium subprocess) is cancelled
-// via defer before return, including on panic paths, so the subprocess
-// is reaped regardless of how the batch ends. If the parent ctx is
-// cancelled mid-batch the remaining sources are tagged with ctx.Err()
-// instead of being silently dropped, so the caller can still record
-// per-source execution history for them.
+// The shared ExecAllocator (and its subprocess) is cancelled via defer before
+// return, including on panic paths, so the subprocess is always reaped. If the
+// parent ctx is cancelled mid-batch the remaining sources are tagged with
+// ctx.Err() rather than silently dropped, so the caller can still record
+// per-source execution history.
 //
-// Trust boundary. The shared Chromium subprocess runs with --no-sandbox
-// (required when chromedp is executed as root on the deploy host) and
-// shares one --user-data-dir across every source in the batch. That
-// shared profile means the network service, DNS cache, HTTP disk cache,
-// and HTTP credential cache are visible to every source in the batch —
-// chromedp.NewContext partitions cookies and local storage per target
-// but does not partition the network service. Callers must populate
-// batch only from operator-vetted, https-scheme, credential-free
-// `rate_sources.url` rows; mixing user-supplied or credential-bearing
-// URLs into one batch widens the blast radius of a renderer exploit
-// or auth-cache leak across every source that follows.
+// Trust boundary. The subprocess runs with --no-sandbox (required when chromedp
+// runs as root on the deploy host) and shares one --user-data-dir across the
+// batch. That shared profile exposes the network service, DNS cache, HTTP disk
+// cache, and HTTP credential cache to every source — chromedp.NewContext
+// partitions cookies and local storage per target but not the network service.
+// Populate batch only from operator-vetted, https-scheme, credential-free
+// `rate_sources.url` rows; mixing user-supplied or credential-bearing URLs into
+// one batch widens the blast radius of a renderer exploit or auth-cache leak
+// across every source that follows.
 func (e *ChromedpRateExtractor) RunBatch(ctx context.Context, batch []*domain.RateSource) map[string]error {
 	if len(batch) == 0 {
 		return nil
@@ -114,12 +108,10 @@ func (e *ChromedpRateExtractor) RunBatch(ctx context.Context, batch []*domain.Ra
 }
 
 // newExecAllocator builds the shared chromedp allocator used by RunBatch.
-// Every context derived from the returned allocCtx shares one Chromium
-// network service: DNS cache, HTTP disk cache, and HTTP auth credential
-// cache are process-wide. Cookies and local storage are partitioned per
-// chromedp.NewContext (per-target), but the network layer is not. See
-// the trust boundary section on RunBatch for the resulting constraint
-// on what may be batched together.
+// Contexts derived from allocCtx share one Chromium network service: DNS, HTTP
+// disk, and HTTP auth credential caches are process-wide. Cookies and local
+// storage are partitioned per chromedp.NewContext, but the network layer is not.
+// See the RunBatch trust-boundary section for what may be batched together.
 // Caller owns the returned cancel func.
 func (e *ChromedpRateExtractor) newExecAllocator(ctx context.Context) (context.Context, context.CancelFunc) {
 	return chromedp.NewExecAllocator(ctx, e.buildExecAllocatorOptions(e.proxyURL)...)
@@ -127,13 +119,12 @@ func (e *ChromedpRateExtractor) newExecAllocator(ctx context.Context) (context.C
 
 // fixedExecAllocatorOptionCount is the number of options buildExecAllocatorOptions
 // appends unconditionally (Headless, DisableGPU, NoSandbox, disable-blink-features).
-// Tests use this to compute the baseline option count without a magic literal.
+// Tests use it to compute the baseline option count without a magic literal.
 const fixedExecAllocatorOptionCount = 4
 
 // buildExecAllocatorOptions constructs the full slice of chromedp allocator
-// options. When proxyURL is non-empty a ProxyServer option is appended so
-// Chromium routes its traffic through the given proxy. Chromium does not inherit
-// the Go proxy env automatically, so the URL must be passed explicitly.
+// options. A non-empty proxyURL appends a ProxyServer option; Chromium does not
+// inherit the Go proxy env, so the URL must be passed explicitly.
 func (e *ChromedpRateExtractor) buildExecAllocatorOptions(proxyURL string) []chromedp.ExecAllocatorOption {
 	// slices.Clone — never alias chromedp.DefaultExecAllocatorOptions; an
 	// upstream array-length change would otherwise let append() stomp the global.
@@ -154,17 +145,14 @@ func (e *ChromedpRateExtractor) buildExecAllocatorOptions(proxyURL string) []chr
 	return opts
 }
 
-// runOneInAllocator fetches one source under an existing allocator and
-// applies the extraction pipeline. The per-source 30 s timeout is scoped
-// inside fetchRenderedPageInAllocator so a slow source cannot starve the
-// rest of the batch.
+// runOneInAllocator fetches one source under an existing allocator and applies
+// the extraction pipeline. The per-source 30 s timeout is scoped inside
+// fetchRenderedPageInAllocator so a slow source cannot starve the rest of the batch.
 //
-// applyRulesAndStore deliberately runs under allocCtx (batch lifetime)
-// rather than under the per-source timeout: network rendering is already
-// complete at this point, payload is in memory, and a DB write must not
-// be cut off by the 30 s navigation deadline. allocCtx has no
-// independent deadline of its own — it carries whatever the caller of
-// RunBatch passed in.
+// applyRulesAndStore runs under allocCtx (batch lifetime), not the per-source
+// timeout: rendering is done, the payload is in memory, and the DB write must
+// not be cut off by the 30 s navigation deadline. allocCtx has no deadline of
+// its own — it carries whatever RunBatch's caller passed in.
 func (e *ChromedpRateExtractor) runOneInAllocator(allocCtx context.Context, source *domain.RateSource) error {
 	payload, err := e.fetchRenderedPageInAllocator(allocCtx, source)
 	if err != nil {
@@ -174,17 +162,16 @@ func (e *ChromedpRateExtractor) runOneInAllocator(allocCtx context.Context, sour
 }
 
 // fetchRenderedPageInAllocator navigates to source.URL inside the supplied
-// allocator and returns the post-hydration outer HTML of the document.
-// The per-source wall-clock timeout (defaultChromedpTimeout) is applied
-// locally so its expiry only affects this source, not the batch's other
-// sources or the shared Chromium subprocess.
-// Short-circuits if a prior fetch for source.URL failed during this
-// process lifetime; see recordFailedURL.
+// allocator and returns the post-hydration outer HTML. The per-source
+// wall-clock timeout (defaultChromedpTimeout) is applied locally so its expiry
+// affects only this source, not the batch's other sources or the subprocess.
+// Short-circuits if a prior fetch for source.URL failed this process lifetime;
+// see recordFailedURL.
 func (e *ChromedpRateExtractor) fetchRenderedPageInAllocator(allocCtx context.Context, source *domain.RateSource) ([]byte, error) {
 	if err := validateNavigableURL(source.URL); err != nil {
 		wrapped := fmt.Errorf("chromedp extractor: source %s: %w", source.Name, err)
-		// Tombstone the URL so subsequent ticks short-circuit without re-validating
-		// and re-logging — a malformed `rate_sources.url` would otherwise flood logs.
+		// Tombstone so later ticks short-circuit without re-validating/re-logging —
+		// a malformed `rate_sources.url` would otherwise flood logs.
 		e.recordFailedURL(source.URL, wrapped)
 		return nil, wrapped
 	}
@@ -252,10 +239,10 @@ const (
 	defaultChromedpNetworkIdleMs = 5000
 )
 
-// validateNavigableURL rejects URLs that the chromedp Navigate call must never
-// touch — empty, malformed, or non-http(s) (file://, javascript:, data:, ...).
-// The source URL originates from the database; an operator with write access
-// could otherwise turn a chromedp source into a local-file read or SSRF.
+// validateNavigableURL rejects URLs Navigate must never touch — empty,
+// malformed, or non-http(s) (file://, javascript:, data:, ...). The source URL
+// comes from the database; an operator with write access could otherwise turn a
+// chromedp source into a local-file read or SSRF.
 func validateNavigableURL(rawURL string) error {
 	if rawURL == "" {
 		return errors.New("source URL must not be empty")
@@ -269,9 +256,8 @@ func validateNavigableURL(rawURL string) error {
 		if u.Host == "" {
 			return fmt.Errorf("URL %q has no host", rawURL)
 		}
-		// Reject userinfo so credentials embedded in `rate_sources.url` never
-		// reach the chromedp navigate call or the error/log message that
-		// quotes the URL on failure.
+		// Reject userinfo so credentials in `rate_sources.url` never reach the
+		// navigate call or the error/log message that quotes the URL on failure.
 		if u.User != nil {
 			return fmt.Errorf("URL must not contain userinfo (credentials in URLs are not allowed)")
 		}

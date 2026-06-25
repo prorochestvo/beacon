@@ -7,9 +7,9 @@ import (
 	"github.com/seilbekskindirov/monitor/internal/dto"
 )
 
-// sortSourcesByLastRun sorts sources in-place by last_run_at. When desc is
-// true the most-recently-run source comes first (matching the JS default).
-// Sources with an empty last_run_at are treated as time zero and sort last.
+// sortSourcesByLastRun sorts sources in-place by last_run_at. desc=true puts the
+// most-recently-run first (matching the JS default). Empty last_run_at is treated
+// as time zero and sorts last.
 func sortSourcesByLastRun(sources []dto.SourceResponse, desc bool) {
 	sort.SliceStable(sources, func(i, j int) bool {
 		ti := parseTime(sources[i].LastRunAt)

@@ -104,9 +104,8 @@ func TestClient_PublicRatesChart(t *testing.T) {
 
 	t.Run("returned type is dto.PublicChartResponse not MeChartResponse", func(t *testing.T) {
 		t.Parallel()
-		// Verify the returned struct has the pagination fields Page/Limit/Total that
-		// dto.MeChartResponse lacks. If the method mistakenly returned MeChartResponse
-		// the test would fail to compile because those fields would not exist.
+		// The returned struct must have the pagination fields Page/Limit/Total that
+		// dto.MeChartResponse lacks; returning MeChartResponse would fail to compile.
 		f := &fakeFetcher{jsonResponse: []byte(`{"window":"7 days","page":3,"limit":10,"total":30,"pairs":[]}`)}
 		c := apiclient.New(f)
 		got, err := c.PublicRatesChart(t.Context(), 3, 10, 7)

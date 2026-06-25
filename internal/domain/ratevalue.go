@@ -3,9 +3,9 @@ package domain
 import "time"
 
 // SourcePairKey identifies a unique (source, base, quote, kind) tuple used to
-// bulk-load time-series data for a user's subscriptions. Kind is the rate
-// direction emitted by the source, derived from domain.RateSourceKind; it is
-// not stored in rate_values directly (the column lives in rate_sources).
+// bulk-load time-series data for a user's subscriptions. Kind is the source's
+// rate direction; it is not stored in rate_values directly (the column lives in
+// rate_sources).
 type SourcePairKey struct {
 	SourceName    string
 	BaseCurrency  string

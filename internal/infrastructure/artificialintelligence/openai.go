@@ -12,10 +12,9 @@
 // DSN query-string parsers. The decoder lives in aiclient.go — see parseDSNKey.
 //
 // Structured Output: every Complete() call attaches a json_schema response
-// format describing the rate_extraction_rule shape, so the model is
-// contractually required to return that exact JSON. Only models in OpenAIModels
-// (gpt-4o family and newer) are accepted — others do not support strict
-// structured output and will produce HTTP 400.
+// format describing the rate_extraction_rule shape, so the model must return
+// that exact JSON. Only models in OpenAIModels (gpt-4o family and newer) are
+// accepted — others do not support strict structured output and produce HTTP 400.
 package artificialintelligence
 
 import (
@@ -36,9 +35,8 @@ import (
 )
 
 // OpenAIModels is the allowlist of models that support Structured Output
-// (strict json_schema mode). Requests for any other model string are rejected
-// at construction time so we fail fast rather than discovering the mismatch
-// at first call.
+// (strict json_schema mode). Any other model string is rejected at construction
+// time so we fail fast rather than at first call.
 var OpenAIModels = []string{
 	openaisdk.ChatModelGPT5_4,
 	openaisdk.ChatModelGPT5_4Mini,
@@ -51,10 +49,10 @@ var OpenAIModels = []string{
 //
 // DSN: openai://_:<base64url(KEY)>@<host>/<path>?model=<model>&timeout=<duration>
 //
-// proxyURL is an optional HTTP proxy URL string (e.g. "http://127.0.0.1:7788");
-// pass "" to use no proxy. The HTTP client is built via buildHTTPClient and
-// injected into the SDK via option.WithHTTPClient so all SDK requests honour
-// the explicit proxy setting without falling back to HTTPS_PROXY env vars.
+// proxyURL is an optional HTTP proxy URL (e.g. "http://127.0.0.1:7788"); pass ""
+// for none. The HTTP client is built via buildHTTPClient and injected into the
+// SDK via option.WithHTTPClient so all SDK requests honour the explicit proxy
+// setting without falling back to HTTPS_PROXY env vars.
 func newOpenAIClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (AIClient, error) {
 	apiKey, err := parseDSNKey(dns)
 	if err != nil {
@@ -138,10 +136,9 @@ func (c *openAIClient) CheckUP(ctx context.Context) error {
 	return nil
 }
 
-// Complete sends a request to the Responses endpoint and returns the raw text
-// of the output. The systemPrompt is forwarded as inline instructions; the
-// userMessage is the input string. A json_schema response_format is always
-// attached.
+// Complete sends a request to the Responses endpoint and returns the raw output
+// text. systemPrompt is forwarded as inline instructions; userMessage is the
+// input string. A json_schema response_format is always attached.
 func (c *openAIClient) Complete(ctx context.Context, systemPrompt, userMessage string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()

@@ -12,7 +12,7 @@ import (
 
 var _ Fetcher = (*httpFetcher)(nil)
 
-// DefaultUserAgent is the User-Agent header sent by the audit tool, matching the
+// DefaultUserAgent is the audit tool's User-Agent header, matching the
 // production extractor value.
 const DefaultUserAgent = "FXRateMonitor/1.0 (+https://github.com/seilbekskindirov/monitor)"
 
@@ -29,13 +29,13 @@ type Fetcher interface {
 }
 
 // NewHTTPFetcher constructs an httpFetcher with the given per-request timeout.
-// proxyURL is an optional HTTP proxy URL string (e.g. "http://127.0.0.1:7788");
-// pass "" to use no proxy.
+// proxyURL is an optional HTTP proxy URL (e.g. "http://127.0.0.1:7788"); pass ""
+// for no proxy.
 //
 // When proxyURL is empty an explicit &http.Transport{} with no Proxy field is
-// used. A nil Transport would fall back to http.DefaultTransport whose Proxy
-// reads HTTPS_PROXY/HTTP_PROXY from the process environment, which would
-// silently route traffic even when no proxy was configured by the caller.
+// used: a nil Transport would fall back to http.DefaultTransport, whose Proxy
+// reads HTTPS_PROXY/HTTP_PROXY from the environment and would silently route
+// traffic the caller never configured.
 func NewHTTPFetcher(timeout time.Duration, proxyURL string) (Fetcher, error) {
 	var client *http.Client
 	if proxyURL != "" {
@@ -50,7 +50,7 @@ func NewHTTPFetcher(timeout time.Duration, proxyURL string) (Fetcher, error) {
 	} else {
 		client = &http.Client{
 			Timeout:   timeout,
-			Transport: &http.Transport{}, // explicit empty transport — no Proxy field, no env auto-pickup
+			Transport: &http.Transport{}, // empty transport — no Proxy, no env auto-pickup
 		}
 	}
 	return &httpFetcher{
@@ -59,9 +59,8 @@ func NewHTTPFetcher(timeout time.Duration, proxyURL string) (Fetcher, error) {
 	}, nil
 }
 
-// httpFetcher is the production Fetcher implementation.
-// It is not tested directly against the network; coverage comes from integration
-// via cmd/doctor audit.
+// httpFetcher is the production Fetcher implementation. Not tested directly
+// against the network; coverage comes from cmd/doctor audit integration.
 type httpFetcher struct {
 	client  *http.Client
 	timeout time.Duration

@@ -92,8 +92,8 @@ func (c *openAICompatibleClient) complete(ctx context.Context, systemPrompt, use
 }
 
 // ping sends a minimal chat completion request to verify liveness and auth.
-// The model, prompt, expected substring, and max-tokens are all parametric so
-// each provider wrapper can supply its own cheap probe configuration.
+// model, prompt, expected substring, and max-tokens are parametric so each
+// provider wrapper can supply its own cheap probe configuration.
 func (c *openAICompatibleClient) ping(ctx context.Context, model, prompt, expected string, maxTokens int) error {
 	ctx, cancel := context.WithTimeout(ctx, c.httpClient.Timeout)
 	defer cancel()

@@ -1,7 +1,7 @@
 // Package ui provides HTML renderers for the WASM frontend. This file handles
 // the Mini App subscriptions screen: a sparkline-list chart slot followed by a
-// modal slot. The subscription list section, search bar, and toggle button have
-// been removed; per-pair detail is now surfaced through the modal overlay.
+// modal slot. Per-pair detail is surfaced through the modal overlay (the old
+// list section, search bar, and toggle button are gone).
 //
 // The modal is text-only (no SVG). When state.HistoryOpen is true the modal
 // body swaps to the per-pair history view rendered by me_pair_history.go.
@@ -27,8 +27,8 @@ import (
 // The empty-initData path and the 401-response path both render this message.
 const authFailureMsg = "This page must be opened from the bot&#39;s button. Please reopen via the bot."
 
-// meManageGearSVG is the inline SVG gear icon used in the manage-subscriptions
-// button. Viewbox is 24×24 px; rendered at 20×20 px via CSS width/height.
+// meManageGearSVG is the inline SVG gear icon for the manage-subscriptions
+// button. Viewbox 24×24 px; rendered at 20×20 px via CSS.
 const meManageGearSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">` +
 	`<path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.01 7.01 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 2h-4c-.25 0-.46.18-.49.42l-.36 2.54a7.01 7.01 0 0 0-1.62.94l-2.39-.96a.48.48 0 0 0-.59.22L2.63 8.48a.48.48 0 0 0 .12.61l2.03 1.58A7.2 7.2 0 0 0 4.71 12c0 .32.03.63.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.36 1.04.67 1.62.94l.36 2.54c.05.24.26.42.49.42h4c.25 0 .46-.18.49-.42l.36-2.54a7.01 7.01 0 0 0 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 0 1 8.4 12 3.6 3.6 0 0 1 12 8.4a3.6 3.6 0 0 1 3.6 3.6 3.6 3.6 0 0 1-3.6 3.6z"/>` +
 	`</svg>`
@@ -38,11 +38,10 @@ const meManageGearSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24
 //  1. #me-sparkline-chart — sparkline-list chart (skeleton / empty / rendered).
 //  2. #me-pair-modal-slot — pair detail overlay (empty unless OpenPair is set).
 //
-// The manage-subscriptions gear button is absolutely positioned at the top-right
-// of #app via CSS and so contributes nothing to the vertical flow — it floats
-// over the empty space to the right of the chart-card header. The button is NOT
-// rendered on the guest screen or when AuthFailure is set; AuthFailure
-// short-circuits the whole screen to just the auth-failure message.
+// The manage-subscriptions gear button is absolutely positioned top-right of
+// #app via CSS, so it floats over the chart-card header and adds nothing to the
+// vertical flow. It is NOT rendered on the guest screen or when AuthFailure is
+// set; AuthFailure short-circuits the whole screen to the auth-failure message.
 //
 // Every user-influenced field is passed through dom.Escape before interpolation.
 func RenderMeSubscriptions(state application.MeSubscriptionsState) string {
@@ -65,20 +64,19 @@ func RenderMeSubscriptions(state application.MeSubscriptionsState) string {
 
 // RenderSparklineSlot returns the HTML content for the #me-sparkline-chart div.
 // Exported so main.go can update the chart slot in-place after the async fetch
-// completes without re-rendering the entire page.
+// without re-rendering the whole page.
 func RenderSparklineSlot(state application.MeSubscriptionsState) string {
 	return renderSparklineSlot(state)
 }
 
-// RenderPairModal returns the HTML for the open-pair detail overlay or the
-// empty string when state.OpenPair is nil or the chart data is missing.
-// The output is a self-contained HTML fragment safe for innerHTML assignment
-// into #me-pair-modal-slot.
+// RenderPairModal returns the HTML for the open-pair detail overlay, or the
+// empty string when state.OpenPair is nil or the chart data is missing. The
+// output is a self-contained HTML fragment safe for innerHTML assignment into
+// #me-pair-modal-slot.
 //
-// When state.HistoryOpen is true, the modal body contains the history view
+// When state.HistoryOpen is true the modal body holds the history view
 // (RenderPairHistory) instead of the per-series detail sheet. The modal card
-// chrome (backdrop, header, close button) is always present regardless of
-// HistoryOpen.
+// chrome (backdrop, header, close button) is always present.
 func RenderPairModal(state application.MeSubscriptionsState) string {
 	if state.OpenPair == nil {
 		return ""
@@ -118,11 +116,10 @@ func RenderPairModal(state application.MeSubscriptionsState) string {
 }
 
 // renderModalDetailBody returns the text-only detail view rendered inside the
-// modal card when HistoryOpen is false. It contains per-series value lines,
-// an optional spread line, an optional last-grab line, and the History action
-// button. Subscription-condition badges intentionally live elsewhere now:
-// per-pair conditions are managed from a dedicated screen, not surfaced inline
-// in the read-only detail modal.
+// modal card when HistoryOpen is false: per-series value lines, an optional
+// spread line, an optional last-grab line, and the History action button.
+// Subscription-condition badges live elsewhere — per-pair conditions are
+// managed on a dedicated screen, not in the read-only detail modal.
 func renderModalDetailBody(row dto.MeChartPairRow, lastGrab time.Time, hasGrab bool) string {
 	var b strings.Builder
 
@@ -133,8 +130,8 @@ func renderModalDetailBody(row dto.MeChartPairRow, lastGrab time.Time, hasGrab b
 		b.WriteString(`</div>`)
 	}
 
-	// Spread line: present when the server provided SpreadPct for a two-series
-	// row. The len(row.Series) >= 2 guard mirrors renderCollapsedDelta so a
+	// Spread line: present when the server gave SpreadPct for a two-series row.
+	// The len(row.Series) >= 2 guard mirrors renderCollapsedDelta so a
 	// single-series row with a stray SpreadPct never renders a lone spread line.
 	if row.SpreadPct != nil && len(row.Series) >= 2 {
 		fmt.Fprintf(&b,

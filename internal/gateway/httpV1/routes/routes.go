@@ -1,5 +1,5 @@
-// Package routes centralises all HTTP route path constants for the v1 API.
-// Using constants prevents typos and makes the full API surface auditable at a glance.
+// Package routes centralises all HTTP route path constants for the v1 API,
+// preventing typos and making the full API surface auditable at a glance.
 package routes
 
 const (
@@ -45,27 +45,25 @@ const (
 	ErrorsExecution = "/api/errors/execution"
 
 	// PublicRatesChart returns the paginated sparkline-list for all currency pairs
-	// across active sources. No authentication required. Query params: page
-	// (default 1), limit (default 20, max 100), period (one of 7, 30, 90, 180, 360
-	// days, default 7).
+	// across active sources. No auth. Query params: page (default 1), limit
+	// (default 20, max 100), period (one of 7, 30, 90, 180, 360 days, default 7).
 	PublicRatesChart = "/api/public/rates/chart"
 
 	// MeSubscriptions returns the calling user's own subscriptions enriched with the
 	// latest rate value per source. Authentication is via Telegram WebApp initData HMAC.
 	MeSubscriptions = "/api/me/subscriptions"
 
-	// MeRatesChart returns the sparkline-list chart data for the calling user's
+	// MeRatesChart returns sparkline-list chart data for the calling user's
 	// subscribed currency pairs over the requested period (one of 7, 30, 90, 180,
-	// 360 days, default 7). Authentication is via Telegram WebApp initData HMAC
-	// (X-Telegram-Init-Data header only; no query parameter to prevent initData
-	// from appearing in access logs).
+	// 360 days, default 7). Auth via Telegram WebApp initData HMAC
+	// (X-Telegram-Init-Data header only; no query parameter, to keep initData out
+	// of access logs).
 	MeRatesChart = "/api/me/rates/chart"
 
 	// MeRatesHistory returns paginated rate-collection events for the calling
-	// user's subscribed sources that match a canonical pair label.
-	// Authentication is via Telegram WebApp initData HMAC (X-Telegram-Init-Data
-	// header only; no query parameter to prevent initData from appearing in
-	// access logs).
+	// user's subscribed sources matching a canonical pair label. Auth via Telegram
+	// WebApp initData HMAC (X-Telegram-Init-Data header only; no query parameter,
+	// to keep initData out of access logs).
 	MeRatesHistory = "/api/me/rates/history"
 
 	// MeSubscriptionsRaw returns the calling user's subscriptions as one row per
@@ -79,12 +77,11 @@ const (
 	MeSubscriptionByID = "/api/me/subscriptions/{id}"
 
 	// MeProfile upserts the calling user's profile preferences (currently only
-	// IANA timezone). Authentication is via Telegram WebApp initData HMAC, same
-	// as MeSubscriptions.
+	// IANA timezone). Auth via Telegram WebApp initData HMAC, same as MeSubscriptions.
 	MeProfile = "/api/me/profile"
 
-	// Healthz reports service readiness. Returns 200 when the database is
-	// reachable, 503 otherwise. Intended for monitoring probes and systemd
-	// ExecStartPost checks. No authentication; no PII; cheap (one Ping).
+	// Healthz reports service readiness: 200 when the database is reachable, 503
+	// otherwise. For monitoring probes and systemd ExecStartPost checks. No auth;
+	// no PII; cheap (one Ping).
 	Healthz = "/healthz"
 )

@@ -8,9 +8,9 @@ import (
 )
 
 // WriteReport renders probe results to w and returns the count of non-OK
-// results. When verbose is true, prints a full per-source table plus summary;
-// otherwise prints a single OK line on full success or a FAIL summary plus
-// MISS DETAILS on any failure.
+// results. When verbose, prints a per-source table plus summary; otherwise a
+// single OK line on full success, or a FAIL summary plus MISS DETAILS on any
+// failure.
 func WriteReport(w io.Writer, results []ProbeResult, verbose bool) (failures int, err error) {
 	uniqueURLs := make(map[string]struct{})
 	for _, r := range results {

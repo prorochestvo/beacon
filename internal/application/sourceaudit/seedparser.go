@@ -76,16 +76,14 @@ var (
 	// reInsertPositional matches: INSERT OR IGNORE INTO rate_sources VALUES(vals);
 	reInsertPositional = regexp.MustCompile(
 		`^INSERT\s+OR\s+IGNORE\s+INTO\s+rate_sources\s+VALUES\s*\((.*)\)\s*;\s*$`)
-	// reLooksLikeInsert is the sentinel used to detect a line that begins with
-	// the insert prefix but matches neither of the two valid forms — this is the
-	// loud-fail path that prevents the original silent-skip bug from recurring.
+	// reLooksLikeInsert detects a line with the insert prefix that matches neither
+	// valid form — the loud-fail guard against the original silent-skip bug.
 	reLooksLikeInsert = regexp.MustCompile(
 		`^INSERT\s+OR\s+IGNORE\s+INTO\s+rate_sources\b`)
 )
 
-// stderrLogger is the package-level logger that writes to stderr.
-// cmd/doctor audit prints its report to stdout; mixing channels there would
-// corrupt machine-readable output.
+// stderrLogger writes to stderr because cmd/doctor audit prints its report to
+// stdout; mixing channels would corrupt machine-readable output.
 var stderrLogger = log.New(os.Stderr, "", 0)
 
 // recogniseInsert classifies line and returns the relevant parenthesised
@@ -123,9 +121,8 @@ func parseSeedFile(fsys fs.FS, path string) ([]SeededSource, error) {
 		form, colsPayload, valsPayload := recogniseInsert(line)
 		switch form {
 		case noMatch:
-			// If the line looks like a rate_sources INSERT but matched neither
-			// valid form, fail loudly — this is the regression guard for the
-			// original silent-skip bug.
+			// A rate_sources INSERT matching neither valid form fails loudly —
+			// the regression guard for the original silent-skip bug.
 			if reLooksLikeInsert.MatchString(line) {
 				return nil, fmt.Errorf("%s:%d: malformed INSERT OR IGNORE INTO rate_sources statement", base, lineNum)
 			}
@@ -198,9 +195,9 @@ func parseColumnList(payload, base string, lineNum int) ([]string, error) {
 	return names, nil
 }
 
-// positionalToColumnMap maps positional token values to column names according
-// to legacyPositionalColumns. Accepts 10 tokens (pre-009 rows) or 12 tokens
-// (post-010 rows); any other arity is rejected.
+// positionalToColumnMap maps positional tokens to legacyPositionalColumns.
+// Accepts 10 tokens (pre-009 rows) or 12 (post-010 rows); other arities are
+// rejected.
 func positionalToColumnMap(tokens []string, base string, lineNum int) (map[string]string, error) {
 	switch len(tokens) {
 	case 10, 12:
@@ -220,8 +217,8 @@ func positionalToColumnMap(tokens []string, base string, lineNum int) (map[strin
 }
 
 // seededSourceFromColumns extracts a SeededSource from the name-to-raw-token
-// map. Unknown columns emit a one-line stderr WARN but do not cause an error.
-// Required columns missing from the map cause an error.
+// map. Unknown columns warn to stderr but do not error; missing required
+// columns error.
 func seededSourceFromColumns(colMap map[string]string, base string, lineNum int) (SeededSource, error) {
 	known := map[string]bool{
 		"name": true, "title": true, "base_currency": true, "quote_currency": true,
@@ -281,7 +278,7 @@ func seededSourceFromColumns(colMap map[string]string, base string, lineNum int)
 		return SeededSource{}, fmt.Errorf("%s:%d: column active: unexpected value %d (must be 0 or 1)", base, lineNum, activeInt)
 	}
 
-	// options column is optional from the SeededSource perspective; parse but do not surface.
+	// options is optional for SeededSource; parse to validate but do not surface.
 	if _, hasOptions := colMap["options"]; hasOptions {
 		if _, err = sqlUnquote(colMap["options"]); err != nil {
 			return SeededSource{}, fmt.Errorf("%s:%d: column options: %w", base, lineNum, err)

@@ -28,8 +28,7 @@ type ErrorsState struct {
 }
 
 // ErrorsPage is the page controller for the Errors screen. It owns ErrorsState
-// and exposes load methods for each table. It has no DOM dependencies and is
-// testable as plain Go.
+// and exposes a load method per table. No DOM dependencies; testable as plain Go.
 type ErrorsPage struct {
 	state  ErrorsState
 	client *apiclient.Client
@@ -63,9 +62,8 @@ func (p *ErrorsPage) LoadExecPage(ctx context.Context, page int) error {
 }
 
 // LoadEventPage fetches the given page of failed notification events and
-// replaces the internal slice. The server uses offset+limit pagination:
-// offset = (page-1)*EventLimit, limit = EventLimit. On success EventPage is
-// updated to page.
+// replaces the internal slice. Server uses offset+limit pagination:
+// offset = (page-1)*EventLimit, limit = EventLimit. On success EventPage = page.
 func (p *ErrorsPage) LoadEventPage(ctx context.Context, page int) error {
 	offset := (page - 1) * EventLimit
 	items, err := p.client.ListFailedNotifications(ctx, offset, EventLimit)

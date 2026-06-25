@@ -2,10 +2,10 @@
 // extracts exchange-rate values, and persists them to the SQLite database.
 //
 // It reads SQLITEDB_DSN from the environment. Outbound HTTP/HTTPS traffic from
-// plain and chromedp sources is routed through the proxy configured by PROXY_URL
-// (format: http://<host>:<port>, parsed via dsninjector). When PROXY_URL is unset
-// or empty all traffic goes direct. Telegram Bot API traffic bypasses the proxy
-// unconditionally via a hardcoded transport in internal/infrastructure/telegrambot.
+// plain and chromedp sources routes through PROXY_URL (format: http://<host>:<port>,
+// parsed via dsninjector); when unset or empty, traffic goes direct. Telegram Bot
+// API traffic bypasses the proxy via a hardcoded transport in
+// internal/infrastructure/telegrambot.
 package main
 
 import (
@@ -40,7 +40,7 @@ var (
 	LogsDir = path.Join(os.TempDir(), "logs")
 	// ChromiumPath is the absolute path to the Chromium/Chrome binary read from
 	// CHROMIUM_PATH. When empty, chromedp searches PATH (chromium, chromium-browser,
-	// google-chrome, chrome) on first use.
+	// google-chrome, chrome).
 	ChromiumPath = os.Getenv(envChromiumPath)
 	// LogVerbosity controls the minimum log level emitted by the logger.
 	LogVerbosity = internal.LogLevelWarning
@@ -48,8 +48,8 @@ var (
 
 const (
 	envProxyURL = "PROXY_URL"
-	// envChromiumPath is an optional absolute path to the Chromium/Chrome binary.
-	// When unset, chromedp searches PATH on first use for a chromedp-kind source.
+	// envChromiumPath is an optional absolute path to the Chromium/Chrome binary;
+	// when unset, chromedp searches PATH for chromedp-kind sources.
 	envChromiumPath = "CHROMIUM_PATH"
 	envDsnSqliteDB  = "SQLITEDB_DSN"
 )
@@ -116,14 +116,11 @@ func main() {
 
 	errs := make([]error, 0, len(runners))
 	for _, r := range runners {
-		// errors.Is also matches ctx.DeadlineExceeded, but the only deadline
-		// here is the OS signal; skip both to avoid duplicating the shutdown
-		// reason in two log lines.
+		// Skip context.Canceled to avoid duplicating the shutdown reason across
+		// two log lines (the only deadline here is the OS signal).
 		//
-		// Panic recovery: the removed scheduler package wrapped every job
-		// invocation in a defer-recover so a single bad source did not crash
-		// the whole tick. Preserve that semantics inline since this loop is
-		// the only consumer left.
+		// Panic recovery replaces the removed scheduler package's per-job
+		// defer-recover, so one bad source doesn't crash the whole tick.
 		func() {
 			defer func() {
 				if rec := recover(); rec != nil {
@@ -163,7 +160,7 @@ func init() {
 
 // runner is the minimal interface the collector needs from each agent.
 // One Run call per binary invocation; the loop in main wraps each call in a
-// panic-recover shim (replacing the deleted scheduler package's recovery).
+// panic-recover shim.
 type runner interface {
 	Run(context.Context) error
 }

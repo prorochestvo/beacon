@@ -14,10 +14,9 @@ import (
 
 var _ apiclient.Fetcher = (*fakeFetcher)(nil)
 
-// fakeFetcher is an in-memory Fetcher for unit tests.
-// Callers set jsonResponse (for FetchJSON) or noContentErr (for FetchNoContent)
-// before each call. The last request's method, url, body, and headers are
-// recorded so tests can assert them.
+// fakeFetcher is an in-memory Fetcher for unit tests. Callers set jsonResponse
+// (for FetchJSON) or noContentErr (for FetchNoContent) before each call; the
+// last request's method, url, body, and headers are recorded for assertions.
 type fakeFetcher struct {
 	jsonResponse []byte
 	jsonErr      error

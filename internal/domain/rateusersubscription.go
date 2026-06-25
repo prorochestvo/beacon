@@ -156,15 +156,15 @@ func (rus *RateUserSubscription) IsDue(now time.Time, delta float64) (bool, erro
 }
 
 // IsDeltaSatisfied reports whether the absolute rate change meets the threshold.
-// On the first run (LatestNotifiedRate <= 0) the method fires unconditionally so the
-// user receives an initial baseline reading. On subsequent runs the absolute delta
-// must reach or exceed the configured threshold.
+// On the first run (LatestNotifiedRate <= 0) it fires unconditionally so the
+// user receives an initial baseline reading; afterwards the absolute delta must
+// reach or exceed the configured threshold.
 func (rus *RateUserSubscription) IsDeltaSatisfied(delta float64) (bool, error) {
 	if rus.ConditionType != ConditionTypeDelta {
 		return false, fmt.Errorf("invalid condition type: %s", rus.ConditionType)
 	}
-	// First run: no prior notification has ever been sent for this subscription.
-	// Fire unconditionally so the user receives an initial baseline reading.
+	// First run: no prior notification ever sent. Fire unconditionally for an
+	// initial baseline reading.
 	if rus.LatestNotifiedRate <= 0 {
 		return true, nil
 	}

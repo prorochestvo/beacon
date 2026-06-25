@@ -1,7 +1,6 @@
 // Package ratepair provides classification, coloring, deduplication, and
-// sorting utilities for currency-pair data used in the Mini App sparkline
-// chart. It is a shared foundation for the chart application service and the
-// HTTP handler layer.
+// sorting utilities for currency-pair data in the Mini App sparkline chart,
+// shared by the chart application service and the HTTP handler layer.
 package ratepair
 
 import (
@@ -116,10 +115,10 @@ const (
 
 // ChartWindow is the default rolling time window used for the sparkline chart.
 //
-// Deprecated: callers should pass a periodDays parameter to the service methods
-// that accept it (ObtainMeChartForPeriod, ObtainPublicChartForPeriod). This
-// constant remains in place as a semantic default so existing call-sites and
-// test fixtures that reference it continue to compile during the migration.
+// Deprecated: pass a periodDays parameter to the service methods that accept it
+// (ObtainMeChartForPeriod, ObtainPublicChartForPeriod). Kept as a semantic
+// default so existing call-sites and test fixtures still compile during the
+// migration.
 const ChartWindow = 7 * 24 * time.Hour
 
 // canonicalPair returns "MIN/MAX" of the two codes (uppercased) so that

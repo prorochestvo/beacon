@@ -147,9 +147,9 @@ func (m *Migrator) Applied() int {
 }
 
 // RequireMigratedSchema returns nil only when __schema_migrations exists and
-// contains at least one row. Service binaries call it immediately after opening
-// the DB so a missing migrator step surfaces as a loud startup failure rather
-// than a confusing "no such table" error at the first query.
+// has at least one row. Service binaries call it right after opening the DB so a
+// missing migrator step surfaces as a loud startup failure rather than a
+// confusing "no such table" error at the first query.
 func RequireMigratedSchema(ctx context.Context, db Committer) error {
 	var tx *sql.Tx
 	var err error

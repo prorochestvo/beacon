@@ -15,12 +15,9 @@ import (
 	"github.com/seilbekskindirov/monitor/internal/domain/ratepair"
 )
 
-// bucketCount is the fixed number of equal-width time buckets used when
-// downsampling a sparkline series, regardless of the selected period.
-// Keeping this constant makes the visual density of the sparkline independent
-// of the horizon: a 360-day chart has 12 buckets of ≈30 days each, and a
-// 7-day chart has 12 buckets of ≈14 hours each. This is intentional — period
-// selection is about horizon, not resolution.
+// bucketCount is the fixed number of equal-width buckets used when downsampling
+// a sparkline, regardless of period: density stays independent of the horizon,
+// so period selects horizon, not resolution.
 const bucketCount = 12
 
 // SubscriptionsLoader loads a user's subscriptions.
@@ -31,8 +28,7 @@ type SubscriptionsLoader interface {
 }
 
 // SourcesLoader resolves source metadata (base, quote, kind) for a set of
-// source names. Used to build (base, quote, kind) triples from subscription
-// source_name references.
+// source names.
 type SourcesLoader interface {
 	ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error)
 }
@@ -70,8 +66,7 @@ type PublicChart struct {
 // (both directions subscribed).
 type PairRow struct {
 	// Pair is the display label in BID-natural direction (e.g. "USD/KZT").
-	// When only ASK is subscribed, the label is inverted from the ASK direction:
-	// ASK base="USD" quote="KZT" → label "USD/KZT".
+	// When only ASK is subscribed, the label is inverted from the ASK direction.
 	Pair string
 	// Category is the pair's market category ("fiat" or "metal").
 	Category ratepair.Category
@@ -98,13 +93,11 @@ type SeriesRow struct {
 	// Sparse is true when fewer than two values were found in the window, so
 	// the renderer draws a flat line and shows "+0.0%" delta.
 	Sparse bool
-	// EffectiveDays is the actual number of days covered by this series.
-	// Always >= 1 when Sparse==false and len(Points)>0; zero is reserved
-	// exclusively for the sparse/no-data case (sentinel: use the requested
-	// period as the displayed window). When EffectiveDays equals the requested
-	// period, bucketing is bit-identical to pre-capping behaviour (regression
-	// guard). Sub-day windows are clamped to 1 so the sentinel zero value
-	// remains unambiguous.
+	// EffectiveDays is the number of days covered by this series. Always >= 1
+	// when Sparse==false and len(Points)>0; zero is the sparse/no-data sentinel
+	// (display the requested period). When it equals the requested period,
+	// bucketing is bit-identical to pre-capping behaviour. Sub-day windows clamp
+	// to 1 so the sentinel zero stays unambiguous.
 	EffectiveDays int
 	// Points are the downsampled sparkline values. Nil when zero raw values
 	// exist in the window (no-data state).
@@ -163,11 +156,10 @@ func (s *Service) ObtainMeChart(ctx context.Context, userID string) (*MeChart, e
 //     now - periodDays*24h via values.ObtainValuesForPairsSince.
 //  5. Group values by (base, quote, kind); when multiple sources contribute a
 //     value at the same timestamp, the last row (highest ID) wins.
-//  6. Downsample each group into bucketCount equal-width time buckets
-//     (left-closed, right-open). Each bucket takes the last sample's value.
-//     Empty buckets carry the previous bucket's value forward. The effective-
-//     since cap ensures bucket 0 is always populated when any data exists, so
-//     len(Points) == bucketCount for every non-sparse series.
+//  6. Downsample each group into bucketCount equal-width buckets (left-closed,
+//     right-open), each taking its last sample's value; empty buckets carry the
+//     previous value forward. The effective-since cap keeps bucket 0 populated
+//     when any data exists, so len(Points) == bucketCount for non-sparse series.
 //  7. Compute delta_pct over downsampled points.
 //  8. Group BID and ASK SeriesRows for the same canonical pair into one PairRow.
 //  9. Determine the display label as BID-natural direction.
@@ -238,10 +230,9 @@ func (s *Service) ObtainPublicChart(ctx context.Context, page, limit int64) (*Pu
 // ObtainPublicChartForPeriod enumerates every distinct (base, quote, kind) triple
 // across active sources, downsamples each into a sparkline covering periodDays,
 // groups BID/ASK into one PairRow per canonical pair, sorts via ratepair.Less,
-// then slices to the requested page. Returns the page and the unpaginated total
-// of PairRows (the post-grouping count; BID+ASK for the same canonical pair
-// collapse to one row, so total ≤ len(triples)). Returns a non-nil *PublicChart
-// even when the result is empty or the page is out of range.
+// then slices to the requested page. Returns the page and the unpaginated
+// post-grouping total (BID+ASK for one pair collapse to one row, so
+// total ≤ len(triples)). *PublicChart is non-nil even when empty or out of range.
 //
 // periodDays should be one of the whitelisted values {7, 30, 90, 180, 360};
 // validation is the caller's responsibility (the handler layer enforces it).
@@ -293,12 +284,10 @@ func (s *Service) ObtainPublicChartForPeriod(ctx context.Context, page, limit, p
 // be built; since is the lower bound of the time window (now - period). Returns
 // a non-nil slice (possibly empty) sorted by ratepair.Less.
 //
-// The sort uses sort.SliceStable so that two PairRows with equal ratepair.Less
-// ordering remain in the order they were produced by the grouping loop. In
-// practice this is moot — ratepair.Less uses canonical pair as a tiebreaker —
-// but it makes page boundaries deterministic in the presence of any future
-// ties, which matters for ObtainPublicChartForPeriod where the sorted slice is
-// then split into pages.
+// The sort is sort.SliceStable so ties keep grouping-loop order. Moot today
+// (ratepair.Less tiebreaks on canonical pair), but it keeps page boundaries
+// deterministic against future ties, which matters for
+// ObtainPublicChartForPeriod where the sorted slice is split into pages.
 func (s *Service) buildPairRows(ctx context.Context, allKeys []domain.SourcePairKey, uniquePairs []ratepair.Pair, since time.Time) ([]PairRow, error) {
 	if len(allKeys) == 0 {
 		return []PairRow{}, nil
@@ -311,8 +300,7 @@ func (s *Service) buildPairRows(ctx context.Context, allKeys []domain.SourcePair
 		return nil, err
 	}
 
-	// Build a source-name → kind map so the value-grouping loop below is O(1)
-	// per row instead of O(len(allKeys)) per row.
+	// source-name → kind map so the grouping loop below is O(1) per row.
 	kindBySource := make(map[string]domain.RateSourceKind, len(allKeys))
 	for _, k := range allKeys {
 		kindBySource[k.SourceName] = k.Kind
@@ -364,12 +352,9 @@ func (s *Service) buildPairRows(ctx context.Context, allKeys []domain.SourcePair
 			g.labelQuote = strings.ToUpper(p.Quote)
 		case domain.RateSourceKindASK:
 			g.ask = &sr
-			// Only set label from ASK if BID not yet seen.
-			// BID-natural label uses the stored base/quote of the ASK subscription
-			// unchanged. Both BID and ASK subscriptions for the same rate are stored
-			// with identical base and quote (the direction is encoded in Kind, not
-			// in which currency occupies base vs quote). So base/quote from ASK
-			// gives the same BID-natural label as it would from BID.
+			// Label from ASK only when BID is not yet seen. BID and ASK for the
+			// same rate share identical base/quote (direction lives in Kind, not in
+			// currency order), so ASK's base/quote yield the same BID-natural label.
 			if g.bid == nil {
 				g.labelBase = strings.ToUpper(p.Base)
 				g.labelQuote = strings.ToUpper(p.Quote)
@@ -433,26 +418,22 @@ func buildPairRow(g *pairGroup) PairRow {
 	return row
 }
 
-// buildSeriesRow constructs a SeriesRow from raw rate values for a single pair direction.
+// buildSeriesRow constructs a SeriesRow from raw rate values for one pair direction.
 //
-// Bucket boundaries are left-closed, right-open:
-// bucket i covers [effectiveSince + i*step, effectiveSince + (i+1)*step).
-// effectiveSince is max(since, firstSampleTimestamp): when data only covers a
-// fraction of the requested window, bucketing is capped to actual coverage so
-// the polyline fills the chart width rather than collapsing to its right edge.
-// When data covers the full window (firstSampleTimestamp <= since), effectiveSince
-// equals since and the math is bit-identical to the pre-capping behaviour.
+// Buckets are left-closed, right-open: bucket i covers
+// [effectiveSince + i*step, effectiveSince + (i+1)*step). effectiveSince is
+// max(since, firstSampleTimestamp), capping to actual coverage so a partial
+// window fills the chart width instead of collapsing to the right edge. With
+// full coverage (firstSampleTimestamp <= since), effectiveSince == since and the
+// math is bit-identical to pre-capping behaviour.
 //
-// Each bucket picks the last value in it (since vals are ordered by timestamp ASC,
-// later overwrites win). Empty buckets carry the previous bucket's value forward
-// (continuous line). Because effectiveSince == deduped[0].Timestamp when capping
-// occurs, bucket 0 is always populated whenever data exists — the leading-empty
-// case is structurally impossible. len(Points) == bucketCount whenever any data
-// exists.
+// Each bucket takes its last value (vals are timestamp-ASC, so later wins);
+// empty buckets carry the previous value forward. Because effectiveSince ==
+// deduped[0].Timestamp when capping, bucket 0 is always populated when data
+// exists, so len(Points) == bucketCount whenever any data exists.
 //
-// SeriesRow.EffectiveDays is set to the day count of the effective window
-// (always >= 1) when Sparse==false and len(Points)>0. Zero otherwise (sentinel:
-// use the requested period as the displayed window).
+// EffectiveDays is the effective-window day count (>= 1) when Sparse==false and
+// len(Points)>0; zero otherwise (sentinel: display the requested period).
 func buildSeriesRow(p ratepair.Pair, vals []domain.RateValue, since, now time.Time) SeriesRow {
 	color := ratepair.ColorBid
 	if p.Kind == domain.RateSourceKindASK {
@@ -475,11 +456,9 @@ func buildSeriesRow(p ratepair.Pair, vals []domain.RateValue, since, now time.Ti
 	// We check deduped (timestamp-deduplicated) raw samples, not filled buckets.
 	sparse := len(deduped) < 2
 
-	// Cap the lower bound of the window to the first actual sample. When the
-	// data covers the full requested window, effectiveSince == since and the
-	// bucketing math is unchanged. When data only covers a fraction of the
-	// window, effectiveSince advances to the first sample so the 12 buckets
-	// span the actual data range instead of spreading over empty leading space.
+	// Cap the window's lower bound to the first sample so the 12 buckets span
+	// actual data instead of empty leading space. Full coverage leaves
+	// effectiveSince == since (bucketing unchanged).
 	effectiveSince := since
 	if len(deduped) > 0 && deduped[0].Timestamp.After(since) {
 		effectiveSince = deduped[0].Timestamp
@@ -548,9 +527,9 @@ func buildSeriesRow(p ratepair.Pair, vals []domain.RateValue, since, now time.Ti
 	return sr
 }
 
-// dedupeByTimestamp keeps, for each unique timestamp, the last row in the
-// group (highest ID since IDs encode timestamp + UUID bytes). Input must be
-// sorted ASC by timestamp then ASC by ID, matching the repository query order.
+// dedupeByTimestamp keeps the last row per unique timestamp (highest ID, since
+// IDs encode timestamp + UUID bytes). Input must be ASC by timestamp then ID,
+// matching the repository query order.
 func dedupeByTimestamp(vals []domain.RateValue) []domain.RateValue {
 	if len(vals) == 0 {
 		return nil
@@ -597,12 +576,11 @@ func uniqueSourceNames(subs []domain.RateUserSubscription) []string {
 	return out
 }
 
-// pairGroupKey returns the group identifier used to collapse BID and ASK with
-// the same storage direction into one row. base/quote are taken as-stored,
-// so subscriptions with inverted storage direction stay in separate rows.
-// This differs intentionally from ratepair.canonicalPair (which uses min/max
-// sorting for adjacent ordering): USD/KZT BID and KZT/USD ASK must NOT merge,
-// because their scales are incommensurable (≈487 vs ≈0.002).
+// pairGroupKey returns the identifier used to collapse BID and ASK with the
+// same storage direction into one row. base/quote are taken as-stored, so
+// inverted storage directions stay in separate rows. Unlike
+// ratepair.canonicalPair (min/max sorted), USD/KZT BID and KZT/USD ASK must NOT
+// merge: their scales are incommensurable (≈487 vs ≈0.002).
 func pairGroupKey(base, quote string) string {
 	return strings.ToUpper(base) + "/" + strings.ToUpper(quote)
 }

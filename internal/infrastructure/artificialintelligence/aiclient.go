@@ -32,10 +32,10 @@ type AIClient interface {
 }
 
 // NewClient parses the driver from dns and dispatches to the matching
-// provider constructor. proxyURL is an optional HTTP proxy URL string
-// (e.g. "http://127.0.0.1:7788"); pass "" to use the default transport with
-// no proxy. On an unknown driver it logs to logger and returns the
-// deterministic stub so the service can still start without a live key.
+// provider constructor. proxyURL is an optional HTTP proxy URL
+// (e.g. "http://127.0.0.1:7788"); pass "" for no proxy. On an unknown driver
+// it logs to logger and returns the deterministic stub so the service can
+// still start without a live key.
 func NewClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (AIClient, error) {
 	switch dns.Driver() {
 	case clientOpenAI:
@@ -70,9 +70,9 @@ func NewClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (A
 	return r, nil
 }
 
-// NewStubClient returns a stub AIClient pre-loaded with the package-level
-// default canned response. Use this when no fallback DSN is configured so
-// the service starts cleanly without a real AI key.
+// NewStubClient returns a stub AIClient pre-loaded with the default canned
+// response. Use this when no fallback DSN is configured so the service starts
+// without a real AI key.
 func NewStubClient() (AIClient, error) {
 	return newStubAIClient(stubAIDefaultResponse)
 }
@@ -103,11 +103,10 @@ func parseDSNTimeout(dns dsninjector.DataSource) (time.Duration, error) {
 }
 
 // buildHTTPClient returns an *http.Client with the given timeout. When proxyURL
-// is non-empty it is parsed and wired into the transport. When empty, an explicit
-// &http.Transport{} with no Proxy field is used — a nil Transport would make Go
-// fall back to http.DefaultTransport whose Proxy reads HTTPS_PROXY/HTTP_PROXY
-// from the process environment, silently routing traffic even when no proxy was
-// configured by the caller.
+// is non-empty it is wired into the transport. When empty, an explicit
+// &http.Transport{} with no Proxy field is used — a nil Transport falls back to
+// http.DefaultTransport, whose Proxy reads HTTPS_PROXY/HTTP_PROXY from the
+// environment and would silently route traffic the caller never configured.
 func buildHTTPClient(timeout time.Duration, proxyURL string) (*http.Client, error) {
 	if proxyURL == "" {
 		return &http.Client{

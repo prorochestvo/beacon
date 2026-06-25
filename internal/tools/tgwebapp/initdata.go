@@ -20,8 +20,7 @@ import (
 // returns the parsed user.id, and rejects payloads older than maxAge.
 // Uses HMAC-SHA256 with secret_key = HMAC_SHA256("WebAppData", botToken).
 //
-// The now parameter is injected so tests are deterministic — callers should pass
-// time.Now() in production.
+// now is injected for deterministic tests — pass time.Now() in production.
 func ValidateInitData(initData, botToken string, maxAge time.Duration, now time.Time) (int64, error) {
 	if initData == "" {
 		return 0, errors.New("tgwebapp: empty initData")
@@ -57,9 +56,8 @@ func ValidateInitData(initData, botToken string, maxAge time.Duration, now time.
 		sb.WriteString(values.Get(k))
 	}
 
-	// secret_key = HMAC_SHA256("WebAppData", botToken)
-	// Note: "WebAppData" is the key, botToken is the message — this is the correct order
-	// per the Telegram WebApp specification.
+	// secret_key = HMAC_SHA256("WebAppData", botToken): "WebAppData" is the key,
+	// botToken is the message — the order required by the Telegram WebApp spec.
 	secretMac := hmac.New(sha256.New, []byte("WebAppData"))
 	secretMac.Write([]byte(botToken))
 	secretKey := secretMac.Sum(nil)

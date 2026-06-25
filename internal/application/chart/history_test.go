@@ -139,12 +139,8 @@ func TestService_ObtainMeHistory(t *testing.T) {
 		t.Parallel()
 		subs := []domain.RateUserSubscription{subFor("src-bid")}
 		sources := map[string]domain.RateSource{"src-bid": usdKztBidSrc}
-		// Three rows newest-first: 490, 487, 481.
-		// Delta for row 0 (490): nil (newest = first in page, oldest in processing).
-		// Delta for row 1 (487): (487-481)/481*100.
-		// Delta for row 2 (490 – newest): wait, newest first so:
-		//   items[0]=490 (newest), items[1]=487, items[2]=481 (oldest).
-		//   Processing oldest-first: 481→487→490.
+		// Three rows newest-first: items[0]=490, items[1]=487, items[2]=481.
+		// Processed oldest-first (481→487→490):
 		//   items[2] (481): nil delta (first in chain).
 		//   items[1] (487): (487-481)/481*100 ≈ +1.247%.
 		//   items[0] (490): (490-487)/487*100 ≈ +0.616%.
@@ -275,9 +271,8 @@ func TestService_ObtainMeHistory(t *testing.T) {
 
 	t.Run("two sibling sources at one timestamp collapse to one row", func(t *testing.T) {
 		t.Parallel()
-		// BID and ASK sources share the same Title. One rate_values row each at the
-		// same timestamp. The service must return exactly one MeHistoryRowResult
-		// with both Bid and Ask populated and Total=1.
+		// BID and ASK sources share a Title, one row each at the same timestamp.
+		// Service must return one MeHistoryRowResult with both Bid and Ask set and Total=1.
 		sharedTitle := "Center Credit Bank (FX)"
 		bidSrc := domain.RateSource{
 			Name:          "ccb-bid",

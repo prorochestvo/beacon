@@ -33,7 +33,7 @@ func RenderPublicSubscriptions(state application.PublicSubscriptionsState) strin
 
 // RenderPublicSparklineSlot returns the HTML content for the
 // #public-sparkline-chart div. Exported so main.go can update the chart slot
-// in-place after the async fetch completes without re-rendering the page.
+// in-place after the async fetch without re-rendering the page.
 func RenderPublicSparklineSlot(state application.PublicSubscriptionsState) string {
 	if state.ChartError != nil {
 		return `<p class="sparkline-error">Chart unavailable</p>`
@@ -48,8 +48,8 @@ func RenderPublicSparklineSlot(state application.PublicSubscriptionsState) strin
 }
 
 // RenderPublicPagination returns the pagination control HTML for the public
-// sparkline list. Uses the generic RenderPagination helper. Returns an empty
-// string when no pagination is needed.
+// sparkline list via the generic RenderPagination helper, or an empty string
+// when no pagination is needed.
 func RenderPublicPagination(state application.PublicSubscriptionsState) string {
 	if state.Chart == nil {
 		return ""
@@ -67,11 +67,10 @@ func RenderPublicPagination(state application.PublicSubscriptionsState) string {
 }
 
 // RenderPublicPairModal returns the HTML for the open-pair detail overlay, or
-// an empty string when state.OpenPair is nil or the chart data is missing. The
-// public modal is a slimmed-down variant of RenderPairModal: it shows the
-// per-series value cards and the close button, but intentionally omits the
-// "View history" button because the history endpoint is auth-gated and there
-// is no public equivalent.
+// an empty string when state.OpenPair is nil or the chart data is missing. A
+// slimmed-down RenderPairModal: per-series value cards and the close button,
+// but no "View history" button — the history endpoint is auth-gated with no
+// public equivalent.
 //
 // The output is a self-contained HTML fragment safe for innerHTML assignment
 // into #public-pair-modal-slot.
@@ -135,9 +134,8 @@ func RenderPublicPairModal(state application.PublicSubscriptionsState) string {
 		)
 	}
 
-	// Note: no "View history" button — the history endpoint is auth-gated and
-	// has no public equivalent. Adding it would require initData, which the
-	// guest path does not have.
+	// No "View history" button — the history endpoint is auth-gated and needs
+	// initData, which the guest path does not have.
 
 	b.WriteString(`</div>`) // me-pair-modal-body
 	b.WriteString(`</div>`) // me-pair-modal-card
@@ -149,10 +147,9 @@ func RenderPublicPairModal(state application.PublicSubscriptionsState) string {
 // view. Mirrors RenderSparklineListForPeriod but accepts a PublicChartResponse
 // and the active period value instead of MeChartResponse.
 func renderPublicSparklineList(chart dto.PublicChartResponse, period int) string {
-	// Reuse RenderSparklineListForPeriod by converting to MeChartResponse.
-	// Both types share the same Pairs type ([]MeChartPairRow), Window string,
-	// and rendering logic. The conversion is zero-allocation at the call site
-	// because MeChartResponse.Pairs points to the same backing array.
+	// Convert to MeChartResponse and reuse RenderSparklineListForPeriod. Both
+	// share the Pairs type ([]MeChartPairRow) and Window, so the conversion is
+	// zero-allocation — Pairs points to the same backing array.
 	return RenderSparklineListForPeriod(dto.MeChartResponse{
 		Window: chart.Window,
 		Pairs:  chart.Pairs,

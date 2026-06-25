@@ -21,10 +21,9 @@ const PickerPageSize = 5
 // subscription list view (Your subscriptions).
 const SubscriptionListPageSize = 5
 
-// EditView identifies which logical sub-screen of the editor is active.
-// The screen is conceptually two pages: the list of existing subscriptions
-// and the form to add a new one. They share state so navigation between
-// them does not refetch.
+// EditView identifies which sub-screen of the editor is active: the list of
+// existing subscriptions or the add-new form. They share state so navigation
+// between them does not refetch.
 type EditView string
 
 const (
@@ -38,9 +37,9 @@ const (
 
 // MeSubscriptionsEditState is the read-only snapshot consumed by the editor UI.
 //
-// Concurrency note: WASM runs on a single OS thread so state mutations are
-// safe without a mutex. If the project ever moves to multi-threaded WASM,
-// add a sync.Mutex around state reads/writes.
+// Concurrency note: WASM runs on a single OS thread, so state mutations are
+// safe without a mutex. If the project ever moves to multi-threaded WASM, add
+// a sync.Mutex around state reads/writes.
 type MeSubscriptionsEditState struct {
 	// Items is the current persisted set of subscriptions, one row per condition,
 	// sorted source_name ASC / updated_at DESC by the server.
@@ -79,14 +78,13 @@ type MeSubscriptionsEditState struct {
 	// PairPage is the 1-based current page in the pair picker.
 	PairPage int
 	// PairDirections holds the BID/ASK (or single-direction) options for the
-	// currently chosen currency pair. Populated by ChoosePair, cleared by
-	// ChooseProvider / ClearDraft. When len >= 2, the UI renders a direction
-	// radio group; when len == 1, the direction is implicit and Draft.SourceName
-	// is auto-set to the only option. Empty when no pair is selected.
+	// chosen pair. Populated by ChoosePair, cleared by ChooseProvider/ClearDraft.
+	// len >= 2 renders a direction radio group; len == 1 means the direction is
+	// implicit and Draft.SourceName is auto-set. Empty when no pair is selected.
 	PairDirections []PairDirection
-	// ActiveView is the currently rendered sub-screen — list or form.
-	// Defaults to EditViewList on first mount; SaveDraft success returns
-	// the user to the list view so the new row is visible immediately.
+	// ActiveView is the currently rendered sub-screen — list or form. Defaults
+	// to EditViewList on first mount; SaveDraft success returns to the list view
+	// so the new row is immediately visible.
 	ActiveView EditView
 	// ListQuery is the live search filter for the subscriptions list view.
 	// Empty when no filter is active. Page resets to 1 on every change.
@@ -111,13 +109,13 @@ type MeSubscriptionDraft struct {
 }
 
 // MeSubscriptionsEditPage is the page controller for the subscription editor
-// screen. It is pure Go with no syscall/js dependencies and is therefore
-// testable under the host toolchain via make test.
+// screen. Pure Go, no syscall/js dependencies, testable under the host
+// toolchain via make test.
 //
 // Client-side validation in SaveDraft mirrors domain.RateUserSubscription.Validate()
 // for delta, interval, and daily to give immediate feedback without a round-trip.
 // Cron expressions pass a non-empty check only; full structural validation is
-// delegated to the server to keep the WASM bundle size under control.
+// delegated to the server to keep the WASM bundle small.
 type MeSubscriptionsEditPage struct {
 	client   *apiclient.Client
 	initData string
@@ -142,9 +140,9 @@ func NewMeSubscriptionsEditPage(client *apiclient.Client, initData string) *MeSu
 // The caller must not mutate the returned slices.
 func (p *MeSubscriptionsEditPage) State() MeSubscriptionsEditState { return p.state }
 
-// LoadInitial fan-outs a MeSubscriptionsRaw call and a ListSources call.
-// Sources are filtered to Active=true before being stored. A 401 on either
-// call sets AuthFailure=true; the first non-nil error aborts both.
+// LoadInitial fetches MeSubscriptionsRaw and ListSources. Sources are filtered
+// to Active=true before storage. A 401 on either call sets AuthFailure=true;
+// the first non-nil error aborts both.
 func (p *MeSubscriptionsEditPage) LoadInitial(ctx context.Context) error {
 	p.state.Loading = true
 	defer func() { p.state.Loading = false }()
@@ -180,12 +178,12 @@ func (p *MeSubscriptionsEditPage) LoadInitial(ctx context.Context) error {
 	return nil
 }
 
-// SetDraftSource sets the source name in the draft form and clears any
-// pending FormError so the user starts fresh after each field edit.
+// SetDraftSource sets the source name in the draft form and clears any pending
+// FormError.
 //
-// This setter is retained for tests that drive the draft directly. UI code
-// should go through OpenProviderPicker / ChooseProvider / ChoosePair instead;
-// they keep SelectedProviderTitle in sync with Draft.SourceName.
+// Retained for tests that drive the draft directly. UI code should go through
+// OpenProviderPicker / ChooseProvider / ChoosePair instead; they keep
+// SelectedProviderTitle in sync with Draft.SourceName.
 func (p *MeSubscriptionsEditPage) SetDraftSource(name string) {
 	p.state.Draft.SourceName = name
 	p.state.FormError = nil
@@ -206,8 +204,7 @@ func (p *MeSubscriptionsEditPage) SetDraftConditionValue(v string) {
 }
 
 // OpenProviderPicker shows the provider overlay and resets its search and
-// pagination so the user always lands on page 1 of an unfiltered list.
-// The pair picker is closed if currently open.
+// pagination to page 1 of an unfiltered list. Any open pair picker is closed.
 func (p *MeSubscriptionsEditPage) OpenProviderPicker() {
 	p.state.ProviderPickerOpen = true
 	p.state.ProviderQuery = ""
@@ -237,9 +234,8 @@ func (p *MeSubscriptionsEditPage) SetProviderPage(page int) {
 }
 
 // ChooseProvider records the chosen provider title, clears any previously
-// chosen pair (including its resolved BID/ASK directions), and auto-opens
-// the pair picker so the user can continue without a second tap on the
-// pair trigger.
+// chosen pair (including its resolved BID/ASK directions), and auto-opens the
+// pair picker so the user continues without a second tap on the pair trigger.
 func (p *MeSubscriptionsEditPage) ChooseProvider(title string) {
 	p.state.SelectedProviderTitle = title
 	p.state.Draft.SourceName = ""
@@ -251,9 +247,8 @@ func (p *MeSubscriptionsEditPage) ChooseProvider(title string) {
 	p.state.FormError = nil
 }
 
-// OpenPairPicker shows the pair overlay only when a provider is already
-// selected; otherwise it is a no-op so a misplaced trigger click cannot
-// surface an empty overlay.
+// OpenPairPicker shows the pair overlay only when a provider is selected;
+// otherwise a no-op, so a misplaced trigger click cannot surface an empty overlay.
 func (p *MeSubscriptionsEditPage) OpenPairPicker() {
 	if p.state.SelectedProviderTitle == "" {
 		return
@@ -285,14 +280,12 @@ func (p *MeSubscriptionsEditPage) SetPairPage(page int) {
 	p.state.PairPage = page
 }
 
-// ChoosePair commits the currency pair represented by sourceName as the
-// active pair on the draft. sourceName is the anchor source picked from the
-// pair list (in practice the alphabetically-first source within the
-// (Title, Base, Quote) bucket — see ui.pairsForProvider). ChoosePair then
-// looks up every source sharing the same (Title, Base, Quote) and records
-// them in PairDirections so the UI can render a BID/ASK selector. When the
-// pair has only one underlying source, Draft.SourceName is set immediately
-// and no further selection is required.
+// ChoosePair commits the currency pair represented by sourceName as the active
+// pair on the draft. sourceName is the anchor source from the pair list (the
+// alphabetically-first source within the (Title, Base, Quote) bucket — see
+// ui.pairsForProvider). ChoosePair records every source sharing the same
+// (Title, Base, Quote) in PairDirections so the UI can render a BID/ASK
+// selector. With a single underlying source, Draft.SourceName is set immediately.
 func (p *MeSubscriptionsEditPage) ChoosePair(sourceName string) {
 	var anchor dto.SourceResponse
 	for _, s := range p.state.Sources {
@@ -305,9 +298,8 @@ func (p *MeSubscriptionsEditPage) ChoosePair(sourceName string) {
 	p.state.PairDirections = dirs
 	switch len(dirs) {
 	case 0:
-		// Anchor not found in Sources — should not happen, but keep the state
-		// honest by clearing Draft.SourceName so Save fails validation
-		// instead of silently storing a phantom source.
+		// Anchor not in Sources — should not happen; clear Draft.SourceName so
+		// Save fails validation instead of storing a phantom source.
 		p.state.Draft.SourceName = ""
 	case 1:
 		// Single direction available — no choice to surface in the UI.
@@ -321,9 +313,9 @@ func (p *MeSubscriptionsEditPage) ChoosePair(sourceName string) {
 }
 
 // SetDraftDirection sets Draft.SourceName from one of the PairDirections
-// options surfaced by the most recent ChoosePair. It is a no-op when the
-// supplied sourceName does not appear in PairDirections so a stale UI event
-// cannot install an unrelated source on the draft.
+// options surfaced by the most recent ChoosePair. No-op when sourceName does
+// not appear in PairDirections, so a stale UI event cannot install an unrelated
+// source on the draft.
 func (p *MeSubscriptionsEditPage) SetDraftDirection(sourceName string) {
 	for _, d := range p.state.PairDirections {
 		if d.SourceName == sourceName {
@@ -334,16 +326,13 @@ func (p *MeSubscriptionsEditPage) SetDraftDirection(sourceName string) {
 	}
 }
 
-// resolvePairDirections returns every source sharing (Title, Base, Quote)
-// with anchor, sorted by SourceName ASC so the rendered radio order is
-// deterministic. When more than one direction exists, each direction's
-// Label is derived from the segment of its Name that DIFFERS from the
-// other names in the bucket (longest common prefix and suffix stripped).
-// For the project's KZ_<bank>_<dir>_<base>_<quote> data this yields the
-// expected "BID" / "ASK" pair; for any other naming scheme it falls back
-// to whatever non-shared substring distinguishes the rows. Single-direction
-// pairs return one entry with an empty Label — the UI does not render a
-// radio in that case.
+// resolvePairDirections returns every source sharing (Title, Base, Quote) with
+// anchor, sorted by SourceName ASC for deterministic radio order. With more than
+// one direction, each Label is the segment of its Name that DIFFERS from the
+// others in the bucket (longest common prefix and suffix stripped). For the
+// project's KZ_<bank>_<dir>_<base>_<quote> data this yields "BID"/"ASK"; for any
+// other scheme it falls back to whatever non-shared substring distinguishes the
+// rows. Single-direction pairs return one entry with an empty Label — no radio.
 func resolvePairDirections(sources []dto.SourceResponse, anchor dto.SourceResponse) []PairDirection {
 	if anchor.Name == "" {
 		return nil
@@ -376,8 +365,8 @@ func resolvePairDirections(sources []dto.SourceResponse, anchor dto.SourceRespon
 		mid = strings.TrimSuffix(mid, suffix)
 		mid = strings.Trim(mid, "_-")
 		if mid == "" {
-			// Names collapse to empty after stripping shared affixes — fall
-			// back to a positional label so the radio remains clickable.
+			// Names collapse to empty after stripping shared affixes — use a
+			// positional label so the radio remains clickable.
 			mid = fmt.Sprintf("Option %d", i+1)
 		}
 		out = append(out, PairDirection{
@@ -450,9 +439,9 @@ func (p *MeSubscriptionsEditPage) ShowListView() {
 	p.state.PairPickerOpen = false
 }
 
-// ShowFormView switches the editor to the create-subscription form. The
-// form's draft is left untouched so users can resume an in-progress
-// subscription if they navigated away by accident.
+// ShowFormView switches the editor to the create-subscription form. The draft
+// is left untouched so users can resume an in-progress subscription after an
+// accidental navigation away.
 func (p *MeSubscriptionsEditPage) ShowFormView() {
 	p.state.ActiveView = EditViewForm
 }
@@ -489,9 +478,9 @@ func (p *MeSubscriptionsEditPage) ClearDraft() {
 }
 
 // SaveDraft validates the draft client-side, calls MeSubscriptionCreate on
-// success, then refreshes the subscription list. On server error, FormError is
-// populated with the server's message; on validation error, FormError is
-// populated with a human-readable description and no HTTP call is made.
+// success, then refreshes the list. On server error, FormError holds the
+// server's message; on validation error, FormError holds a human-readable
+// description and no HTTP call is made.
 //
 // A nil return means the subscription was created; the caller should redraw.
 func (p *MeSubscriptionsEditPage) SaveDraft(ctx context.Context) error {
@@ -512,9 +501,8 @@ func (p *MeSubscriptionsEditPage) SaveDraft(ctx context.Context) error {
 		return err
 	}
 
-	// Reload the list and return the user to the list view so the new row
-	// is visible without an extra tap. The draft is cleared so they can add
-	// another without seeing stale form values.
+	// Reload the list and return to the list view so the new row is visible
+	// without an extra tap. The draft is cleared to avoid stale form values.
 	if err := p.reloadList(ctx); err != nil {
 		return err
 	}
@@ -582,13 +570,13 @@ func (p *MeSubscriptionsEditPage) reloadList(ctx context.Context) error {
 	return nil
 }
 
-// ValidateSubscriptionDraft mirrors domain.RateUserSubscription.Validate()
-// for use in WASM. Cron expressions are accepted if non-empty and delegated
-// to the server for structural validation (robfig/cron/v3 is not shipped to
-// WASM because it bloats the bundle by ~130 KiB).
+// ValidateSubscriptionDraft mirrors domain.RateUserSubscription.Validate() for
+// WASM. Cron expressions are accepted if non-empty and delegated to the server
+// for structural validation (robfig/cron/v3 is not shipped to WASM because it
+// bloats the bundle by ~130 KiB).
 //
-// Returns a non-nil error with a human-readable message on any validation
-// failure. Returns nil when the draft is valid.
+// Returns a non-nil error with a human-readable message on validation failure,
+// nil when the draft is valid.
 func ValidateSubscriptionDraft(d MeSubscriptionDraft) error {
 	if d.SourceName == "" {
 		return fmt.Errorf("source is required")

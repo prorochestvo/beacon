@@ -360,8 +360,7 @@ func TestTelegramApi_handleLatestUpdates(t *testing.T) {
 
 		h.handleLatestUpdates(t.Context(), testChatID, 0)
 
-		// Multi-part: total messages sent > 1. The keyboard attaches only to
-		// the last part (the SendHTMLMessageWithKeyboard call).
+		// Multi-part: total messages > 1; keyboard attaches only to the last part.
 		totalMsgs := len(client.htmlMessages) + len(client.keyboards)
 		assert.Greater(t, totalMsgs, 1, "must produce multiple parts for heavy users")
 		// Exactly one keyboard — attached to the final part only.
@@ -372,9 +371,8 @@ func TestTelegramApi_handleLatestUpdates(t *testing.T) {
 	})
 }
 
-// TestTelegramApi_handleMessage covers the fan-everything-into-the-main-menu
-// behavior: any inbound message — known command, unknown slash command, or
-// free text — produces a single main-menu keyboard reply.
+// TestTelegramApi_handleMessage verifies any inbound message — known command,
+// unknown slash command, or free text — produces a single main-menu keyboard reply.
 func TestTelegramApi_handleMessage(t *testing.T) {
 	t.Parallel()
 	t.Run("sends main menu on /subscriptions command", func(t *testing.T) {
@@ -496,7 +494,7 @@ func newTelegramApiWithWebApp(client *mockTelegramClient, subRepo subscriptionRe
 }
 
 // buildMessage constructs a minimal *tgbotapi.Message for testing handleMessage.
-// Note: the OvyFlash fork changed Message.Chat from *Chat to Chat (value receiver).
+// The OvyFlash fork changed Message.Chat from *Chat to Chat (value).
 func buildMessage(chatID int64, text string) *tgbotapi.Message {
 	return &tgbotapi.Message{
 		Chat: tgbotapi.Chat{ID: chatID},
@@ -505,8 +503,8 @@ func buildMessage(chatID int64, text string) *tgbotapi.Message {
 }
 
 // mockTelegramClient records all outbound messages and keyboards for assertion.
-// Note: keyboards slice is shared between SendHTMLMessageWithKeyboard and
-// EditHTMLMessageWithKeyboard calls. Use editedMsgIDs length to discriminate.
+// The keyboards slice is shared between SendHTMLMessageWithKeyboard and
+// EditHTMLMessageWithKeyboard; use editedMsgIDs length to discriminate.
 type mockTelegramClient struct {
 	mu           sync.Mutex
 	htmlMessages []string

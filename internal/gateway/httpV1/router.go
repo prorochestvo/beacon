@@ -28,12 +28,8 @@ func NewRouter(
 		return nil, err
 	}
 
-	// PublicRatesChart, MeSubscriptions, MeRatesChart, and MeRatesHistory are
-	// registered before the /api/sources/... block. /public, /me, and /sources
-	// are distinct prefixes, so no ambiguity.
-	//
-	// MeSubscriptionsRaw must be registered before MeSubscriptions so that
-	// Go 1.22+ ServeMux longest-path matching selects the more specific route.
+	// MeSubscriptionsRaw must be registered before MeSubscriptions so Go 1.22+
+	// ServeMux longest-path matching selects the more specific route.
 	mux.HandleFunc("GET "+routes.PublicRatesChart, h.GetPublicRatesChart)
 	mux.HandleFunc("GET "+routes.MeSubscriptionsRaw, h.ListMeSubscriptionsRaw)
 	mux.HandleFunc("GET "+routes.MeSubscriptions, h.ListMeSubscriptions)
@@ -69,8 +65,8 @@ func NewRouter(
 	return mux, nil
 }
 
-// meSubscriptionRepo is a thin interface used to thread the subscription repository
-// through the router without depending on the concrete repository package.
+// meSubscriptionRepo threads the subscription repository through the router
+// without depending on the concrete repository package.
 type meSubscriptionRepo interface {
 	ObtainRateUserSubscriptionsByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.RateUserSubscription, error)
 	ObtainRateUserSubscriptionByID(ctx context.Context, id string) (*domain.RateUserSubscription, error)

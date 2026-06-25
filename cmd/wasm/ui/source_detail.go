@@ -10,8 +10,8 @@ import (
 )
 
 // RenderSourceDetail returns the full HTML skeleton for the Source Detail
-// screen. Subscriptions and daily-events sections contain a "Loading…"
-// placeholder that the caller replaces after the async fetches complete.
+// screen. The subscriptions and daily-events sections hold a "Loading…"
+// placeholder the caller replaces after the async fetches complete.
 func RenderSourceDetail(state application.SourceDetailState) string {
 	var b strings.Builder
 

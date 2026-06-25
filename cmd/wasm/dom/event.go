@@ -8,12 +8,10 @@ import (
 )
 
 // On binds handler to the named DOM event on target and returns a release
-// closure. Callers MUST invoke the returned closure when the bound element is
-// destroyed; failing to do so leaks an entry in the runtime's function table
-// for the lifetime of the WASM module.
+// closure. Callers MUST invoke it when the bound element is destroyed; not
+// doing so leaks a function-table entry for the WASM module's lifetime.
 //
-// The release closure is idempotent: calling it more than once is safe and
-// has no additional effect after the first call.
+// The release closure is idempotent: calls after the first are no-ops.
 func On(target js.Value, event string, handler func(js.Value)) (release func()) {
 	fn := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		var ev js.Value

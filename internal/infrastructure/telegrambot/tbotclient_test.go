@@ -27,9 +27,8 @@ func TestTelegramBotClient_AdminChatID(t *testing.T) {
 }
 
 // TestTBotClientTransportPattern_documentationOnly verifies the no-op Proxy
-// pattern used by NewTBotClient. The actual wiring inside NewTBotClient is
-// verified by code review because constructing a real *TelegramBotClient
-// requires a live Telegram token.
+// pattern used by NewTBotClient. The wiring inside NewTBotClient is verified by
+// code review, since constructing a real *TelegramBotClient needs a live token.
 func TestTBotClientTransportPattern_documentationOnly(t *testing.T) {
 	t.Parallel()
 

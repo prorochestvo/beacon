@@ -16,8 +16,8 @@ import (
 
 // runAudit is the entry point for the "doctor audit" subcommand.
 //
-// It must be invoked from the repository root because the default --seed-glob
-// ("migrations/*.seed*.sql") is relative to the process working directory.
+// It must be invoked from the repository root: the default --seed-glob
+// ("migrations/*.seed*.sql") is relative to the working directory.
 //
 // Flag surface:
 //
@@ -40,11 +40,10 @@ func runAudit(args []string, out, errOut io.Writer) int {
 	return runAuditWith(args, nil, nil, out, errOut)
 }
 
-// runAuditWith is the internal implementation of runAudit. When fetcher is
-// non-nil it replaces the default HTTP fetcher; when seedFS is non-nil it
-// replaces os.DirFS(".") as the filesystem for seed-glob resolution. Both
-// parameters exist solely to allow unit tests to inject stubs without
-// hitting the network or relying on CWD layout.
+// runAuditWith is the internal implementation of runAudit. A non-nil fetcher
+// replaces the default HTTP fetcher; a non-nil seedFS replaces os.DirFS(".") for
+// seed-glob resolution. Both exist so tests can inject stubs without hitting the
+// network or relying on CWD layout.
 func runAuditWith(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out, errOut io.Writer) int {
 	var (
 		seedGlob string
@@ -60,8 +59,8 @@ func runAuditWith(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out,
 	fset.StringVar(&source, "source", "", "exact source name to audit (shorthand for --only=^<name>$)")
 	fset.BoolVar(&all, "all", false, "audit every seeded source")
 	fset.BoolVar(&verbose, "v", false, "verbose: print per-source table")
-	// Suppress the FlagSet's built-in usage output so we can route help to out
-	// (not errOut) and avoid printing twice.
+	// Suppress the FlagSet's built-in usage so help routes to out (not errOut)
+	// without printing twice.
 	fset.Usage = func() {}
 
 	if err := fset.Parse(args); err != nil {
@@ -91,8 +90,8 @@ func runAuditWith(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out,
 
 	var nameFilter *regexp.Regexp
 	if source != "" {
-		// Anchor and quote-meta so dots, underscores, etc. in source names are
-		// treated as literals rather than regex metacharacters.
+		// Anchor and quote-meta so dots, underscores, etc. are matched literally,
+		// not as regex metacharacters.
 		nameFilter = regexp.MustCompile(`^` + regexp.QuoteMeta(source) + `$`)
 	} else if onlyRe != "" {
 		var err error

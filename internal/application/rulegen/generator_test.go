@@ -94,10 +94,10 @@ func newTestSource() *domain.RateSource {
 
 const validRulesJSON = `{"rules":[{"method":"regex","pattern":"(\\d+\\.\\d+)"}]}`
 
-// newTestGenerator is a convenience wrapper for NewGenerator used in tests.
-// plain is the plain HTTP fetcher slot; chromedpFor is the factory for the
-// chromedp fetcher slot. Either may be nil to simulate a build without that
-// fetcher. Pass func(string) Fetcher { return mockFetcher } to wrap a mock.
+// newTestGenerator wraps NewGenerator for tests. plain is the plain HTTP
+// fetcher slot; chromedpFor is the chromedp factory slot. Either may be nil to
+// simulate a build without that fetcher. Pass
+// func(string) Fetcher { return mockFetcher } to wrap a mock.
 func newTestGenerator(
 	t *testing.T,
 	primary, fallback *mockAIClient,
@@ -339,11 +339,10 @@ func TestGenerator_Generate(t *testing.T) {
 
 	t.Run("primary attempt with invalid regex retries with transcript feedback", func(t *testing.T) {
 		t.Parallel()
-		// Attempt 1: primary returns a rule with a lookbehind (RE2-illegal).
-		// Attempt 2: primary returns valid JSON.
-		// The executor must never be called for attempt 1 (validate catches the
-		// bad pattern before Execute runs), so the outcome is AttemptsUsed=2
-		// with a single successful persist.
+		// Attempt 1: lookbehind rule (RE2-illegal). Attempt 2: valid JSON.
+		// validate catches the bad pattern before Execute runs, so the executor
+		// is never called for attempt 1; outcome is AttemptsUsed=2 with one
+		// successful persist.
 		const invalidRegexJSON = `{"rules":[{"method":"regex","pattern":"(?<=USD)\\d+"}]}`
 		primary := &mockAIClient{
 			name:      "PrimaryAI",
@@ -352,8 +351,8 @@ func TestGenerator_Generate(t *testing.T) {
 		fallback := &mockAIClient{name: "FallbackAI"}
 		repo := &mockSourceRepo{source: newTestSource()}
 		fetcher := &mockFetcher{body: []byte("rate: 450.00")}
-		// executor returns an error on any call; if attempt 1 called the executor
-		// the overall result would have been an error, not success.
+		// If attempt 1 had called the executor, the result would be an error,
+		// not success.
 		executor := &sequentialExecutor{
 			results: []execResult{
 				{450.00, nil},
@@ -393,10 +392,9 @@ func TestGenerator_Generate(t *testing.T) {
 
 	t.Run("plausibility rejection retries and persists corrected value", func(t *testing.T) {
 		t.Parallel()
-		// Attempt 1: executor returns an "outside plausible range" error for USD/KZT.
-		// Attempt 2: executor returns 470 (within range).
-		// The log for attempt 1 must contain "outside plausible range",
-		// and the final persisted value must be 470.
+		// Attempt 1: executor returns "outside plausible range" for USD/KZT.
+		// Attempt 2: executor returns 470 (in range). The attempt-1 log must
+		// contain "outside plausible range"; the persisted value must be 470.
 		primary := &mockAIClient{
 			name:      "PrimaryAI",
 			responses: []string{validRulesJSON, validRulesJSON},
@@ -445,7 +443,7 @@ func TestGenerator_Generate(t *testing.T) {
 			},
 		}
 		// panicFetcher in the plain slot proves the chromedp fetcher, not the
-		// plain fetcher, is the one called when fetcher_kind="chromedp".
+		// plain one, is called when fetcher_kind="chromedp".
 		chromedpFetcher := &mockFetcher{body: []byte("rate: 467.00")}
 		executor := &mockRuleExecutor{value: 467.00}
 
@@ -479,9 +477,9 @@ func TestGenerator_Generate(t *testing.T) {
 				Rules:         []domain.RateSourceRule{},
 			},
 		}
-		// nil in the chromedp slot simulates a build that does not include
-		// the chromedp fetcher. panicFetcher in the plain slot proves the
-		// plain fetcher is not called either.
+		// nil chromedp slot simulates a build without the chromedp fetcher;
+		// panicFetcher in the plain slot proves the plain fetcher is not
+		// called either.
 		executor := &mockRuleExecutor{}
 
 		gen, err := NewGenerator(primary, fallback, &panicFetcher{}, nil, executor, repo, 3, 2, io.Discard)
@@ -534,8 +532,8 @@ func TestGenerator_Generate(t *testing.T) {
 	})
 }
 
-// panicFetcher implements Fetcher but panics if Fetch is called.
-// Used in tests to verify the guard short-circuits before any HTTP fetch.
+// panicFetcher implements Fetcher but panics if Fetch is called, verifying the
+// guard short-circuits before any HTTP fetch.
 type panicFetcher struct{}
 
 var _ Fetcher = (*panicFetcher)(nil)
@@ -758,7 +756,7 @@ func TestTruncate(t *testing.T) {
 		t.Parallel()
 		s := strings.Repeat("a", 600)
 		result := truncate(s, 512)
-		// "…" is a 3-byte UTF-8 character, so total is 512 + 3 = 515 bytes.
+		// "…" is 3 bytes UTF-8, so the total is 512 + 3 = 515 bytes.
 		assert.True(t, len(result) <= 515, "truncated string should be at most 515 bytes (512 + 3-byte ellipsis)")
 		assert.True(t, strings.HasSuffix(result, "…"))
 	})

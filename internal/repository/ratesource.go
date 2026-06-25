@@ -26,11 +26,11 @@ type RateSourceRepository struct {
 // Name returns the name of the underlying database table.
 func (r *RateSourceRepository) Name() string { return rateSourceTableName }
 
-// CheckUP verifies that the repository can read from the rate_sources table.
-// Runs `SELECT 1 FROM rate_sources LIMIT 1`, which exits after the first row
-// (or returns sql.ErrNoRows on an empty table — also fine, the table exists).
-// The previous `SELECT COUNT(*)` semantics did a full table scan and made
-// /healthz expensive enough to be a DoS surface under tight monitoring loops.
+// CheckUP verifies the repository can read from the rate_sources table. Runs
+// `SELECT 1 FROM rate_sources LIMIT 1`, exiting after the first row (or
+// sql.ErrNoRows on an empty table — fine, the table exists). The previous
+// `SELECT COUNT(*)` did a full table scan, making /healthz a DoS surface under
+// tight monitoring loops.
 func (r *RateSourceRepository) CheckUP(ctx context.Context) error {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
@@ -65,11 +65,9 @@ func (r *RateSourceRepository) ObtainRateSourceByName(ctx context.Context, name 
 }
 
 // ObtainRateSourcesByNames returns the rate sources whose name is in names,
-// keyed by source name. Sources that don't exist are absent from the map.
-// Used by handlers that need to enrich a list of subscriptions or events with
-// source metadata in a single round-trip instead of one per item.
-//
-// Empty input is a fast no-op (no query is issued).
+// keyed by source name. Missing sources are absent from the map. Lets handlers
+// enrich a list of subscriptions or events with source metadata in one
+// round-trip instead of one per item. Empty input is a no-op (no query issued).
 func (r *RateSourceRepository) ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error) {
 	if len(names) == 0 {
 		return map[string]domain.RateSource{}, nil
@@ -169,16 +167,16 @@ func (r *RateSourceRepository) RetainRateSource(ctx context.Context, record *dom
 		return err
 	}
 
-	// Normalise and validate fetcher_kind. An empty string is treated as "plain"
-	// rather than hard-failing: rows written before this column existed carry ""
-	// until they round-trip through Go code, and hard-failing would break cmd/web
-	// reads of in-flight data during a rolling deploy.
+	// Normalise and validate fetcher_kind. Empty is treated as "plain" rather
+	// than hard-failing: rows written before this column existed carry "" until
+	// they round-trip through Go code, and hard-failing would break cmd/web reads
+	// of in-flight data during a rolling deploy.
 	switch record.FetcherKind {
 	case "", "plain":
 		record.FetcherKind = "plain"
 	case "chromedp":
 		// allowed; routes to ChromedpFetcher in cmd/doctor rulegen — not used by
-		// cmd/collector or cmd/web which do not perform fetching.
+		// cmd/collector or cmd/web, which do not fetch.
 	default:
 		return fmt.Errorf("rate source %q: unsupported fetcher_kind %q (allowed: plain, chromedp)",
 			record.Name, record.FetcherKind)

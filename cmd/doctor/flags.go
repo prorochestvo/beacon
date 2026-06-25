@@ -6,9 +6,9 @@ import (
 	"io"
 )
 
-// newFlagSet returns a flag.FlagSet configured with ContinueOnError (so the
-// caller can detect flag.ErrHelp and return 0 rather than letting the stdlib
-// call os.Exit). errOut is where the FlagSet writes its own error/usage messages.
+// newFlagSet returns a flag.FlagSet with ContinueOnError so the caller can detect
+// flag.ErrHelp and return 0 instead of letting the stdlib call os.Exit. The FlagSet
+// writes its own error/usage messages to errOut.
 func newFlagSet(name string, errOut io.Writer) *flag.FlagSet {
 	fset := flag.NewFlagSet(name, flag.ContinueOnError)
 	fset.SetOutput(errOut)

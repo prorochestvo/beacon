@@ -178,7 +178,7 @@ func TestDefaultRuleExecutor_Execute(t *testing.T) {
 		require.NoError(t, err)
 		assert.InDelta(t, 470.0, v, 0.0001)
 
-		// Universal range only excludes <=0 and >MaxInt32; 19.1671 passes.
+		// Universal range excludes only <=0 and >MaxInt32; 19.1671 passes.
 		rules2 := []domain.RateSourceRule{
 			{Method: domain.MethodRegex, Pattern: `(19\.1671)`},
 		}

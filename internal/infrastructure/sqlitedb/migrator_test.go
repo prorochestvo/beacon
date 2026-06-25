@@ -216,9 +216,9 @@ func TestRequireMigratedSchema(t *testing.T) {
 
 	t.Run("returns nil when schema is migrated", func(t *testing.T) {
 		t.Parallel()
-		// newTestClient applies a one-file stub migration, which is enough to
-		// satisfy the gate's COUNT(*) > 0 check on __schema_migrations without
-		// pulling in the full application schema.
+		// newTestClient applies a one-file stub migration, enough to satisfy
+		// the gate's COUNT(*) > 0 check on __schema_migrations without the full
+		// application schema.
 		c := newTestClient(t)
 		err := RequireMigratedSchema(t.Context(), c)
 		require.NoError(t, err)

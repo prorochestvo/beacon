@@ -282,8 +282,8 @@ func TestNewSourceDetailPage(t *testing.T) {
 	})
 }
 
-// fakeFetcherCounted is a separate fake that counts FetchJSON calls, used to
-// assert exactly one network call is issued per Load* invocation.
+// fakeFetcherCounted counts FetchJSON calls to assert exactly one network call
+// per Load* invocation.
 type fakeFetcherCounted struct {
 	jsonResponse    []byte
 	fetchJSONCalled int

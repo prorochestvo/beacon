@@ -3,7 +3,7 @@ package domain
 import "time"
 
 // RateUserEvent represents a single outbound notification stored in the pool.
-// It is persisted before delivery and retains LastError and Status for audit and retry.
+// Persisted before delivery; retains LastError and Status for audit and retry.
 type RateUserEvent struct {
 	ID         string
 	SourceName string // name of the rate source that triggered the event

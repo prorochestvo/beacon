@@ -16,16 +16,14 @@ import (
 )
 
 // NewTelegramApi constructs a stateless TelegramApi handler. webAppURL is the
-// fully-qualified https:// URL of the Telegram Mini App; when empty, the
-// WebApp keyboard button is silently omitted (safe for dev environments).
+// fully-qualified https:// URL of the Telegram Mini App; when empty the WebApp
+// keyboard button is omitted (safe for dev). profileRepo is optional — when nil
+// the "Latest updates" digest renders timestamps in UTC; production always
+// provides all five dependencies.
 //
-// profileRepo is optional — when nil, the "Latest updates" digest renders
-// timestamps in UTC. In production all five dependencies are always provided.
-//
-// The handler only exposes a read-only "Latest updates" view plus the Mini
-// App launcher — all subscription CRUD lives in the Mini App now. Stale
-// callback presses from older chat bubbles (with the removed buttons) are
-// acknowledged but otherwise ignored.
+// The handler exposes only a read-only "Latest updates" view plus the Mini App
+// launcher; subscription CRUD lives in the Mini App. Stale callback presses from
+// removed buttons in older chat bubbles are acknowledged but ignored.
 func NewTelegramApi(
 	cltTelegram telegramClient,
 	subRepo subscriptionRepository,
@@ -45,8 +43,8 @@ func NewTelegramApi(
 }
 
 // TelegramApi serves the Telegram-side menu and a read-only "Latest updates"
-// summary. Subscription CRUD has been moved to the Mini App, so the only
-// outbound surfaces here are the main menu and the latest-rates report.
+// summary; subscription CRUD lives in the Mini App. The only outbound surfaces
+// are the main menu and the latest-rates report.
 type TelegramApi struct {
 	telegramClient telegramClient
 	subRepo        subscriptionRepository
@@ -87,22 +85,20 @@ type telegramRateSourceRepository interface {
 }
 
 // rateUserProfileRepository looks up per-user preferences such as timezone.
-// Implementations return (nil, internal.ErrNotFound) when no row exists for the
-// user — that absence is normal and the handler treats it as "use UTC".
+// Implementations return (nil, internal.ErrNotFound) when no row exists; that
+// absence is normal and the handler treats it as "use UTC".
 type rateUserProfileRepository interface {
 	ObtainRateUserProfileByUserID(ctx context.Context, userType domain.UserType, userID string) (*domain.RateUserProfile, error)
 }
 
 // resolveUserTimezone returns the time.Location stored for userID, or nil when
-// no profile is configured, the stored timezone name is unknown to the running
-// Go runtime, or the profile lookup fails. A nil return causes the digest to
-// render timestamps in UTC. Failures are logged once each; a wrong timezone is
-// strictly preferable to a missed digest.
+// no profile is configured, the timezone name is unknown to the Go runtime, or
+// the lookup fails. A nil return renders the digest in UTC. Failures are logged;
+// a wrong timezone beats a missed digest.
 //
-// This mirrors RateCheckAgent.resolveUserTimezone but uses log.Printf instead
-// of an io.Writer field — TelegramApi carries no logger field. The two are kept
-// separate intentionally (different logging surfaces, two callers; dedup only
-// genuine invariants).
+// Mirrors RateCheckAgent.resolveUserTimezone but uses log.Printf since
+// TelegramApi has no logger field. Kept separate intentionally (different
+// logging surfaces, two callers).
 func (h *TelegramApi) resolveUserTimezone(ctx context.Context, userID string) *time.Location {
 	if h.profileRepo == nil {
 		return nil
@@ -138,9 +134,8 @@ func (h *TelegramApi) Run(ctx context.Context) {
 			h.handleCallback(ctx, cb)
 		case update.Message != nil:
 			m := update.Message
-			// Log message metadata only; the body may contain PII or
-			// operator-supplied tokens. The handler decides what (if
-			// anything) to record about the content.
+			// Log metadata only; the body may contain PII or operator-supplied
+			// tokens. The handler decides what to record about the content.
 			log.Printf("telegram: update id=%d chat=%d kind=message text_len=%d",
 				update.UpdateID, m.Chat.ID, len(m.Text))
 			h.handleMessage(ctx, m)
@@ -152,11 +147,10 @@ func (h *TelegramApi) Run(ctx context.Context) {
 	go h.telegramClient.Listen(ctx, handle)
 }
 
-// handleMessage replies with the main menu for every inbound message. There
-// is no intermediate "Please use /subscriptions" hint anymore — slash commands
-// and free-form text alike land on the same keyboard. Unknown slash commands
-// are still logged so an operator can see WHICH command a user tried; free
-// text is intentionally not logged to keep PII out of logs.
+// handleMessage replies with the main menu for every inbound message — slash
+// commands and free-form text alike land on the same keyboard, with no "Please
+// use /subscriptions" hint. Unknown slash commands are logged so an operator can
+// see which command a user tried; free text is not logged to keep PII out of logs.
 func (h *TelegramApi) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	chatID := msg.Chat.ID
 	lower := strings.TrimSpace(strings.ToLower(msg.Text))
@@ -169,9 +163,9 @@ func (h *TelegramApi) handleMessage(ctx context.Context, msg *tgbotapi.Message) 
 }
 
 // handleCallback routes the two remaining inline-keyboard presses. Stale
-// callback data from removed buttons in older chat bubbles is acknowledged
-// (so the spinner clears) and otherwise ignored — there are no longer any
-// add/delete/show flows on the bot side.
+// callback data from removed buttons in older chat bubbles is acknowledged (so
+// the spinner clears) and otherwise ignored — no add/delete/show flows remain
+// on the bot side.
 func (h *TelegramApi) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 	chatID := cb.Message.Chat.ID
 	msgID := cb.Message.MessageID
@@ -188,20 +182,18 @@ func (h *TelegramApi) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQ
 	}
 }
 
-// sendMainMenu shows the top-level keyboard. When msgID > 0 the existing message is edited
-// in place (callback flow); when 0 a new message is sent (text-command flow).
-//
-// Subscription CRUD has been moved to the Mini App, so the keyboard only
-// exposes "Latest updates" (a quick in-chat summary) and the WebApp launcher.
+// sendMainMenu shows the top-level keyboard. When msgID > 0 the existing message
+// is edited in place (callback flow); when 0 a new message is sent (text-command
+// flow). The keyboard exposes only "Latest updates" and the WebApp launcher.
 func (h *TelegramApi) sendMainMenu(ctx context.Context, chatID int64, msgID int) {
 	rows := [][]tgbotapi.InlineKeyboardButton{
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📈 Latest updates", cbLatest),
 		),
 	}
-	// WebApp button is shown as a separate row at the bottom when a public URL is configured.
-	// Note: Telegram silently ignores WebApp buttons for non-anonymous bots in groups —
-	// irrelevant here because this bot operates in DM-only mode.
+	// WebApp button gets its own bottom row when a public URL is configured.
+	// Telegram silently ignores WebApp buttons for non-anonymous bots in groups —
+	// irrelevant here, this bot is DM-only.
 	if h.webAppURL != "" {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			newWebAppButton("🌐 Open Mini App", h.webAppURL),
@@ -213,14 +205,13 @@ func (h *TelegramApi) sendMainMenu(ctx context.Context, chatID int64, msgID int)
 }
 
 // handleLatestUpdates shows the current rate for each of the caller's subscriptions
-// using the same aligned-table format the scheduled notifier emits. Sources are
+// in the same aligned-table format the scheduled notifier emits. Sources are
 // batch-loaded in one query; rate values are deduplicated by source name to avoid
-// N+1 queries when a user has multiple subscriptions on the same source.
+// N+1 queries when a user has multiple subscriptions on one source.
 //
-// Inactive sources are included as long as a rate value row exists — from the
-// user's perspective a subscription to an inactive source is still a valid pair
-// until they delete it. A source that has been completely removed from the DB is
-// silently skipped.
+// Inactive sources are included as long as a rate value row exists — a
+// subscription to an inactive source remains a valid pair until deleted. A source
+// removed from the DB entirely is silently skipped.
 func (h *TelegramApi) handleLatestUpdates(ctx context.Context, chatID int64, msgID int) {
 	userID := strconv.FormatInt(chatID, 10)
 
@@ -251,7 +242,7 @@ func (h *TelegramApi) handleLatestUpdates(ctx context.Context, chatID int64, msg
 	}
 
 	// Deduplicate rate-value lookups by source name to avoid N+1 when the user
-	// has multiple subscriptions on the same source.
+	// has multiple subscriptions on one source.
 	currentPrices := make(map[string]float64, len(names))
 	for _, name := range names {
 		values, err := h.rateValueRepo.ObtainLastNRateValuesBySourceName(ctx, name, 1)
@@ -265,8 +256,8 @@ func (h *TelegramApi) handleLatestUpdates(ctx context.Context, chatID int64, msg
 		currentPrices[name] = values[0].Price
 	}
 
-	// Build snapshots, skipping any sub whose source row is missing or has no
-	// current price. Both silently omit the subscription from the rendered table.
+	// Build snapshots, silently skipping any sub whose source row is missing or
+	// has no current price.
 	snapshots := make([]notification.SubscriptionSnapshot, 0, len(subs))
 	for _, sub := range subs {
 		src, ok := sourceMeta[sub.SourceName]
@@ -285,8 +276,8 @@ func (h *TelegramApi) handleLatestUpdates(ctx context.Context, chatID int64, msg
 	}
 
 	if len(snapshots) == 0 {
-		// User has subscriptions but every one was filtered (no source row or no
-		// rate data yet). Use a distinct message from the no-subscriptions case.
+		// Has subscriptions but every one was filtered (no source row or no rate
+		// data yet). Distinct message from the no-subscriptions case.
 		log.Printf("telegram: no rate data chat=%s subs=%d snapshots=0", userID, len(subs))
 		h.sendOrEditWithKeyboard(ctx, chatID, msgID, "No rate data available yet.", backKeyboard())
 		return
@@ -302,10 +293,9 @@ func (h *TelegramApi) handleLatestUpdates(ctx context.Context, chatID int64, msg
 	h.sendDigestParts(ctx, chatID, msgID, parts)
 }
 
-// sendDigestParts delivers a slice of message parts to the chat.
-// When msgID > 0 the first part edits the original callback message; subsequent
-// parts and new-send flows use SendHTMLMessage. The «Back» keyboard is attached
-// only to the last part so it appears at the bottom of the conversation bubble.
+// sendDigestParts delivers message parts to the chat. When msgID > 0 the first
+// part edits the original callback message; subsequent parts and new-send flows
+// use SendHTMLMessage. The «Back» keyboard attaches only to the last part.
 func (h *TelegramApi) sendDigestParts(ctx context.Context, chatID int64, msgID int, parts []string) {
 	if len(parts) == 0 {
 		return
@@ -320,7 +310,7 @@ func (h *TelegramApi) sendDigestParts(ctx context.Context, chatID int64, msgID i
 	}
 
 	// Multi-part: edit the original bubble with part[0] (when msgID > 0), then
-	// send the remainder as new messages. Keyboard attaches only to the last part.
+	// send the remainder as new messages.
 	first := parts[0]
 	rest := parts[1:]
 
@@ -352,9 +342,9 @@ func (h *TelegramApi) sendDigestParts(ctx context.Context, chatID int64, msgID i
 	}
 }
 
-// sendOrEditWithKeyboard sends a new message with keyboard when msgID is zero (text-command
-// flow) or edits the existing message in place when msgID > 0 (callback flow). This keeps
-// the chat clean by avoiding new chat bubbles on every inline button press.
+// sendOrEditWithKeyboard sends a new keyboard message when msgID is zero
+// (text-command flow) or edits the existing message in place when msgID > 0
+// (callback flow), avoiding a new chat bubble on every inline button press.
 func (h *TelegramApi) sendOrEditWithKeyboard(ctx context.Context, chatID int64, msgID int, text string, kb tgbotapi.InlineKeyboardMarkup) {
 	if msgID > 0 {
 		if err := h.telegramClient.EditHTMLMessageWithKeyboard(

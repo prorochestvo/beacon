@@ -23,9 +23,8 @@ const PublicChartDefaultPeriod = 7
 var AllowedChartPeriods = []int{7, 30, 90, 180, 360}
 
 // PublicSubscriptionsState is a read-only snapshot the UI layer consumes to
-// render the public (unauthenticated) sparkline list. No user-keyed data is
-// present; the state is entirely derived from the server-side /api/public/...
-// endpoint family.
+// render the public (unauthenticated) sparkline list. No user-keyed data;
+// derived entirely from the /api/public/... endpoint family.
 type PublicSubscriptionsState struct {
 	// Chart holds the paginated sparkline-list returned by /api/public/rates/chart.
 	// Nil means the chart has not been fetched yet or the last fetch returned no data.
@@ -52,8 +51,8 @@ type PublicSubscriptionsState struct {
 }
 
 // PublicSubscriptionsPage is the page controller for the unauthenticated guest
-// landing page. It is pure Go with no syscall/js dependencies and is therefore
-// testable under the host toolchain via make test.
+// landing page. Pure Go, no syscall/js dependencies, testable under the host
+// toolchain via make test.
 //
 // Concurrency note: Go-WASM runs on a single OS thread, so state mutations
 // within a single goroutine are safe without a mutex. If the project ever
@@ -80,13 +79,12 @@ func NewPublicSubscriptionsPage(client *apiclient.Client) *PublicSubscriptionsPa
 func (p *PublicSubscriptionsPage) State() PublicSubscriptionsState { return p.state }
 
 // LoadPage fetches the given page (1-based) from /api/public/rates/chart and
-// updates the controller state. ChartLoading is set to true before the fetch
-// and reset to false when the fetch returns, regardless of outcome. ChartError
-// is set on failure; Page, Total, and Chart are updated on success.
+// updates state. ChartLoading is set true before the fetch and reset to false
+// when it returns, regardless of outcome. ChartError is set on failure; Page,
+// Total, and Chart are updated on success.
 //
-// If the period changes while the fetch is in flight (two rapid chip clicks),
-// the stale result is silently dropped and LoadPage returns nil without
-// overwriting state.
+// If the period changes mid-flight (two rapid chip clicks), the stale result is
+// silently dropped and nil is returned without overwriting state.
 func (p *PublicSubscriptionsPage) LoadPage(ctx context.Context, page int) error {
 	if page < 1 {
 		page = 1

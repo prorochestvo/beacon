@@ -3,10 +3,9 @@ package httpenc
 
 import "strings"
 
-// AcceptsGzip reports whether the Accept-Encoding header value lists gzip
-// with a non-zero quality value. Substring matching is incorrect because
-// "gzip;q=0" actively declines the encoding under RFC 7231; this helper
-// parses the header per-element and respects the q-value.
+// AcceptsGzip reports whether the Accept-Encoding header lists gzip with a
+// non-zero q-value. Substring matching is wrong: "gzip;q=0" declines the
+// encoding under RFC 7231, so this parses per-element and respects the q-value.
 func AcceptsGzip(headerVal string) bool {
 	for _, part := range strings.Split(headerVal, ",") {
 		part = strings.TrimSpace(part)

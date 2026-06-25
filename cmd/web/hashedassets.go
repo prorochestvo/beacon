@@ -33,16 +33,15 @@ type hashedAssetEntry struct {
 
 // hashedAssetRegistry maps hashed public URLs back to their source-file metadata.
 // Construction reads each declared asset, hashes its raw bytes, and registers an
-// in-memory entry. Missing assets are a fatal startup error — call log.Fatalf on
+// in-memory entry. A missing asset is a fatal startup error — call log.Fatalf on
 // the returned error.
 type hashedAssetRegistry struct {
 	byURL map[string]hashedAssetEntry
 }
 
-// newHashedAssetRegistry returns a registry built from specs against fsys.
-// It returns an error if any spec's source file cannot be read.
-// Hash is computed over raw (uncompressed) bytes so a gzip-level change alone does
-// not change the hashed URL.
+// newHashedAssetRegistry returns a registry built from specs against fsys, or an
+// error if any spec's source file cannot be read. The hash is over raw
+// (uncompressed) bytes, so a gzip-level change alone does not change the hashed URL.
 func newHashedAssetRegistry(fsys fs.FS, specs []assetSpec) (*hashedAssetRegistry, error) {
 	r := &hashedAssetRegistry{byURL: make(map[string]hashedAssetEntry, len(specs))}
 	for _, s := range specs {
@@ -72,8 +71,8 @@ func (reg *hashedAssetRegistry) lookup(url string) (hashedAssetEntry, bool) {
 // logEntries writes one log line listing the active hashes for operator verification.
 func (reg *hashedAssetRegistry) logEntries() {
 	var parts []string
-	// Iterate in a stable order keyed on the source filename's base stem so the
-	// log line is deterministic across Go map-iteration randomness.
+	// Key by the source filename's base stem so the log line is deterministic
+	// despite Go map-iteration randomness.
 	stems := make(map[string]hashedAssetEntry, len(reg.byURL))
 	for _, e := range reg.byURL {
 		stem := strings.TrimSuffix(path.Base(e.sourcePath), path.Ext(e.sourcePath))
@@ -81,7 +80,7 @@ func (reg *hashedAssetRegistry) logEntries() {
 	}
 	for _, stem := range []string{"app", "wasm_exec"} {
 		if e, ok := stems[stem]; ok {
-			// Extract the 8-hex component from the hashed URL: "/app.<hash>.wasm" → "<hash>".
+			// "/app.<hash>.wasm" → "<hash>".
 			base := strings.TrimPrefix(e.hashedURL, "/")
 			parts = append(parts, stem+"="+extractHashFromBase(base))
 		}
@@ -126,9 +125,9 @@ func (c *htmlCache) serve(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// newHTMLCache reads path from fsys, replaces /app.wasm and /wasm_exec.js with
+// newHTMLCache reads filePath from fsys, replaces /app.wasm and /wasm_exec.js with
 // their hashed forms from the registry, and returns an immutable cache entry.
-// modTime is the stable boot-time timestamp used for If-Modified-Since support.
+// modTime is the stable boot-time timestamp for If-Modified-Since support.
 func newHTMLCache(fsys fs.FS, filePath string, reg *hashedAssetRegistry, modTime time.Time) (*htmlCache, error) {
 	b, err := fs.ReadFile(fsys, filePath)
 	if err != nil {
@@ -169,10 +168,8 @@ func newHTMLCache(fsys fs.FS, filePath string, reg *hashedAssetRegistry, modTime
 //  4. Falls through to fileHandler for everything else (unhashed /app.wasm stale-HTML
 //     recovery, every API path that already has its own mux route, etc.).
 //
-// The function does not modify the provided fileHandler or fsys.
-// embeddedSub must be non-nil when the embedded FS is active (not the --static-dir override),
-// and nil otherwise; the gzip-sibling handoff for hashed wasm paths uses whichever
-// fs.FS the registry was built from, so embeddedSub is only needed for the lookup guard.
+// It does not modify the provided fileHandler or fsys. The gzip-sibling handoff for
+// hashed wasm paths uses whichever fs.FS the registry was built from.
 func staticHandler(
 	fileHandler http.Handler,
 	fsys fs.FS,
@@ -199,20 +196,20 @@ func staticHandler(
 			}
 		}
 
-		// 4. Everything else: the mux's registered API routes already shadow this
-		// catch-all, so what arrives here is unhashed static files.
+		// 4. Everything else: the mux's API routes already shadow this catch-all,
+		// so what arrives here is unhashed static files.
 		fileHandler.ServeHTTP(w, r)
 	})
 }
 
-// serveHashedAsset writes the content for a hashed asset entry.
-// For wasm: attempts to serve the precompressed sibling when the client accepts gzip;
-// falls back to the plain file. For JS and other types: serves raw bytes.
-// The Cache-Control: public, max-age=604800, immutable header is added at the edge by
-// nginx via the regex location in common_settings.conf, so the browser caches
-// aggressively; the origin does not set it here.
+// serveHashedAsset writes the content for a hashed asset entry. For wasm it serves
+// the precompressed sibling when the client accepts gzip, else the plain file; for
+// JS and other types it serves raw bytes.
+// The origin sets no Cache-Control; nginx adds the
+// "public, max-age=604800, immutable" header at the edge via its regex location in
+// common_settings.conf.
 func serveHashedAsset(w http.ResponseWriter, r *http.Request, fsys fs.FS, entry hashedAssetEntry) {
-	// Wasm: attempt gzip-sibling handoff when the client accepts it.
+	// Wasm: gzip-sibling handoff when the client accepts it.
 	if entry.gzipPath != "" && httpenc.AcceptsGzip(r.Header.Get("Accept-Encoding")) {
 		f, err := fsys.Open(entry.gzipPath)
 		if err == nil {

@@ -13,8 +13,8 @@ import (
 )
 
 // RenderErrors returns the full HTML skeleton for the Errors screen. The
-// exec-errors and event-errors sections contain "Loading…" placeholders that
-// the caller replaces after the async fetches complete.
+// exec-errors and event-errors sections hold "Loading…" placeholders the caller
+// replaces after the async fetches complete.
 func RenderErrors(state application.ErrorsState) string {
 	var b strings.Builder
 

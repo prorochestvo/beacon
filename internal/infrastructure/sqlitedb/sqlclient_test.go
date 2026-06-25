@@ -341,13 +341,12 @@ func (s *stubDataSource) OptionsNames() []string              { return nil }
 func (s *stubDataSource) Password() string                    { return "" }
 func (s *stubDataSource) Port() int                           { return 0 }
 
-// TestSQLitePoolPerConnectionPragmas guards against the
-// pre-fix wiring where PRAGMA foreign_keys and busy_timeout were issued via
-// db.Exec on a single anonymous connection from the pool, leaving the other
-// six connections in production with the SQLite defaults. With the DSN-based
-// wiring every new pool connection picks up both PRAGMAs in the driver's
-// Open hook. The test exercises SetMaxOpenConns(N>1) so a regression would
-// surface here rather than as a non-deterministic production failure.
+// TestSQLitePoolPerConnectionPragmas guards against the pre-fix wiring where
+// PRAGMA foreign_keys and busy_timeout were issued via db.Exec on a single pool
+// connection, leaving the other six in production with the SQLite defaults. With
+// DSN-based wiring every new pool connection picks up both PRAGMAs in the
+// driver's Open hook. The test uses SetMaxOpenConns(N>1) so a regression surfaces
+// here rather than as a non-deterministic production failure.
 func TestSQLitePoolPerConnectionPragmas(t *testing.T) {
 	t.Parallel()
 
@@ -373,9 +372,9 @@ func TestSQLitePoolPerConnectionPragmas(t *testing.T) {
 		db := openPoolDB(t)
 		ctx := t.Context()
 
-		// Reserve every slot in the pool before reading PRAGMA values so each
-		// db.Conn call is forced to open a fresh connection. With the pre-fix
-		// wiring all but one would report foreign_keys=0 / busy_timeout=0.
+		// Reserve every slot before reading PRAGMA values so each db.Conn opens a
+		// fresh connection. With the pre-fix wiring all but one would report
+		// foreign_keys=0 / busy_timeout=0.
 		conns := make([]*sql.Conn, poolSize)
 		for i := 0; i < poolSize; i++ {
 			c, err := db.Conn(ctx)
@@ -413,8 +412,7 @@ func TestSQLitePoolPerConnectionPragmas(t *testing.T) {
 
 		// poolSize goroutines each open a transaction (pinning a distinct
 		// connection), wait at the barrier, then race their orphan INSERT.
-		// Without per-connection foreign_keys=ON, 6/7 (here, ~3/4) of these
-		// would succeed silently.
+		// Without per-connection foreign_keys=ON, most would succeed silently.
 		var (
 			wg      sync.WaitGroup
 			ready   = make(chan struct{}, poolSize)

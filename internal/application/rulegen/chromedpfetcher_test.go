@@ -18,13 +18,12 @@ import (
 
 var _ Fetcher = (*ChromedpFetcher)(nil)
 
-// findChromiumOrSkip looks for a Chromium/Chrome binary in the locations
-// chromedp checks, plus CHROMIUM_PATH from the environment used by cmd/doctor rulegen.
-// The test is skipped cleanly when no binary is found, or when running on a
-// default GitHub Actions runner: ubuntu-latest ships google-chrome on PATH
-// but its sandbox cannot bring up the DevTools websocket, which surfaces as
-// "websocket url timeout reached" after ~20 s. Set RUN_CHROMEDP_TESTS=1 to
-// force-enable on a CI environment that has a working browser sandbox.
+// findChromiumOrSkip looks for a Chromium/Chrome binary in chromedp's checked
+// locations plus the CHROMIUM_PATH used by cmd/doctor rulegen. The test skips
+// cleanly when no binary is found, or on a default GitHub Actions runner:
+// ubuntu-latest ships google-chrome on PATH but its sandbox cannot bring up the
+// DevTools websocket, surfacing as "websocket url timeout reached" after ~20 s.
+// Set RUN_CHROMEDP_TESTS=1 to force-enable on CI with a working browser sandbox.
 func findChromiumOrSkip(t *testing.T) string {
 	t.Helper()
 
@@ -168,10 +167,10 @@ func TestChromedpFetcher_Fetch(t *testing.T) {
 		t.Parallel()
 		chromiumPath := findChromiumOrSkip(t)
 
-		// The page starts empty then injects #rate-loaded after 1 s via JS.
-		// With NetworkIdleMillis=100, the default sleep path would finish
-		// before the element appears. WaitSelector blocks until it is visible,
-		// so the captured DOM must contain the element.
+		// The page injects #rate-loaded after 1 s via JS. With
+		// NetworkIdleMillis=100 the default sleep path would finish first;
+		// WaitSelector blocks until the element is visible, so the captured DOM
+		// must contain it.
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/html")
 			_, err := w.Write([]byte(`<html><body>
@@ -207,7 +206,7 @@ setTimeout(function() {
 func TestBuildExecAllocatorOptions(t *testing.T) {
 	t.Parallel()
 
-	// baseline is the number of options appended unconditionally.
+	// baseline is the unconditional option count:
 	// len(chromedp.DefaultExecAllocatorOptions) + fixedExecAllocatorOptionCount
 	// (Headless, DisableGPU, NoSandbox, disable-blink-features flag).
 	baseline := len(chromedp.DefaultExecAllocatorOptions) + fixedExecAllocatorOptionCount

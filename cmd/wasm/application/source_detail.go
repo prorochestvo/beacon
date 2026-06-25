@@ -16,8 +16,8 @@ const (
 	DailyEventsLimit = 25
 )
 
-// SourceDetailState holds all client-side state for the Source Detail screen.
-// It is the single source of truth that the UI layer reads to render the page.
+// SourceDetailState holds all client-side state for the Source Detail screen —
+// the single source of truth the UI layer reads to render the page.
 type SourceDetailState struct {
 	Name   string
 	Title  string
@@ -34,12 +34,12 @@ type SourceDetailState struct {
 	DailyEventsPage int
 }
 
-// VisibleRates returns the rate slice after applying the current filter and
-// sort. Pure: no I/O, no DOM calls.
+// VisibleRates returns the rate slice after the current filter and sort. Pure:
+// no I/O, no DOM calls.
 //
 // Filter is a case-insensitive substring match on "<base>/<quote>". Sort is by
-// Timestamp descending by default; empty Timestamp values sort as time.Time{}
-// (zero) and therefore appear last in desc order and first in asc order.
+// Timestamp, descending by default; empty Timestamp sorts as time.Time{} (zero),
+// so it appears last in desc order and first in asc.
 func (s SourceDetailState) VisibleRates() []dto.RateResponse {
 	filterLower := strings.ToLower(s.RateFilter)
 	out := make([]dto.RateResponse, 0, len(s.Rates))
@@ -64,9 +64,9 @@ func (s SourceDetailState) VisibleRates() []dto.RateResponse {
 	return out
 }
 
-// SourceDetailPage is the page controller for the Source Detail screen. It
-// owns SourceDetailState and exposes methods for every user action. It has no
-// DOM dependencies and is testable as plain Go.
+// SourceDetailPage is the page controller for the Source Detail screen. It owns
+// SourceDetailState and exposes a method per user action. No DOM dependencies;
+// testable as plain Go.
 type SourceDetailPage struct {
 	state  SourceDetailState
 	client *apiclient.Client
@@ -76,9 +76,8 @@ type SourceDetailPage struct {
 // Subscriptions and daily events arrive later via LoadSubsPage /
 // LoadDailyEventsPage after the skeleton is in the DOM.
 //
-// Title lookup: sources is scanned for a SourceResponse whose Name matches
-// name. When found, its Title field is used; when not found (or Title is
-// empty), name is used as the fallback.
+// Title lookup: sources is scanned for a SourceResponse whose Name matches name;
+// its Title is used when found and non-empty, otherwise name is the fallback.
 func NewSourceDetailPage(name string, sources []dto.SourceResponse, rates []dto.RateResponse, client *apiclient.Client) *SourceDetailPage {
 	title := name
 	var src dto.SourceResponse
@@ -121,8 +120,8 @@ func (p *SourceDetailPage) ToggleRateSort() SourceDetailState {
 	return p.state
 }
 
-// LoadSubsPage fetches the given page of subscriptions for this source and
-// replaces the internal slice. It also updates SubsPage on success.
+// LoadSubsPage fetches the given page of subscriptions for this source,
+// replaces the internal slice, and updates SubsPage on success.
 func (p *SourceDetailPage) LoadSubsPage(ctx context.Context, page int) error {
 	items, err := p.client.ListSubscriptions(ctx, p.state.Name, page)
 	if err != nil {
@@ -133,8 +132,8 @@ func (p *SourceDetailPage) LoadSubsPage(ctx context.Context, page int) error {
 	return nil
 }
 
-// LoadDailyEventsPage fetches the given page of daily events for this source
-// and replaces the internal slice. It also updates DailyEventsPage on success.
+// LoadDailyEventsPage fetches the given page of daily events for this source,
+// replaces the internal slice, and updates DailyEventsPage on success.
 func (p *SourceDetailPage) LoadDailyEventsPage(ctx context.Context, page int) error {
 	items, err := p.client.ListDailyEvents(ctx, p.state.Name, page)
 	if err != nil {

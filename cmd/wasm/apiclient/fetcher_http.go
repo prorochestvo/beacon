@@ -25,8 +25,8 @@ var _ Fetcher = (*httpFetcher)(nil)
 
 // NewHTTPFetcher returns a Fetcher backed by net/http. baseURL is prepended to
 // every relative path passed to FetchJSON or FetchNoContent; a trailing slash
-// is trimmed so that paths like "/api/sources" join cleanly. httpClient is
-// optional — when nil, a default with a 5 s timeout is used.
+// is trimmed so paths like "/api/sources" join cleanly. httpClient is optional —
+// when nil, a default with a 5 s timeout is used.
 func NewHTTPFetcher(baseURL string, httpClient *http.Client) Fetcher {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 5 * time.Second}

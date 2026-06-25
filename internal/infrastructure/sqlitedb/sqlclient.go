@@ -53,27 +53,24 @@ func NewSQLiteClient(sqlDSN dsninjector.DataSource, logger io.Writer) (*SQLiteCl
 // and sets a 30-second default timeout. Use this in tests or when the caller
 // controls the *sql.DB lifecycle.
 //
-// Per-connection PRAGMAs (foreign_keys, busy_timeout) MUST be supplied via
-// DSN query parameters when the *sql.DB is opened (see
-// connectionOptions) so the driver re-applies them on every new
-// connection the pool opens. NewSQLiteClient does this for production;
-// tests that open ":memory:" directly must either pass the pragmas in the
-// DSN or keep SetMaxOpenConns(1) so a single PRAGMA-less connection still
-// inherits the defaults set here by db.Exec.
+// Per-connection PRAGMAs (foreign_keys, busy_timeout) MUST be supplied via DSN
+// query parameters when the *sql.DB is opened (see connectionOptions) so the
+// driver re-applies them on every new pool connection. NewSQLiteClient does this
+// for production; tests that open ":memory:" directly must either pass the
+// pragmas in the DSN or keep SetMaxOpenConns(1) so a single PRAGMA-less
+// connection still inherits the defaults set here by db.Exec.
 //
-// journal_mode=WAL is persisted in the database file header and is set
-// once here via db.Exec.
+// journal_mode=WAL is persisted in the database file header and set once here
+// via db.Exec.
 //
-// Invariant: busy_timeout (5 s, configured in connectionOptions)
-// must remain strictly less than Timeout (30 s default; 60 s in
-// NewSQLiteClient). If busy_timeout is raised, raise Timeout first so the
-// Go-level context deadline always fires after the driver retry window
-// expires.
+// Invariant: busy_timeout (5 s, set in connectionOptions) must remain strictly
+// less than Timeout (30 s default; 60 s in NewSQLiteClient). If busy_timeout is
+// raised, raise Timeout first so the Go-level context deadline always fires
+// after the driver retry window expires.
 func NewSQLiteClientEx(db *sql.DB, logger io.Writer) (*SQLiteClient, error) {
 	// Per-connection PRAGMAs are best-effort here for the legacy single-
-	// connection test path. Production opens through NewSQLiteClient where
-	// the DSN carries them and the seven-connection pool inherits them on
-	// every open.
+	// connection test path. Production opens through NewSQLiteClient where the
+	// DSN carries them and the seven-connection pool inherits them on every open.
 	for _, pragma := range []string{
 		"PRAGMA foreign_keys=ON;",
 		"PRAGMA journal_mode=WAL;",
@@ -128,7 +125,7 @@ func (sqlite *SQLiteClient) Transaction(ctx context.Context) (*sql.Tx, error) {
 
 // ReadOnlyTransaction opens a read-only transaction. Callers that only run
 // SELECTs (e.g. health checks, schema validation) should prefer it over
-// Transaction so the intent is explicit at the call site.
+// Transaction to make the intent explicit at the call site.
 func (sqlite *SQLiteClient) ReadOnlyTransaction(ctx context.Context) (*sql.Tx, error) {
 	return sqlite.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 }
@@ -168,8 +165,8 @@ func (sqlite *SQLiteClient) Commit(ctx context.Context, action sqlAction, extraA
 }
 
 // Rollback runs action and each extraAction inside a transaction that is always
-// rolled back, regardless of errors. Use this for read-only operations where a
-// deliberate rollback is preferred over commit to avoid any unintended writes.
+// rolled back, regardless of errors. Use this for read-only operations to avoid
+// any unintended writes.
 func (sqlite *SQLiteClient) Rollback(ctx context.Context, action sqlAction, extraActions ...sqlAction) error {
 	ctx, cancel := context.WithTimeout(ctx, sqlite.Timeout)
 	defer cancel()

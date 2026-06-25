@@ -81,8 +81,7 @@ func TestBuildSubscriptionDigest(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, parts, 1)
 
-		// Only one row because both snapshots share the same (base, quote, kind).
-		// Count occurrences of "USD/KZT" — exactly one row in the <pre> block.
+		// Both snapshots share the same (base, quote, kind) → exactly one row.
 		assert.Equal(t, 1, strings.Count(parts[0], "USD/KZT"))
 		// BID-MAX: 490 wins over 488.
 		assert.Contains(t, parts[0], "490")
@@ -136,7 +135,7 @@ func TestBuildSubscriptionDigest(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, parts, 1)
 
-		// Price must be present; arrows must not appear (delta == CurrentPrice triggers first-fire guard).
+		// Price present; arrows absent (delta == CurrentPrice → first-fire guard).
 		assert.Contains(t, parts[0], "487.55")
 		assert.NotContains(t, parts[0], arrowUp)
 		assert.NotContains(t, parts[0], arrowDown)

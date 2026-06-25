@@ -78,11 +78,9 @@ func (r *ExecutionHistoryRepository) ObtainLastNExecutionHistoryBySourceName(ctx
 
 // ObtainLatestExecutionHistoryBySources returns the most recent execution_history
 // row per source for every name in sourceNames, keyed by source_name. Sources
-// without any rows are absent from the result. Used by ListSources to replace
-// an N+1 of one ObtainLastNExecutionHistoryBySourceName transaction per source
-// with a single bulk read.
-//
-// Empty input is a fast no-op (no query is issued).
+// without rows are absent. Used by ListSources to replace an N+1 of one
+// ObtainLastNExecutionHistoryBySourceName per source with a single bulk read.
+// Empty input is a no-op (no query issued).
 func (r *ExecutionHistoryRepository) ObtainLatestExecutionHistoryBySources(ctx context.Context, sourceNames []string) (map[string]domain.ExecutionHistory, error) {
 	if len(sourceNames) == 0 {
 		return map[string]domain.ExecutionHistory{}, nil

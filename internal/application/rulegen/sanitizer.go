@@ -7,18 +7,16 @@ import (
 )
 
 // Locate returns the smallest window of body centred on the earliest qualifying
-// structural anchor match. A tier-1 hit at offset i qualifies only when at
-// least one non-empty currency anchor occurs inside [i-coLocationBytes,
-// i+coLocationBytes]. Passing coLocationBytes <= 0 disables the co-location
-// check (legacy behaviour: any tier-1 hit wins regardless of proximity to a
-// currency code).
+// structural anchor match. A tier-1 hit at offset i qualifies only when a
+// non-empty currency anchor occurs inside [i-coLocationBytes, i+coLocationBytes];
+// coLocationBytes <= 0 disables the check (legacy: any tier-1 hit wins).
 //
-// If no tier-1 hit qualifies, Locate falls back to the earliest currency anchor
-// match (tier-2). When neither tier produces a hit it returns body unchanged
-// and found=false.
+// With no qualifying tier-1 hit, Locate falls back to the earliest currency
+// anchor match (tier-2). When neither tier hits it returns body unchanged and
+// found=false.
 //
-// Duplicate anchors within each tier are deduplicated. Empty strings are skipped.
-// The window is clamped to [0, len(body)] so no out-of-bounds slice can occur.
+// Anchors are deduplicated per tier; empty strings are skipped. The window is
+// clamped to [0, len(body)].
 func Locate(body []byte, structural, currency []string, windowBytes, coLocationBytes int) ([]byte, bool) {
 	if hit, ok := smallestQualifyingTier1Hit(body, structural, currency, coLocationBytes); ok {
 		return windowAround(body, hit, windowBytes), true
@@ -30,19 +28,18 @@ func Locate(body []byte, structural, currency []string, windowBytes, coLocationB
 }
 
 // Sanitize strips <script>, <style>, and <head> blocks (case-insensitive,
-// non-greedy), then uses Locate to find the region around the best anchor
-// match, and finally caps the result at maxBodyBytesForLLM bytes.
+// non-greedy), then uses Locate to find the region around the best anchor, and
+// caps the result at maxBodyBytesForLLM bytes.
 //
 // Tier-1 structural anchors are tried first; a hit qualifies only when a
-// currency anchor appears within ±defaultCoLocationBytes of it (the
-// co-location guard prevents marketing headings from capturing the window).
-// Only when no structural anchor qualifies does Sanitize fall back to
-// currency anchors (tier-2). When neither tier matches, the leading
-// maxBodyBytesForLLM bytes are returned (existing behaviour).
+// currency anchor appears within ±defaultCoLocationBytes (the co-location guard
+// prevents marketing headings from capturing the window). Sanitize falls back
+// to currency anchors (tier-2) only when no structural anchor qualifies; when
+// neither matches, the leading maxBodyBytesForLLM bytes are returned.
 //
-// It returns the sanitized body and the original byte count (before stripping)
-// for use in log messages. If the raw body exceeds maxRawBodyBytes (5 MB),
-// Sanitize returns an error and callers must abort before any LLM call.
+// Returns the sanitized body and the pre-strip byte count (for log messages).
+// If the raw body exceeds maxRawBodyBytes (5 MB), it returns an error and
+// callers must abort before any LLM call.
 func Sanitize(body []byte, structural, currency []string) ([]byte, int, error) {
 	original := len(body)
 	if original > maxRawBodyBytes {
@@ -71,14 +68,11 @@ const (
 	maxBodyBytesForLLM = 80 * 1024       // 80 KB sent to the LLM after locate/truncate
 	locateWindowBytes  = 80 * 1024       // ±40 KB centred on the earliest anchor match
 
-	// defaultCoLocationBytes is the radius (in bytes) around a tier-1 anchor
-	// hit within which at least one currency anchor must appear for the hit to
-	// qualify. 5 KB is chosen because the production seed regexes use
-	// [\s\S]{0,400}? between a structural marker and the rate value — roughly
-	// a few hundred bytes of slack. 5 KB gives ~12× headroom for pages that
-	// embed multiple unrelated currency codes between the structural anchor
-	// and the target row, while staying tight enough to reject a marketing
-	// heading 280 KB away from the rate table.
+	// defaultCoLocationBytes is the radius around a tier-1 anchor hit within
+	// which a currency anchor must appear for the hit to qualify. 5 KB gives
+	// ~12× headroom over the few-hundred-byte slack of the production seed
+	// regexes ([\s\S]{0,400}?), while still rejecting a marketing heading
+	// 280 KB away from the rate table.
 	defaultCoLocationBytes = 5 * 1024
 )
 
@@ -88,12 +82,10 @@ var (
 	headRe   = regexp.MustCompile(`(?is)<head\b[^>]*>.*?</head>`)
 )
 
-// smallestQualifyingTier1Hit scans every occurrence of every distinct structural
-// anchor and returns the smallest offset that passes the co-location check. When
-// coLocationBytes <= 0 every hit passes unconditionally (legacy behaviour).
-//
-// A safety cap of 1,000 occurrences per anchor prevents O(n²) scanning on
-// adversarial bodies.
+// smallestQualifyingTier1Hit scans every occurrence of each distinct structural
+// anchor and returns the smallest offset passing the co-location check;
+// coLocationBytes <= 0 makes every hit pass (legacy). A safety cap of 1,000
+// occurrences per anchor prevents O(n²) scanning on adversarial bodies.
 func smallestQualifyingTier1Hit(body []byte, structural, currency []string, coLocationBytes int) (int, bool) {
 	seen := make(map[string]bool, len(structural))
 	best := -1

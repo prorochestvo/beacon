@@ -16,8 +16,8 @@ import (
 
 var _ sourceaudit.Fetcher = (*stubFetcher)(nil)
 
-// stubFetcher is a test double for sourceaudit.Fetcher that returns
-// pre-configured responses per URL without hitting the network.
+// stubFetcher is a sourceaudit.Fetcher test double returning pre-configured
+// responses per URL without hitting the network.
 type stubFetcher struct {
 	responses map[string]*sourceaudit.FetchResult
 	errs      map[string]error
@@ -111,9 +111,8 @@ func TestRunAudit(t *testing.T) {
 	t.Run("--source with dots matches only exact name not regex-expanded", func(t *testing.T) {
 		t.Parallel()
 
-		// This subtest exercises the filter logic in isolation using sourceaudit
-		// package directly. runAudit uses os.DirFS(".") which would need a real
-		// repo root; instead we validate the --source QuoteMeta contract directly.
+		// Validate the --source QuoteMeta contract directly: runAudit uses
+		// os.DirFS(".") which would need a real repo root.
 		source := "src.with.dots"
 		pattern := `^` + regexp.QuoteMeta(source) + `$`
 		re := regexp.MustCompile(pattern)
@@ -127,8 +126,8 @@ func TestRunAudit(t *testing.T) {
 	t.Run("audit all sources via stubbed fetcher", func(t *testing.T) {
 		t.Parallel()
 
-		// Write a minimal seed file in a temp dir and run the full audit pipeline
-		// directly through sourceaudit to verify exit-code semantics.
+		// Run the full audit pipeline on a minimal temp seed file to verify
+		// exit-code semantics.
 		dir := t.TempDir()
 		seedPath := filepath.Join(dir, "seed.sql")
 		rules := `[{"method":"regex","pattern":"([0-9]+\\.?[0-9]*)","target":""}]`
@@ -173,8 +172,8 @@ func TestRunAudit(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, sources, 1)
 
-		// Auditor.Run returns (nil, error) only on context cancel — simulate by
-		// checking the FETCH_ERROR path which maps to failures > 0 → exit 1.
+		// Auditor.Run only errors on context cancel; the FETCH_ERROR path instead
+		// maps to failures > 0 → exit 1.
 		fetcher := &stubFetcher{
 			errs: map[string]error{
 				"https://example.com/": fmt.Errorf("connection refused"),
@@ -227,8 +226,8 @@ func TestRunAudit(t *testing.T) {
 		dir := t.TempDir()
 		rules := `[{"method":"regex","pattern":"([0-9]+\\.?[0-9]*)","target":""}]`
 
-		// Seed two sources: the exact target and a similar-looking one whose name
-		// would match if dots were treated as regex wildcards.
+		// Two sources: the exact target and a look-alike that would match if dots
+		// were regex wildcards.
 		row1 := fmt.Sprintf(
 			`INSERT OR IGNORE INTO rate_sources VALUES('src.with.dots','Vendor','USD','KZT','https://exact.example.com/','1h','BID',1,'{}','%s','{}','plain');`,
 			rules,
@@ -248,9 +247,8 @@ func TestRunAudit(t *testing.T) {
 		}
 
 		var out, errOut bytes.Buffer
-		// Pass -v so WriteReport emits the per-source table, which includes
-		// source names. Without -v, the non-verbose OK line ("OK: audited N
-		// sources across N URLs") doesn't mention individual source names.
+		// -v makes WriteReport emit the per-source table with source names; the
+		// non-verbose OK line ("OK: audited N sources across N URLs") does not.
 		code := runAuditWith(
 			[]string{"--source", "src.with.dots", "--seed-glob", "*.sql", "-v"},
 			fetcher,
@@ -259,9 +257,8 @@ func TestRunAudit(t *testing.T) {
 			&errOut,
 		)
 
-		// If srcXwithXdots had been matched (regex dot wildcard bug), we would
-		// have audited two sources. With QuoteMeta only src.with.dots is audited;
-		// its URL returns 450.00 which the regex extracts → exit 0.
+		// A regex-dot bug would match srcXwithXdots too (two sources). With
+		// QuoteMeta only src.with.dots is audited; its 450.00 extracts → exit 0.
 		assert.Equal(t, 0, code, "exact-name match should exit 0; stdout: %s stderr: %s", out.String(), errOut.String())
 		assert.Contains(t, out.String(), "src.with.dots", "report must mention the audited source")
 		assert.NotContains(t, out.String(), "srcXwithXdots", "wildcard source must not appear in report")

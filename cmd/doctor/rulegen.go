@@ -20,9 +20,9 @@ package main
 //	SQLITEDB_DSN      (required) SQLite connection string
 //	AI_PRIMARY_DSN    (required) primary AI provider DSN
 //	AI_FALLBACK_DSN   (optional) fallback AI provider DSN; stub used when absent
-//	CHROMIUM_PATH     (optional) absolute path to Chromium binary;
-//	                  defaults to chromedp PATH lookup order:
-//	                  chromium, chromium-browser, google-chrome, chrome
+//	CHROMIUM_PATH     (optional) absolute path to Chromium binary; when unset,
+//	                  chromedp searches PATH (chromium, chromium-browser,
+//	                  google-chrome, chrome)
 //
 // Exit codes (single-source mode):
 //
@@ -38,9 +38,9 @@ package main
 //	3  infrastructure error — DB unreachable, migrations not applied, or logger/AI client
 //	   init failure.
 //
-// Note: the summary line prefix is the literal string "rulegen --all:" (not
-// "doctor rulegen --all:") to preserve compatibility with external grep patterns
-// and existing runall_test.go assertions.
+// The summary line prefix is the literal "rulegen --all:" (not "doctor rulegen
+// --all:") to preserve compatibility with external grep patterns and existing
+// runall_test.go assertions.
 
 import (
 	"context"
@@ -67,36 +67,35 @@ const (
 	envDsnSqliteDB   = "SQLITEDB_DSN"
 	envDsnAIPrimary  = "AI_PRIMARY_DSN"
 	envDsnAIFallback = "AI_FALLBACK_DSN"
-	// envChromiumPath is the optional absolute path to the Chromium/Chrome binary.
-	// When unset, chromedp falls back to its own PATH lookup order:
-	// chromium, chromium-browser, google-chrome, chrome.
+	// envChromiumPath is the optional absolute path to the Chromium/Chrome binary;
+	// when unset, chromedp searches PATH (chromium, chromium-browser, google-chrome,
+	// chrome).
 	envChromiumPath = "CHROMIUM_PATH"
-	// envProxyURL is the optional outbound proxy URL parsed via dsninjector.
-	// When unset or empty all outbound traffic goes direct.
+	// envProxyURL is the optional outbound proxy URL parsed via dsninjector;
+	// when unset or empty, outbound traffic goes direct.
 	envProxyURL = "PROXY_URL"
 )
 
-// rateSourceLister is the narrow read-side interface runAll needs.
-// Defined locally so tests can fake it without depending on the concrete repository.
+// rateSourceLister is the narrow read-side interface runAll needs, defined locally
+// so tests can fake it without the concrete repository.
 type rateSourceLister interface {
 	ObtainAllRateSources(ctx context.Context) ([]domain.RateSource, error)
 }
 
-// ruleGenerator is the narrow generate interface runAll needs.
-// Defined locally so tests can fake it without rebuilding the full dependency graph.
+// ruleGenerator is the narrow generate interface runAll needs, defined locally so
+// tests can fake it without rebuilding the full dependency graph.
 type ruleGenerator interface {
 	Generate(ctx context.Context, sourceName string, forceFallback bool) (*rulegen.Result, error)
 }
 
-// runAll iterates every active rate source and invokes gen.Generate for each.
-// It fetches all rate sources (both active and inactive) via ObtainAllRateSources
-// and counts inactive rows as skipped, filtering in Go rather than in SQL so the
-// summary line always reflects the full source inventory (plan trade-off R2).
-// Per-source failures are logged to out and counted but never propagated; the return
-// value is always 0 so cron does not page on partial failure. Panics inside a
-// per-source call are recovered, logged, and counted as failures. Infrastructure
-// errors (lister failure) are written to errOut and still return 0 with a zero-count
-// summary line on out so that "grep rulegen --all: cron.log" always matches.
+// runAll invokes gen.Generate for every active rate source. It fetches all sources
+// (active and inactive) via ObtainAllRateSources and counts inactive rows as skipped,
+// filtering in Go not SQL so the summary line reflects the full inventory (plan
+// trade-off R2). Per-source failures are logged to out and counted but not propagated;
+// the return is always 0 so cron does not page on partial failure. Per-source panics
+// are recovered, logged, and counted as failures. A lister failure is written to errOut
+// and still returns 0 with a zero-count summary line on out, so "grep rulegen --all:
+// cron.log" always matches.
 func runAll(ctx context.Context, gen ruleGenerator, srcs rateSourceLister, forceFallback bool, out, errOut io.Writer) int {
 	sources, err := srcs.ObtainAllRateSources(ctx)
 	if err != nil {
@@ -154,8 +153,8 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 	fset.IntVar(&maxFallback, "max-fallback-attempts", 2, "max fallback attempts before total failure")
 	fset.StringVar(&logsDir, "logs-dir", LogsDir, "path to logs directory")
 	fset.StringVar(&verbosity, "verbosity", "warning", "minimum stdout log level (debug, info, warning, error, severe, critical)")
-	// Suppress the FlagSet's built-in usage output so we can route help to out
-	// (not errOut) and avoid printing twice.
+	// Suppress the FlagSet's built-in usage so help routes to out (not errOut)
+	// without printing twice.
 	fset.Usage = func() {}
 
 	if err := fset.Parse(args); err != nil {
@@ -193,9 +192,8 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 		resolvedVerbosity = internal.ParseLogLevel(verbosity)
 	}
 
-	// infraFail prints an infrastructure FAIL line to errOut.
-	// In --all mode it uses "mode=--all" so the key is not mistaken for a source name.
-	// In single-source mode it uses "source=<name>".
+	// infraFail prints an infrastructure FAIL line to errOut: "mode=--all" in --all
+	// mode (so the key isn't mistaken for a source name), "source=<name>" otherwise.
 	var infraFail func(format string, args ...any)
 	if allSources {
 		infraFail = func(format string, a ...any) {
@@ -336,8 +334,8 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 	return 0
 }
 
-// sourceAuditFetcherAdapter wraps sourceaudit.Fetcher to satisfy the
-// rulegen.Fetcher interface, which returns only the body bytes.
+// sourceAuditFetcherAdapter adapts sourceaudit.Fetcher to rulegen.Fetcher, which
+// returns only the body bytes.
 type sourceAuditFetcherAdapter struct {
 	inner sourceaudit.Fetcher
 }

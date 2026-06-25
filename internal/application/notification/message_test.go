@@ -82,8 +82,8 @@ func TestBuildAlertMessage(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Len(t, msgs, 1)
-		// Body must not contain a signed delta value like "+470.46". The
-		// "+00" offset in the timestamp line is allowed and unrelated.
+		// Body must not contain a signed delta like "+470.46". The "+00"
+		// timestamp offset is allowed and unrelated.
 		require.NotContains(t, msgs[0], "+470")
 		require.NotContains(t, msgs[0], arrowUp)
 		require.NotContains(t, msgs[0], arrowDown)
@@ -142,8 +142,8 @@ func TestBuildAlertMessage(t *testing.T) {
 	t.Run("column alignment with varied widths", func(t *testing.T) {
 		t.Parallel()
 
-		// Two rows with very different pair and value widths; one has a suppressed
-		// delta (first-fire). Assert the exact block to catch alignment regressions.
+		// Two rows with differing pair/value widths; one has a suppressed delta
+		// (first-fire). Assert the exact block to catch alignment regressions.
 		msgs, err := buildAlertMessage(fixedNow, nil,
 			alert{
 				BaseCurrency:  "USD",
@@ -374,12 +374,10 @@ func TestBuildAlertMessage(t *testing.T) {
 		t.Parallel()
 
 		// Generate enough rows to overflow telegramMaxMessageLen (2048 bytes).
-		// Each row is roughly "AAAA/KZT    999.99  +99.99 ↑\n" ≈ 35 chars.
-		// Header+wrapper is ≈ 100 bytes. We need > (2048-100)/35 ≈ 56 rows.
+		// Each row ≈ 35 chars, header+wrapper ≈ 100 bytes → need > (2048-100)/35 ≈ 56 rows.
 		alerts := make([]alert, 80)
 		for i := range alerts {
-			// Use unique base currencies by encoding the index into four letters
-			// to ensure each row is distinct.
+			// Encode the index into four letters so each row is distinct.
 			base := string([]rune{
 				rune('A' + i/26),
 				rune('A' + i%26),

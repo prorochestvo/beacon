@@ -13,13 +13,13 @@ import (
 //
 //	middleware [STATUS] METHOD PATH
 //
-// The standard logger prefix supplies the timestamp, so a typical access line
-// reads "YYYY/MM/DD HH:MM:SS middleware [200] GET /api/sources". The status
-// code defaults to 200 when the inner handler writes the body without an
-// explicit WriteHeader call — that is the net/http default we mirror.
+// The standard logger prefix supplies the timestamp, so a typical line reads
+// "YYYY/MM/DD HH:MM:SS middleware [200] GET /api/sources". The status defaults
+// to 200 when the inner handler writes the body without an explicit WriteHeader
+// call, mirroring the net/http default.
 //
-// logger is typically the same io.Writer the rest of the binary's logs flow
-// through; passing a *bytes.Buffer keeps tests hermetic.
+// logger is typically the binary's shared log io.Writer; passing a
+// *bytes.Buffer keeps tests hermetic.
 func Logger(next http.Handler, logger io.Writer) http.Handler {
 	l := log.New(logger, "middleware ", log.Lmsgprefix)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -31,8 +31,8 @@ func Logger(next http.Handler, logger io.Writer) http.Handler {
 }
 
 // httpResponseWriter wraps http.ResponseWriter so Logger can read the status
-// code the inner handler actually sent. Calling WriteHeader more than once is
-// a no-op after the first call — matches net/http's own behaviour.
+// code the inner handler actually sent. WriteHeader is a no-op after the first
+// call, matching net/http's behaviour.
 type httpResponseWriter struct {
 	statusCode  int
 	wroteHeader bool

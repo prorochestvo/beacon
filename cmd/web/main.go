@@ -77,9 +77,9 @@ func main() {
 	}
 	log.Println("logger: initiated")
 
-	// web only makes outbound calls to Telegram (bot polling/webhook). Telegram
-	// traffic bypasses any proxy unconditionally via the hardcoded transport in
-	// NewTBotClient, so PROXY_URL is not parsed here.
+	// web only calls Telegram (bot polling/webhook), and Telegram traffic bypasses
+	// any proxy via the hardcoded transport in NewTBotClient, so PROXY_URL is not
+	// parsed here.
 
 	// init settings
 	dsnTelegramBOT, err := dsninjector.Unmarshal(envDsnTelegramBOT)
@@ -95,13 +95,12 @@ func main() {
 		log.Fatalf("settings: --api-dsn, %s", err.Error())
 		return
 	}
-	// Telegram WebApp buttons reject non-HTTPS, IP literals, and localhost,
-	// so the DSN's host must resolve to a publicly reachable HTTPS host.
-	// The trailing slash is required; the site root serves the unified dispatcher page.
+	// Telegram WebApp buttons reject non-HTTPS, IP literals, and localhost, so the
+	// host must be a publicly reachable HTTPS host. The trailing slash is required;
+	// the site root serves the unified dispatcher page.
 	webAppURL := "https://" + strings.TrimPrefix(strings.TrimPrefix(dsnAPI.Addr(), "https://"), "http://") + "/"
-	// Echo the resolved URL so operators can sanity-check that the BotFather
-	// Menu Button still points at the same origin after each deploy. The URL is
-	// not a secret; if it ever becomes one this line gets a redaction.
+	// Echo the resolved URL so operators can confirm the BotFather Menu Button
+	// still points at the same origin after each deploy. Not a secret.
 	log.Printf("settings: webAppURL=%s (must match BotFather Menu Button URL)", webAppURL)
 	dsnDB, err := dsninjector.Unmarshal(envDsnSqliteDB)
 	if err != nil {
@@ -177,14 +176,14 @@ func main() {
 	}
 	botToken := tbot.BotToken()
 	if botToken == "" {
-		// Misconfiguration: without a bot token the Mini App initData HMAC
-		// cannot be verified, so every /api/me/* call returns 401. Fail at
-		// startup instead of silently rejecting every authenticated request.
+		// Without a bot token the Mini App initData HMAC can't be verified, so
+		// every /api/me/* call returns 401. Fail at startup rather than silently
+		// rejecting every authenticated request.
 		log.Fatalf("services: bot token is empty — check TELEGRAMBOT_DSN")
 	}
-	// rateValueRepo satisfies both ValuesLoader (for ObtainMeChart) and
-	// HistoryValuesLoader (for ObtainMeHistory) — the same instance covers both.
-	// sourceRepo also satisfies PublicSourcesLoader (for ObtainPublicChart).
+	// rateValueRepo satisfies both ValuesLoader (ObtainMeChart) and
+	// HistoryValuesLoader (ObtainMeHistory); sourceRepo also satisfies
+	// PublicSourcesLoader (ObtainPublicChart).
 	chartSvc := appchart.NewService(subscriptionRepo, sourceRepo, rateValueRepo, rateValueRepo, sourceRepo, time.Now)
 	mux, err := gateway.NewGateway(restAPI, botToken, subscriptionRepo, sourceRepo, rateValueRepo, profileRepo, chartSvc)
 	if err != nil {
@@ -206,9 +205,9 @@ func main() {
 		httpFsys = http.FS(sub)
 	}
 
-	// Build the hashed-asset registry from the active FS. The registry hashes raw
-	// bytes (not .gz siblings) so a gzip-level change alone does not invalidate the
-	// cache-busting URL. Missing assets are unrecoverable at this point.
+	// Build the hashed-asset registry from the active FS. It hashes raw bytes (not
+	// .gz siblings) so a gzip-level change alone doesn't invalidate the cache-busting
+	// URL. Missing assets are fatal here.
 	hashSpecs := []assetSpec{
 		{sourcePath: "app.wasm", contentType: "application/wasm", gzipPath: "app.wasm.gz"},
 		{sourcePath: "wasm_exec.js", contentType: "text/javascript; charset=utf-8"},
@@ -219,8 +218,8 @@ func main() {
 	}
 	registry.logEntries()
 
-	// Build the boot-time HTML caches. Both entry points are rewritten once so
-	// the served HTML references the hashed asset URLs from the registry.
+	// Build the boot-time HTML caches: both entry points are rewritten once so the
+	// served HTML references the registry's hashed asset URLs.
 	bootTime := time.Now()
 	indexCache, err := newHTMLCache(fsSub, "index.html", registry, bootTime)
 	if err != nil {
@@ -233,7 +232,7 @@ func main() {
 
 	// staticHandler dispatches hashed-asset and HTML-cache paths first, then falls
 	// through to the plain FileServer for unhashed paths (stale-HTML recovery) and
-	// any other static content. All registered API routes on mux shadow this catch-all.
+	// other static content. The mux's API routes shadow this catch-all.
 	fileHandler := http.FileServer(httpFsys)
 	mux.Handle("/", staticHandler(fileHandler, fsSub, indexCache, adminCache, registry))
 	tbotAPI, err := service.NewTelegramApi(tbot, subscriptionRepo, rateValueRepo, sourceRepo, profileRepo, webAppURL)
@@ -244,7 +243,7 @@ func main() {
 	log.Println("services: initiated")
 
 	// One signal context drives both the Telegram update loop and the HTTP
-	// server's shutdown wait. Sibling binaries (collector, notifier) use the
+	// server's shutdown wait; sibling binaries (collector, notifier) use the
 	// same pattern.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -253,9 +252,9 @@ func main() {
 	tbotAPI.Run(ctx)
 
 	// run http server. Bind the listener before logging "listening" so the
-	// readiness signal fires only after the kernel has bound the port; a
-	// monitoring probe that grepped for the marker line previously raced
-	// the goroutine and could connect to a not-yet-bound port.
+	// readiness marker fires only after the kernel has bound the port; otherwise
+	// a probe grepping for the marker can race the goroutine and connect to a
+	// not-yet-bound port.
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", HttpPort),
 		Handler:      middleware.Logger(mux, l.WriterAs(internal.LogLevelInfo)),
@@ -267,9 +266,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("http server: bind %s: %s", srv.Addr, err)
 	}
-	// srv.Serve closes listener on clean exit; this guards the panic / fatal
-	// window between bind and Serve. Double-close on the happy path is a
-	// no-op-with-error and the error is intentionally discarded.
+	// srv.Serve closes listener on clean exit; this guards the panic/fatal window
+	// between bind and Serve. Double-close on the happy path is a harmless no-op,
+	// so the error is intentionally discarded.
 	defer func() { _ = listener.Close() }()
 	log.Printf("http server: listening on %d port", HttpPort)
 	go func() {
@@ -292,9 +291,9 @@ func main() {
 //go:embed static
 var staticFS embed.FS
 
-// flagPort, flagTimeout, etc. are the raw flag values populated by flag.Parse in main.
-// They are package-level so initFlags (called from main) can apply them to the
-// exported globals, keeping the flag-registration init() free of flag.Parse.
+// flagPort, flagTimeout, etc. hold the raw flag values populated by flag.Parse in
+// main. They are package-level so initFlags can apply them to the exported globals,
+// keeping the flag-registration init() free of flag.Parse.
 var (
 	flagPort      *int
 	flagTimeout   *string
@@ -306,9 +305,9 @@ var (
 
 func init() {
 	// Register flags here so the test binary can see them, but do NOT call
-	// flag.Parse() in init() — doing so consumes go test's own flags before
-	// the testing package registers them, causing "flag provided but not defined".
-	// flag.Parse() is called once in main(), which tests never invoke.
+	// flag.Parse() in init() — it would consume go test's own flags before the
+	// testing package registers them ("flag provided but not defined"). main()
+	// calls flag.Parse() once; tests never invoke main().
 	flagPort = flag.Int("port", HttpPort, "http server port")
 	flagTimeout = flag.String("timeout", HttpTimeOut.String(), "HTTP read/write/idle timeout duration")
 	flagLogsDir = flag.String("logs-dir", LogsDir, "path to logs directory")

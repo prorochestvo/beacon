@@ -30,15 +30,14 @@ const MaxPlausibleRateValue = math.MaxInt32
 // NewRateExtractor creates a RateExtractor with an HTTP client configured for the
 // given timeout.
 //
-// When proxyURL is non-empty it is parsed and used as the explicit proxy for all
-// requests. When proxyURL is empty the transport uses no proxy — the standard Go
-// proxy env triplet (HTTPS_PROXY, HTTP_PROXY, NO_PROXY) is intentionally NOT
-// consulted. Proxy configuration is injected explicitly via PROXY_URL.
+// A non-empty proxyURL is parsed and used as the explicit proxy for all requests.
+// An empty proxyURL uses no proxy — the Go proxy env triplet (HTTPS_PROXY,
+// HTTP_PROXY, NO_PROXY) is intentionally NOT consulted; proxy config is injected
+// explicitly via PROXY_URL.
 //
-// The extractor maintains a per-process negative URL cache (tombstone): once a URL fails
-// inside one process, subsequent fetches in the same process short-circuit. This is designed
-// for short-lived one-shot processes; do not reuse an extractor instance across cron
-// invocations in a long-running daemon.
+// The extractor keeps a per-process negative URL cache (tombstone): once a URL
+// fails, later fetches in the same process short-circuit. Built for short-lived
+// one-shot processes; do not reuse an instance across cron invocations in a daemon.
 func NewRateExtractor(
 	rateValueRepository rateValueRepository,
 	proxyURL string,
@@ -50,9 +49,9 @@ func NewRateExtractor(
 	if proxyURL != "" {
 		parsed, err := url.Parse(proxyURL)
 		if err != nil {
-			// Do not wrap %w — url.Error.Error() includes the raw URL which may
-			// contain userinfo credentials. The operator can recover the value
-			// from the env file; we only need to flag the parse failure.
+			// Do not wrap %w — url.Error.Error() includes the raw URL, which may
+			// carry userinfo credentials. The operator has the value in the env
+			// file; flag only the parse failure.
 			return nil, errors.New("parse proxy URL: invalid format (value redacted from log; check the configured proxy URL)")
 		}
 		transport.Proxy = http.ProxyURL(parsed)
@@ -75,10 +74,10 @@ func NewRateExtractor(
 // NewRateExtractorWithHTTPClient creates a RateExtractor with a caller-supplied HTTP
 // client. Use this in tests to inject a custom transport or timeout.
 //
-// The extractor maintains a per-process negative URL cache (tombstone): once a URL fails
-// inside one process, subsequent fetches in the same process short-circuit. This is designed
-// for short-lived one-shot processes; do not reuse an extractor instance across cron
-// invocations in a long-running daemon.
+// Like NewRateExtractor, the extractor keeps a per-process negative URL cache
+// (tombstone): once a URL fails, later fetches in the same process short-circuit.
+// Built for short-lived one-shot processes; do not reuse an instance across cron
+// invocations in a daemon.
 func NewRateExtractorWithHTTPClient(
 	rateValueRepository rateValueRepository,
 	httpClient *http.Client,

@@ -15,8 +15,8 @@ import (
 	"github.com/seilbekskindirov/monitor/internal/dto"
 )
 
-// fakeFetcherURLRecorder records every URL passed to FetchJSON for use in
-// offset-shape assertions. It does not satisfy FetchNoContent (unused here).
+// fakeFetcherURLRecorder records every URL passed to FetchJSON for offset-shape
+// assertions. FetchNoContent is unused here.
 type fakeFetcherURLRecorder struct {
 	jsonResponse []byte
 	jsonErr      error

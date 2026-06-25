@@ -111,8 +111,8 @@ func meSubscriptionsRawURL() string {
 }
 
 // meSubscriptionByIDURL returns the single-subscription endpoint for PATCH and
-// DELETE. The id is percent-escaped so RUS...T<hex> identifiers round-trip
-// cleanly even if a future ID format includes characters that need escaping.
+// DELETE. The id is percent-escaped so it round-trips cleanly even if a future
+// ID format includes characters that need escaping.
 func meSubscriptionByIDURL(id string) string {
 	return "/api/me/subscriptions/" + url.PathEscape(id)
 }

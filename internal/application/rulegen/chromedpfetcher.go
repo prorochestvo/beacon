@@ -33,12 +33,11 @@ func NewChromedpFetcher(opts ChromedpFetcherOptions) *ChromedpFetcher {
 	}
 }
 
-// ChromedpFetcher renders pages with a headless Chrome instance and returns
-// the post-hydration outer HTML of the <html> element. It implements the
-// rulegen.Fetcher interface.
+// ChromedpFetcher renders pages with headless Chrome and returns the
+// post-hydration outer HTML of the <html> element. Implements rulegen.Fetcher.
 //
-// Lifecycle: each Fetch call spawns a fresh browser. This is intentional for
-// the cmd/doctor rulegen single-source-per-invocation use case. When cmd/collector
+// Lifecycle: each Fetch call spawns a fresh browser, intended for the
+// cmd/doctor rulegen single-source-per-invocation use case. When cmd/collector
 // integrates the fetcher (future plan), reuse a long-lived allocator via a
 // browser pool.
 type ChromedpFetcher struct {
@@ -91,8 +90,7 @@ func (f *ChromedpFetcher) Fetch(ctx context.Context, url string) ([]byte, error)
 	return []byte(rendered), nil
 }
 
-// networkIdleMillisForTest exposes the internal networkIdleMs field for
-// assertions in package tests. It is intentionally unexported.
+// networkIdleMillisForTest exposes networkIdleMs for package-test assertions.
 func (f *ChromedpFetcher) networkIdleMillisForTest() int {
 	return f.networkIdleMs
 }
@@ -113,10 +111,9 @@ type ChromedpFetcherOptions struct {
 	// capturing outerHTML. Defaults to 5000 ms — bank SPAs need 3–5 s post-body
 	// for the rate table to hydrate.
 	NetworkIdleMillis int
-	// WaitSelector, if non-empty, replaces the default body+sleep wait
-	// strategy with WaitVisible(selector). Use this for SPAs where the
-	// rate table appears only after JS hydration. Empty falls back to
-	// WaitVisible("body") + NetworkIdleMillis sleep.
+	// WaitSelector, if non-empty, replaces the default body+sleep strategy with
+	// WaitVisible(selector) for SPAs where the rate table appears only after JS
+	// hydration. Empty falls back to WaitVisible("body") + NetworkIdleMillis sleep.
 	WaitSelector string
 	// Logger receives one-line diagnostic messages per fetch. Nil defaults to
 	// io.Discard (best-effort; errors writing to logger are not returned).
@@ -128,15 +125,14 @@ const (
 	defaultChromedpNetworkIdleMs = 5000
 )
 
-// fixedExecAllocatorOptionCount is the number of options buildExecAllocatorOptions
+// fixedExecAllocatorOptionCount is the count of options buildExecAllocatorOptions
 // appends unconditionally (Headless, DisableGPU, NoSandbox, disable-blink-features).
-// Tests use this to compute the baseline option count without a magic literal.
+// Tests use it to compute the baseline option count without a magic literal.
 const fixedExecAllocatorOptionCount = 4
 
-// buildExecAllocatorOptions constructs the full slice of chromedp allocator
-// options. When proxyURL is non-empty a ProxyServer option is appended so
-// Chromium routes its traffic through the given proxy. Chromium does not inherit
-// the Go proxy env automatically, so the URL must be passed explicitly.
+// buildExecAllocatorOptions builds the full chromedp allocator option slice.
+// A non-empty proxyURL appends a ProxyServer option — Chromium does not inherit
+// the Go proxy env, so the URL must be passed explicitly.
 func (f *ChromedpFetcher) buildExecAllocatorOptions(proxyURL string) []chromedp.ExecAllocatorOption {
 	// slices.Clone — never alias chromedp.DefaultExecAllocatorOptions; an
 	// upstream array-length change would otherwise let append() stomp the global.

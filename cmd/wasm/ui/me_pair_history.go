@@ -17,17 +17,15 @@ const historyGenericErrorMsg = "Could not load history. Try again."
 
 // RenderPairHistory returns the HTML fragment for the history view rendered
 // inside the modal card. It assumes state.OpenPair is non-nil and
-// state.HistoryOpen is true; the caller is responsible for those guards.
+// state.HistoryOpen is true; the caller guards those.
 //
-// Layout:
-//   - Either: loading skeleton (HistoryLoading), error block
-//     (HistoryError != nil), empty-state ("No history yet"), or the
-//     entries list.
-//   - Pagination row at the bottom (prev / page indicator / next).
+// Layout: one of loading skeleton (HistoryLoading), error block
+// (HistoryError != nil), empty-state, or the entries list; then a pagination
+// row (prev / page indicator / next).
 //
-// The "back to detail" action is handled by the modal header X
-// (id="me-pair-modal-close"), which branches on HistoryOpen in the
-// delegated click handler. The inline back button has been removed.
+// "Back to detail" is handled by the modal header X (id="me-pair-modal-close"),
+// which branches on HistoryOpen in the delegated click handler. There is no
+// inline back button.
 //
 // Each history entry renders as:
 //
@@ -121,19 +119,17 @@ func renderHistoryDelta(delta *float64) string {
 	)
 }
 
-// renderHistorySourceFilter returns the source-filter chip row for the history
-// view, or an empty string when KnownSources has fewer than two entries (a
-// single-source filter is visual noise with no utility). The "All" chip always
-// appears first; source chips follow sorted by provider title for deterministic
-// rendering across redraws. The chip matching SelectedSourceTitle carries the
-// me-pair-history-source-chip-active class. Both data-source attribute values
-// and chip text are the provider title, HTML-escaped via dom.Escape.
+// renderHistorySourceFilter returns the source-filter chip row, or an empty
+// string when KnownSources has fewer than two entries (a single-source filter
+// is noise). The "All" chip is first; source chips follow sorted by provider
+// title for deterministic rendering. The chip matching SelectedSourceTitle
+// carries me-pair-history-source-chip-active. Both data-source values and chip
+// text are the provider title, HTML-escaped via dom.Escape.
 func renderHistorySourceFilter(state application.MeSubscriptionsState) string {
 	if len(state.KnownSources) < 2 {
 		return ""
 	}
 
-	// Sort titles for deterministic rendering.
 	titles := make([]string, 0, len(state.KnownSources))
 	for t := range state.KnownSources {
 		titles = append(titles, t)
@@ -143,7 +139,6 @@ func renderHistorySourceFilter(state application.MeSubscriptionsState) string {
 	var b strings.Builder
 	b.WriteString(`<div class="me-pair-history-source-filter">`)
 
-	// "All" chip.
 	allActive := ""
 	if state.SelectedSourceTitle == "" {
 		allActive = " me-pair-history-source-chip-active"

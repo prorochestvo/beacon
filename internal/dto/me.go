@@ -22,13 +22,12 @@ type MeSubscriptionsResponse struct {
 }
 
 // MeSubscriptionEditRow is one row in the per-condition subscriptions list
-// returned by GET /api/me/subscriptions/raw. Unlike MeSubscriptionRow, each
-// row maps to exactly one domain.RateUserSubscription so the stable ID field
-// can be used for PATCH and DELETE operations.
+// returned by GET /api/me/subscriptions/raw. Each row maps to exactly one
+// domain.RateUserSubscription so the stable ID can drive PATCH and DELETE.
 //
 // UserID is never returned — the endpoint is scoped to the authenticated caller.
-// LatestPrice and LatestAt are intentionally omitted: the editor does not need
-// them and including them duplicates the join cost already paid by ListMeSubscriptions.
+// LatestPrice and LatestAt are omitted: the editor does not need them, and
+// including them duplicates the join cost already paid by ListMeSubscriptions.
 type MeSubscriptionEditRow struct {
 	ID             string `json:"id"`
 	SourceName     string `json:"source_name"`
@@ -61,9 +60,8 @@ type MeSubscriptionCreateRequest struct {
 }
 
 // MeSubscriptionCreateResponse is the JSON envelope for a successful
-// POST /api/me/subscriptions (201 Created). Contains only the generated
-// subscription ID so the client can navigate to PATCH/DELETE without
-// re-fetching the full list.
+// POST /api/me/subscriptions (201 Created). Carries only the generated
+// subscription ID so the client can PATCH/DELETE without re-fetching the list.
 type MeSubscriptionCreateResponse struct {
 	ID string `json:"id"`
 }
@@ -83,10 +81,9 @@ type MeSubscriptionUpdateRequest struct {
 // returns 400 PublicError on failure.
 //
 // Locale is a BCP-47 tag (e.g. "ru-RU"). Stored verbatim — the server does
-// not validate BCP-47 syntax because the failure mode is cosmetic (a stored
-// garbage string just yields no localisation match later). Empty string is
-// acceptable: the WASM client always reads Intl, but a non-browser caller
-// might omit it.
+// not validate BCP-47 syntax because the failure mode is cosmetic (garbage
+// yields no localisation match later). Empty string is acceptable: the WASM
+// client always reads Intl, but a non-browser caller might omit it.
 //
 // By project policy this DTO never carries username / display-name / phone /
 // email — see the no-PII memory.

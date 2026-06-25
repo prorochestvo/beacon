@@ -49,10 +49,9 @@ func NewTBotClient(tbotDSN dsninjector.DataSource, logger io.Writer) (*TelegramB
 		return nil, errors.Join(err, internal.NewTraceError())
 	}
 
-	// Build an HTTP client with a transport whose Proxy field is explicitly nil.
-	// This guarantees Telegram Bot API traffic is always direct — it never flows
-	// through any process-wide proxy even if HTTPS_PROXY or HTTP_PROXY happens
-	// to be set in the environment.
+	// Transport whose Proxy always returns nil: Telegram Bot API traffic is
+	// always direct and never flows through any process-wide proxy, even if
+	// HTTPS_PROXY or HTTP_PROXY is set in the environment.
 	noProxyTransport := &http.Transport{
 		Proxy: func(*http.Request) (*url.URL, error) { return nil, nil },
 	}
@@ -151,9 +150,8 @@ func (tbot *TelegramBotClient) SendHTMLMessage(ctx context.Context, chatID Teleg
 }
 
 // SendHTMLMessageReturning sends an HTML-formatted message and returns the
-// message id assigned by Telegram. Use this when you need to edit the message
-// in place later (send-then-edit pattern). The existing SendHTMLMessage is kept
-// unchanged so callers that do not need the id are unaffected.
+// Telegram-assigned message id. Use it when you need to edit the message in
+// place later (send-then-edit pattern).
 func (tbot *TelegramBotClient) SendHTMLMessageReturning(_ context.Context, chatID TelegramChatID, text string) (int, error) {
 	m := tgbotapi.NewMessage(int64(chatID), text)
 	m.ParseMode = tgbotapi.ModeHTML
@@ -212,8 +210,7 @@ func (tbot *TelegramBotClient) EditMessageText(_ context.Context, chatID Telegra
 }
 
 // EditHTMLMessageWithKeyboard replaces the text and inline keyboard of an existing message.
-// "message is not modified" and "message to edit not found" errors are silently ignored
-// so callers do not need to handle them.
+// "message is not modified" and "message to edit not found" errors are silently ignored.
 func (tbot *TelegramBotClient) EditHTMLMessageWithKeyboard(
 	_ context.Context,
 	chatID TelegramChatID,
@@ -262,9 +259,9 @@ func (tbot *TelegramBotClient) Listen(ctx context.Context, handler UpdateHandler
 }
 
 // emit dispatches a Chattable message via the bot API, writes an access-log
-// line for the send, and discards the returned message. chatID and kind are
-// passed in by the caller so the log line carries stable, typed metadata
-// (we do not want to introspect tgbotapi.Chattable here).
+// line, and discards the returned message. chatID and kind are passed by the
+// caller so the log line carries stable, typed metadata without introspecting
+// tgbotapi.Chattable.
 func (tbot *TelegramBotClient) emit(_ context.Context, m tgbotapi.Chattable, chatID int64, kind string) error {
 	if _, err := tbot.dispatch(m, chatID, kind); err != nil {
 		return errors.Join(err, internal.NewTraceError())

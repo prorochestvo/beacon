@@ -329,11 +329,10 @@ func TestPublicSubscriptionsPage_SetPeriod(t *testing.T) {
 	})
 
 	t.Run("stale chart fetch is dropped when period changes mid-flight", func(t *testing.T) {
-		// The gatedFetcher blocks the first FetchJSON call (the period=30 chart
-		// fetch) until the test releases it. While it is blocked, the test calls
-		// SetPeriod(7) — which completes immediately using the fallback response.
-		// When the blocked (stale) call is released it finds p.state.Period == 7
-		// != 30 and drops the result, so Chart remains as set by the period=7 fetch.
+		// The gatedFetcher blocks the period=30 fetch until release. Meanwhile
+		// SetPeriod(7) completes via the fallback response. When the stale call is
+		// released it finds Period == 7 != 30 and drops the result, so Chart remains
+		// from the period=7 fetch.
 		t.Parallel()
 
 		pairs7 := []dto.MeChartPairRow{

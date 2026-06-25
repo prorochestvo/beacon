@@ -22,11 +22,10 @@ import (
 )
 
 // NewHandler constructs a Handler wired to the rate service and, optionally,
-// to the Mini App auth dependencies. botToken, meSubRepo, meSourceRepo, and
-// meRateValueRepo are required for ListMeSubscriptions; the remaining handlers
-// only need srvRate. meProfileRepo is required for UpsertMeProfile.
-// meChartSvc is required for GetMeRatesChart and GetPublicRatesChart and may
-// be nil (returns 503 when nil).
+// the Mini App auth dependencies. botToken, meSubRepo, meSourceRepo, and
+// meRateValueRepo are required for ListMeSubscriptions; meProfileRepo for
+// UpsertMeProfile; remaining handlers need only srvRate. meChartSvc is required
+// for GetMeRatesChart and GetPublicRatesChart and may be nil (those return 503).
 func NewHandler(
 	srvRate rateService,
 	botToken string,
@@ -61,13 +60,13 @@ type Handler struct {
 	meProfileRepo   meProfileRepository
 	meChartSvc      meChartService
 
-	// validateInitData is the Telegram WebApp initData verifier. It is a field so
-	// tests can inject a fake without needing real bot tokens.
+	// validateInitData is the Telegram WebApp initData verifier. A field so tests
+	// can inject a fake without real bot tokens.
 	validateInitData func(initData, botToken string, maxAge time.Duration, now time.Time) (int64, error)
 	// nowFn returns the current time. Injected for deterministic tests.
 	nowFn func() time.Time
-	// logger is used by internalError. Defaults to log.Default() at construction
-	// so tests can inject a per-test logger without touching the global writer.
+	// logger is used by internalError. Defaults to log.Default() so tests can
+	// inject a per-test logger without touching the global writer.
 	logger *log.Logger
 }
 
@@ -112,30 +111,27 @@ type meProfileRepository interface {
 }
 
 // meChartService is the application service contract consumed by GetMeRatesChart,
-// GetMeRatesHistory, and GetPublicRatesChart. It is satisfied by *appchart.Service.
-// Only the period-aware variants are used by handlers; the default-period wrappers
-// (ObtainMeChart, ObtainPublicChart) live on the concrete type but are not part
-// of this interface.
+// GetMeRatesHistory, and GetPublicRatesChart, satisfied by *appchart.Service.
+// Only the period-aware variants are listed; the default-period wrappers
+// (ObtainMeChart, ObtainPublicChart) exist on the concrete type but not here.
 type meChartService interface {
 	ObtainMeChartForPeriod(ctx context.Context, userID string, periodDays int64) (*appchart.MeChart, error)
 	ObtainMeHistory(ctx context.Context, userID, pair, sourceTitle string, page, limit int64) (*appchart.MeHistoryResult, error)
 	ObtainPublicChartForPeriod(ctx context.Context, page, limit, periodDays int64) (*appchart.PublicChart, int64, error)
 }
 
-// Healthz reports whether the service can reach its dependencies. Returns
-// 200 OK when the database is reachable, 503 Service Unavailable otherwise.
-// No authentication; the response body carries no PII; intended for
+// Healthz reports whether the service can reach its dependencies: 200 OK when
+// the database is reachable, 503 otherwise. No auth; no PII in the body; for
 // monitoring probes and systemd readiness checks.
 //
 // GET /healthz
 func (h *Handler) Healthz(w http.ResponseWriter, r *http.Request) {
 	if err := h.rateService.CheckUP(r.Context()); err != nil {
-		// The service layer already attaches a trace via errors.Join in
-		// RateRestApi.CheckUP; don't double-wrap.
+		// RateRestApi.CheckUP already attaches a trace via errors.Join; don't
+		// double-wrap.
 		log.Print(fmt.Errorf("healthz: %w", err))
-		// Write the headers manually so the response advertises JSON.
-		// http.Error would force Content-Type=text/plain and add a
-		// trailing newline.
+		// Write headers manually so the response advertises JSON; http.Error
+		// would force Content-Type=text/plain and add a trailing newline.
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte(`{"status":"unavailable"}`))
@@ -157,9 +153,9 @@ func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Bulk-load the latest execution_history row per source so the response
-	// loop is O(1) per source instead of issuing one DB transaction per
-	// source (the previous N+1 pattern). A bulk failure is logged but the
-	// loop still emits source rows without execution fields populated.
+	// loop is O(1) per source instead of one DB transaction each (the previous
+	// N+1 pattern). A bulk failure is logged but the loop still emits source
+	// rows without execution fields populated.
 	names := make([]string, 0, len(sources))
 	for _, s := range sources {
 		names = append(names, s.Name)
@@ -547,10 +543,9 @@ func (h *Handler) ListExecutionErrors(w http.ResponseWriter, r *http.Request) {
 // latest rate value and timestamp per source.
 //
 // GET /api/me/subscriptions
-// Auth: X-Telegram-Init-Data header. The Telegram WebApp JS SDK always sends
-// this header; the previous ?initData= query-string fallback was removed
-// because the HMAC-signed initData would otherwise land in access logs and
-// Referer headers for up to its 24h validity window.
+// Auth: X-Telegram-Init-Data header. The previous ?initData= query-string
+// fallback was removed because the HMAC-signed initData would otherwise land in
+// access logs and Referer headers for up to its 24h validity window.
 func (h *Handler) ListMeSubscriptions(w http.ResponseWriter, r *http.Request) {
 	initData := r.Header.Get("X-Telegram-Init-Data")
 
@@ -596,8 +591,8 @@ func (h *Handler) ListMeSubscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Bulk-load every distinct source up front so the search and render loops
-	// are O(1) per group instead of issuing one ObtainRateSourceByName
-	// transaction each (the previous 2*M N+1 pattern).
+	// are O(1) per group instead of one ObtainRateSourceByName transaction each
+	// (the previous 2*M N+1 pattern).
 	sourceNames := make([]string, 0, len(groups))
 	for _, g := range groups {
 		sourceNames = append(sourceNames, g.sourceName)
@@ -641,9 +636,9 @@ func (h *Handler) ListMeSubscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 	pageItems := filtered[offset:end]
 
-	// Bulk-load the latest rate value per page item so the render loop is
-	// O(1) per row. Previously this issued one ObtainLastNRateValuesBySourceName
-	// transaction per page item — pageSize=50 → 50 round-trips per request.
+	// Bulk-load the latest rate value per page item so the render loop is O(1)
+	// per row. Previously one ObtainLastNRateValuesBySourceName transaction per
+	// page item — pageSize=50 → 50 round-trips per request.
 	rateNames := make([]string, 0, len(pageItems))
 	for _, g := range pageItems {
 		rateNames = append(rateNames, g.sourceName)
@@ -681,11 +676,11 @@ func (h *Handler) ListMeSubscriptions(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListMeSubscriptionsRaw returns the caller's own subscriptions as one row per
-// condition, each carrying its stable subscription ID. Unlike ListMeSubscriptions,
-// which groups all conditions for a source into a single enriched row, this
-// endpoint exposes the raw per-condition granularity needed by the editor screen.
-// Items are sorted source_name ASC, updated_at DESC so the editor groups rows
-// visually by source without additional client-side work.
+// condition, each carrying its stable subscription ID. Unlike ListMeSubscriptions
+// (which groups a source's conditions into one enriched row), this exposes the
+// raw per-condition granularity the editor screen needs. Items are sorted
+// source_name ASC, updated_at DESC so the editor groups rows by source
+// without additional client-side work.
 //
 // GET /api/me/subscriptions/raw
 // Auth: X-Telegram-Init-Data header (same HMAC scheme as ListMeSubscriptions).
@@ -824,9 +819,9 @@ func (h *Handler) meSubscriptionOwnershipCheck(w http.ResponseWriter, r *http.Re
 		return nil
 	}
 	if sub == nil || sub.UserID != chatIDStr {
-		// Return 404 (not 403) to avoid disclosing the existence of another
-		// user's subscription. Both "no such row" and "wrong owner" use the
-		// same PublicError message so the distinction is invisible externally.
+		// 404 (not 403) to avoid disclosing another user's subscription. "No
+		// such row" and "wrong owner" share the same PublicError message so the
+		// distinction is invisible externally.
 		pub := internal.NewPublicError("subscription not found")
 		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusNotFound)
 		return nil
@@ -855,8 +850,8 @@ func (h *Handler) UpdateMeSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 	chatIDStr := strconv.FormatInt(userID, 10)
 
-	// Cap the request body before any reads — including the ownership DB query —
-	// so an authenticated owner cannot hold the connection open with a large body
+	// Cap the body before any reads — including the ownership DB query — so an
+	// authenticated owner cannot hold the connection open with a large body
 	// during the lookup window.
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10) // 4 KiB
 
@@ -932,9 +927,9 @@ func (h *Handler) DeleteMeSubscription(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpsertMeProfile stores the caller's IANA timezone so notification timestamps
-// can be rendered in their local time. Fire-and-forget from the Mini App on
-// every mount: the client sends whatever Intl.DateTimeFormat resolves to and
-// the server validates via time.LoadLocation.
+// render in their local time. Fire-and-forget from the Mini App on every mount:
+// the client sends whatever Intl.DateTimeFormat resolves to; the server
+// validates via time.LoadLocation.
 //
 // POST /api/me/profile
 // Body: {"timezone":"Asia/Almaty"}
@@ -951,8 +946,8 @@ func (h *Handler) UpsertMeProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Bound the read so a malicious or buggy client cannot inflate memory
-	// — the request body should be a tiny JSON object.
+	// Bound the read so a malicious or buggy client cannot inflate memory; the
+	// body should be a tiny JSON object.
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<10) // 1 KiB
 	var body dto.MeProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -965,9 +960,9 @@ func (h *Handler) UpsertMeProfile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"timezone is required"}`, http.StatusBadRequest)
 		return
 	}
-	// Bound locale on the way in so a buggy caller can't dump megabytes into
-	// the column. BCP-47 tags max out around 35 chars in practice; 64 is a
-	// safe cap that won't reject any realistic value.
+	// Bound locale so a buggy caller can't dump megabytes into the column.
+	// BCP-47 tags max out around 35 chars in practice; 64 is a safe cap that
+	// won't reject any realistic value.
 	if len(body.Locale) > 64 {
 		http.Error(w, `{"error":"locale too long"}`, http.StatusBadRequest)
 		return
@@ -994,18 +989,16 @@ func (h *Handler) UpsertMeProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetMeRatesChart returns the sparkline-list chart data for the calling user's
-// subscribed currency pairs. The time window is controlled by the optional
-// ?period= query parameter (must be one of 7, 30, 90, 180, 360; omitting it
-// defaults to 7). BID and ASK for the same canonical pair appear as a single
-// row with two series entries.
+// subscribed currency pairs. The window is the optional ?period= query parameter
+// (one of 7, 30, 90, 180, 360; default 7). BID and ASK for the same canonical
+// pair appear as a single row with two series entries.
 //
 // GET /api/me/rates/chart?period=N
-// Auth: X-Telegram-Init-Data header only. The HMAC-signed payload must never
-// be passed via query string (it would appear in access logs and Referer headers).
+// Auth: X-Telegram-Init-Data header only. The HMAC-signed payload must never be
+// passed via query string (it would appear in access logs and Referer headers).
 //
 // The pair display label is always BID-natural (e.g. "USD/KZT") regardless of
-// which directions are subscribed. The label assignment is owned by the service
-// layer, not this handler.
+// subscribed directions; the service layer owns label assignment, not this handler.
 //
 // Returns 400 with a PublicError body when period is present but not in the
 // whitelist {7, 30, 90, 180, 360}.
@@ -1038,10 +1031,9 @@ func (h *Handler) GetMeRatesChart(w http.ResponseWriter, r *http.Request) {
 	ch, err := h.meChartSvc.ObtainMeChartForPeriod(r.Context(), tgUserID, periodDays)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			// Client navigated away or the request timed out before the service
-			// could respond. This is a normal client-side event, not a server
-			// failure. 499 ("client closed request") distinguishes it in access
-			// logs from genuine 500-class failures.
+			// Client navigated away or the request timed out — a normal
+			// client-side event, not a server failure. 499 ("client closed
+			// request") distinguishes it in access logs from genuine 500s.
 			http.Error(w, `{"error":"request cancelled"}`, 499)
 			return
 		}
@@ -1088,16 +1080,15 @@ func (h *Handler) GetMeRatesChart(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetMeRatesHistory returns paginated rate-collection events for the calling
-// user's subscribed sources that match the given canonical pair label.
+// user's subscribed sources matching the given canonical pair label.
 //
 // GET /api/me/rates/history?pair=<canonical>&page=<n>&limit=<n>&source_title=<title>
 // Auth: X-Telegram-Init-Data header only.
 //
-// source_title is an optional filter. When present, only rows from providers
-// whose title matches source_title exactly are included and Total reflects the
-// filtered grouped count. An unknown source_title (not matching any provider
+// source_title is an optional exact-match filter; when present, Total reflects
+// the filtered grouped count. An unknown source_title (not matching any provider
 // title in the user's subscriptions for this pair) returns 200 with empty Items
-// and Total=0; the handler does not return 400 for unknown source titles.
+// and Total=0, not 400.
 //
 //   - 400 on missing or empty pair.
 //   - 400 on non-integer limit.
@@ -1167,9 +1158,9 @@ func (h *Handler) GetMeRatesHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetPublicRatesChart returns the paginated sparkline-list chart for every
-// distinct active (base, quote, kind) triple in the system. The time window is
-// controlled by the optional ?period= query parameter (must be one of
-// 7, 30, 90, 180, 360; omitting it defaults to 7). No authentication is required.
+// distinct active (base, quote, kind) triple in the system. The window is the
+// optional ?period= query parameter (one of 7, 30, 90, 180, 360; default 7).
+// No auth required.
 //
 // GET /api/public/rates/chart?page=N&limit=L&period=P
 //
@@ -1282,13 +1273,12 @@ func writeJSON(w http.ResponseWriter, v any) {
 // keeps offset arithmetic strictly inside int64.
 const parsePageMax = int64(1) << 30
 
-// parsePage parses a "page" query string parameter, defaulting to 1 when
-// the value is missing, malformed, or non-positive. Values above parsePageMax
-// are clamped to parsePageMax so the downstream offset arithmetic
-// (offset = (page - 1) * limit) cannot overflow int64 and produce a negative
-// OFFSET — which SQLite treats as no limit and fans into a full table scan.
-// Malformed values fall through silently because some callers are public
-// endpoints where fuzzed traffic would otherwise generate unbounded log noise.
+// parsePage parses a "page" query parameter, defaulting to 1 when missing,
+// malformed, or non-positive. Values above parsePageMax are clamped so the
+// downstream offset arithmetic (offset = (page - 1) * limit) cannot overflow
+// int64 into a negative OFFSET — which SQLite treats as no limit and fans into
+// a full table scan. Malformed values fall through silently because public
+// endpoints would otherwise generate unbounded log noise from fuzzed traffic.
 func parsePage(raw string) int64 {
 	if raw == "" {
 		return 1
@@ -1379,9 +1369,9 @@ const (
 )
 
 // parsePublicChartLimit parses the ?limit= query parameter for the public chart
-// endpoint. Default is 20; values < 1 are clamped to 20; values > 100 are
-// clamped to 100. Returns an error only when the value is present but non-integer,
-// matching the behaviour of parseHistoryLimit.
+// endpoint. Default 20; values < 1 clamp to 20, values > 100 clamp to 100.
+// Returns an error only when the value is present but non-integer, matching
+// parseHistoryLimit.
 func parsePublicChartLimit(raw string) (int64, error) {
 	if raw == "" {
 		return publicChartDefaultLimit, nil
@@ -1400,12 +1390,11 @@ func parsePublicChartLimit(raw string) (int64, error) {
 }
 
 // allowedChartPeriods is the whitelist of accepted period values for the chart
-// endpoints. Only these exact integers are valid; any other value returns 400.
+// endpoints. Only these exact integers are valid; anything else returns 400.
 var allowedChartPeriods = []int64{7, 30, 90, 180, 360}
 
-// parseChartPeriod parses the raw ?period= query value and returns the integer.
-// An empty string (parameter absent or empty) returns 7 (the default). Any
-// non-empty string that is not one of {7, 30, 90, 180, 360} returns a
+// parseChartPeriod parses the raw ?period= query value. An empty string returns
+// the default 7. Any non-empty value not in {7, 30, 90, 180, 360} returns a
 // PublicError so the handler can surface it inline to the client.
 func parseChartPeriod(raw string) (int64, error) {
 	if raw == "" {

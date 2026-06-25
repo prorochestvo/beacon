@@ -19,9 +19,9 @@ import (
 	"github.com/seilbekskindirov/monitor/internal/dto"
 )
 
-// screen holds the teardown closures for a single active screen. When the user
-// navigates away, Unmount calls every release closure to detach event listeners
-// and free the underlying js.Func entries in the WASM function table.
+// screen holds the teardown closures for a single active screen. On navigation,
+// Unmount runs every release closure to detach event listeners and free the
+// underlying js.Func entries in the WASM function table.
 type screen struct {
 	releases []func()
 }
@@ -138,15 +138,13 @@ func runRenderSources(client *apiclient.Client) {
 	bindSourcesHandlers(doc, page, scr)
 }
 
-// bindSourcesHandlers wires all event handlers for the Sources List screen via
-// dom.On.
+// bindSourcesHandlers wires the Sources List screen's event handlers via dom.On.
 //
-// redraw is the only function that touches the DOM after initial render. It
-// replaces only the inner table HTML, leaving filters and the stats line in
-// place. The delegated click listener on #sources-table handles both the sort
-// header (#sort-lastrun) and the active-toggle buttons inside the table. It is
-// bound to the stable container div so it survives the repeated innerHTML
-// replacements that destroy and recreate the inner nodes on every redraw.
+// redraw replaces only the inner table HTML, leaving filters and the stats line
+// in place. The delegated click listener on #sources-table handles both the sort
+// header (#sort-lastrun) and the table's active-toggle buttons; it is bound to
+// the stable container div so it survives the per-redraw innerHTML replacements
+// that destroy and recreate the inner nodes.
 func bindSourcesHandlers(doc js.Value, page *application.SourcesPage, scr *screen) {
 	redraw := func() {
 		tableDiv := doc.Call("getElementById", "sources-table")
@@ -215,11 +213,10 @@ func bindSourcesHandlers(doc js.Value, page *application.SourcesPage, scr *scree
 	}
 }
 
-// runRenderSourceDetail fetches the sources list (for the title lookup) and
-// the first page of rates in parallel, then renders the skeleton immediately.
-// Subscriptions and daily events are loaded in separate goroutines AFTER the
-// skeleton is in the DOM so those goroutines can safely target the stable
-// #subs-section and #daily-events-section divs.
+// runRenderSourceDetail fetches the sources list (for the title lookup) and the
+// first page of rates in parallel, then renders the skeleton. Subscriptions and
+// daily events load in separate goroutines AFTER the skeleton is in the DOM so
+// they can safely target the stable #subs-section and #daily-events-section divs.
 func runRenderSourceDetail(client *apiclient.Client, name string) {
 	ctx := context.Background()
 	doc := js.Global().Get("document")
@@ -258,13 +255,12 @@ func runRenderSourceDetail(client *apiclient.Client, name string) {
 	scr := mountScreen()
 	page := application.NewSourceDetailPage(name, srcs, rates, client)
 
-	// Render the skeleton synchronously before starting async goroutines.
-	// The subs and daily-events goroutines below depend on #subs-section and
-	// #daily-events-section being present in the DOM.
+	// Render the skeleton synchronously first: the goroutines below depend on
+	// #subs-section and #daily-events-section being present in the DOM.
 	app.Set("innerHTML", ui.RenderSourceDetail(page.State()))
 
-	// Load subscriptions and daily events in parallel after the skeleton is
-	// rendered. Each goroutine updates its own stable section div.
+	// Load subscriptions and daily events in parallel; each goroutine updates
+	// its own stable section div.
 	go func() {
 		if err := page.LoadSubsPage(ctx, 1); err != nil {
 			subsSection := doc.Call("getElementById", "subs-section")
@@ -296,10 +292,10 @@ func runRenderSourceDetail(client *apiclient.Client, name string) {
 	bindSourceDetailHandlers(doc, page, scr)
 }
 
-// bindSourceDetailHandlers wires all event handlers for the Source Detail
-// screen. A delegated click on #rates-table handles the sort header. A
-// delegated click on each paginated section reads data-section and data-page
-// to route the page change to the correct Load* call.
+// bindSourceDetailHandlers wires the Source Detail screen's event handlers. A
+// delegated click on #rates-table handles the sort header; a delegated click on
+// each paginated section reads data-section and data-page to route the page
+// change to the correct Load* call.
 func bindSourceDetailHandlers(doc js.Value, page *application.SourceDetailPage, scr *screen) {
 	redrawRates := func() {
 		ratesTable := doc.Call("getElementById", "rates-table")
@@ -335,9 +331,9 @@ func bindSourceDetailHandlers(doc js.Value, page *application.SourceDetailPage, 
 	bindPaginatedSection(doc, "daily-events-section", page, scr)
 }
 
-// runRenderErrors renders the Errors skeleton immediately, then loads
-// execution errors and event errors in two parallel goroutines that each update
-// their own stable section div.
+// runRenderErrors renders the Errors skeleton, then loads execution errors and
+// event errors in two parallel goroutines that each update their own stable
+// section div.
 func runRenderErrors(client *apiclient.Client) {
 	ctx := context.Background()
 	doc := js.Global().Get("document")
@@ -382,7 +378,7 @@ func runRenderErrors(client *apiclient.Client) {
 
 // bindErrorsSections attaches delegated click handlers to the two paginated
 // error sections. Each button carries data-section and data-page; the handler
-// dispatches to LoadExecPage or LoadEventPage based on the section value.
+// dispatches to LoadExecPage or LoadEventPage on the section value.
 func bindErrorsSections(doc js.Value, page *application.ErrorsPage, scr *screen) {
 	bindErrorSection := func(sectionID string) {
 		section := doc.Call("getElementById", sectionID)
@@ -446,15 +442,14 @@ func bindErrorsSections(doc js.Value, page *application.ErrorsPage, scr *screen)
 	bindErrorSection("event-errors-section")
 }
 
-// uploadUserProfile reads the browser's resolved IANA timezone and BCP-47
-// locale from Intl.DateTimeFormat() and POSTs both to /api/me/profile.
-// Fire-and-forget — the caller wraps this in `go` and discards the result.
-// The notifier falls back to UTC when no profile is configured, so a failed
-// upload is a soft regression, not a blocking error.
+// uploadUserProfile reads the browser's resolved IANA timezone and BCP-47 locale
+// from Intl.DateTimeFormat() and POSTs both to /api/me/profile. Fire-and-forget:
+// the caller wraps it in `go` and discards the result. The notifier falls back
+// to UTC when no profile is configured, so a failed upload is a soft regression.
 //
-// The whole flow lives in the WASM client because the Telegram Bot API does
-// not reliably expose either timezone or locale. By project policy this
-// upload never sends username / display name — see the no-PII memory.
+// The flow lives in the WASM client because the Telegram Bot API does not
+// reliably expose timezone or locale. By project policy this upload never sends
+// username / display name — see the no-PII memory.
 func uploadUserProfile(ctx context.Context, client *apiclient.Client, initData string) {
 	if initData == "" {
 		return // initData is required by the server-side HMAC verifier.
@@ -480,8 +475,8 @@ func uploadUserProfile(ctx context.Context, client *apiclient.Client, initData s
 		locale = v.String()
 	}
 	if tz == "" {
-		// Timezone is the load-bearing field — without it the notifier has
-		// nothing to localise. Skip the call rather than persisting an empty row.
+		// Timezone is load-bearing — without it the notifier has nothing to
+		// localise. Skip the call rather than persisting an empty row.
 		return
 	}
 	if err := client.UpdateMeProfile(ctx, initData, tz, locale); err != nil {
@@ -491,15 +486,15 @@ func uploadUserProfile(ctx context.Context, client *apiclient.Client, initData s
 
 // readInitData reads window.Telegram.WebApp.initData when the page is opened
 // inside Telegram. Falls back to the ?initData= page-URL query parameter so a
-// developer can drive the Mini App from a normal browser tab during local
-// testing; the value is always forwarded to the API via the
-// X-Telegram-Init-Data header (never as a URL parameter on the API call
-// itself — the server's URL fallback was removed in the 2026-05-21 audit).
+// developer can drive the Mini App from a normal browser tab; the value is always
+// forwarded to the API via the X-Telegram-Init-Data header, never as a URL
+// parameter on the API call (the server's URL fallback was removed in the
+// 2026-05-21 audit).
 //
-// WARNING: when the page-URL fallback fires, the signed initData payload
-// lands in the browser address bar, history, and the static-asset server's
-// access log for up to its 24h validity window. Use it only for local dev;
-// never link production users to a URL carrying initData.
+// WARNING: when the page-URL fallback fires, the signed initData payload lands in
+// the browser address bar, history, and the static-asset server's access log for
+// up to its 24h validity window. Use it only for local dev; never link
+// production users to a URL carrying initData.
 func readInitData() string {
 	telegram := js.Global().Get("Telegram")
 	if !telegram.IsNull() && !telegram.IsUndefined() {
@@ -530,8 +525,8 @@ func readInitData() string {
 }
 
 // callWebAppIfDefined calls ready() and expand() on window.Telegram.WebApp if
-// it is defined. Outside Telegram (e.g. a regular browser tab during local dev)
-// those objects may not exist; the guard prevents a JavaScript exception.
+// defined. Outside Telegram (e.g. a regular browser tab) those objects may not
+// exist; the guard prevents a JavaScript exception.
 func callWebAppIfDefined() {
 	telegram := js.Global().Get("Telegram")
 	if telegram.IsNull() || telegram.IsUndefined() {
@@ -548,40 +543,39 @@ func callWebAppIfDefined() {
 // runRenderMeSubscriptions is the entry point for the Telegram Mini App screen.
 // It reads initData once at mount, calls WebApp.ready/expand, renders the
 // skeleton, loads the first page of subscriptions in this goroutine, then
-// launches a background goroutine for the sparkline chart. Must be called from
-// a goroutine — never from the main goroutine.
+// launches a background goroutine for the sparkline chart. Must run in a
+// goroutine — never on the main goroutine.
 func runRenderMeSubscriptions(client *apiclient.Client) {
 	callWebAppIfDefined()
 
 	initData := readInitData()
 
-	// screenCtx is cancelled when the screen is unmounted, which cancels any
-	// in-flight sparkline chart fetch so the goroutine exits cleanly instead
-	// of writing stale data back to a screen the user has already left.
+	// screenCtx is cancelled on unmount, cancelling any in-flight sparkline
+	// fetch so the goroutine exits cleanly instead of writing stale data into a
+	// screen the user has already left.
 	screenCtx, cancelScreen := context.WithCancel(context.Background())
 	doc := js.Global().Get("document")
 	app := doc.Call("getElementById", "app")
 
-	// The inline .app-loader markup from subscriptions.html remains visible
-	// until this line replaces #app innerHTML. No intermediate "Loading…"
-	// text is written first — that would briefly destroy the loader between
-	// the two writes and flash an ugly text frame on the user.
+	// The inline .app-loader markup from subscriptions.html stays visible until
+	// this line replaces #app innerHTML. No intermediate "Loading…" text is
+	// written — that would destroy the loader between the two writes and flash
+	// an ugly text frame.
 	scr := mountScreen()
 	scr.addRelease(cancelScreen)
-	// MeSubscriptionsBatchSize lets the modal join all of the user's pairs
-	// against in-memory items; the list itself is no longer rendered.
+	// MeSubscriptionsBatchSize lets the modal join all the user's pairs against
+	// in-memory items; the list itself is no longer rendered.
 	page := application.NewMeSubscriptionsPage(client, initData, application.MeSubscriptionsBatchSize)
 
-	// alive tracks whether this screen is still the active one. It is set to
-	// false in a release closure so that a stale chart-fetch goroutine that
-	// completes after the user navigated away does not write into the new
-	// screen's DOM. WASM is single-threaded, so a plain bool is sufficient.
+	// alive tracks whether this screen is still active. A release closure sets it
+	// false so a stale chart-fetch goroutine completing after navigation does not
+	// write into the new screen's DOM. WASM is single-threaded, so a plain bool
+	// suffices.
 	alive := true
 	scr.addRelease(func() { alive = false })
 
-	// lockBodyScroll locks or unlocks document.body overflow. On iOS Telegram
-	// WebView the body continues scrolling under a position:fixed modal without
-	// this guard.
+	// lockBodyScroll toggles document.body overflow. On iOS Telegram WebView the
+	// body keeps scrolling under a position:fixed modal without this guard.
 	lockBodyScroll := func(lock bool) {
 		body := doc.Call("querySelector", "body")
 		if body.IsNull() || body.IsUndefined() {
@@ -594,11 +588,10 @@ func runRenderMeSubscriptions(client *apiclient.Client) {
 			style.Set("overflow", "")
 		}
 	}
-	// Ensure the body is unlocked when the screen is torn down, covering the
-	// case where the user navigates away with a modal still open.
+	// Unlock the body on teardown, covering navigation away with a modal open.
 	scr.addRelease(func() { lockBodyScroll(false) })
 
-	// Render the skeleton immediately so the user sees a responsive UI.
+	// Render the skeleton immediately for a responsive UI.
 	app.Set("innerHTML", ui.RenderMeSubscriptions(page.State()))
 
 	redrawChart := func() {
@@ -607,15 +600,15 @@ func runRenderMeSubscriptions(client *apiclient.Client) {
 		}
 		chartDiv := doc.Call("getElementById", "me-sparkline-chart")
 		if chartDiv.IsNull() || chartDiv.IsUndefined() {
-			// The screen has been replaced by another screen; drop the write.
+			// Screen replaced by another; drop the write.
 			return
 		}
 		chartDiv.Set("innerHTML", ui.RenderSparklineSlot(page.State()))
 	}
 
-	// loadSparklineChart fetches /api/me/rates/chart in a single goroutine.
-	// It derives its timeout from screenCtx so navigation cancels the fetch
-	// instead of letting the goroutine run until the 15s deadline fires.
+	// loadSparklineChart fetches /api/me/rates/chart in one goroutine. Its
+	// timeout derives from screenCtx so navigation cancels the fetch instead of
+	// letting it run until the 15s deadline.
 	loadSparklineChart := func() {
 		go func() {
 			fetchCtx, fetchCancel := context.WithTimeout(screenCtx, 15*time.Second)
@@ -627,13 +620,13 @@ func runRenderMeSubscriptions(client *apiclient.Client) {
 		}()
 	}
 
-	// Fire-and-forget profile upload (timezone + BCP-47 locale) so the server
-	// can localise notification timestamps and, later, message text. Errors are
-	// console.warn only — the page must not block on this since notifications
-	// still work in UTC when the upload fails.
+	// Fire-and-forget profile upload (timezone + BCP-47 locale) so the server can
+	// localise notification timestamps and, later, message text. Errors are
+	// console.warn only — the page must not block, since notifications still work
+	// in UTC when the upload fails.
 	go uploadUserProfile(screenCtx, client, initData)
 
-	// Load the first page of subscriptions. Items are used by the modal's
+	// Load the first page of subscriptions. Items feed the modal's
 	// condition-badges join; they are not rendered as a list.
 	if err := page.LoadInitial(screenCtx); err != nil {
 		js.Global().Get("console").Call("warn", "me-subs LoadInitial:", err.Error())
@@ -643,33 +636,30 @@ func runRenderMeSubscriptions(client *apiclient.Client) {
 	bindMeSubsHandlers(screenCtx, doc, page, scr, &alive, lockBodyScroll)
 }
 
-// bindMeSubsHandlers wires all event handlers for the Mini App subscriptions screen.
+// bindMeSubsHandlers wires the Mini App subscriptions screen's event handlers.
 //
-// Row click / keydown: a delegated handler on #me-sparkline-chart walks up to
-// the nearest .sparkline-row via Element.closest, reads its data-pair attribute,
-// and calls OpenPairModal followed by a modal slot redraw. Enter and Space on a
-// focused row open the modal via the same path so keyboard users are covered.
+// Row click / keydown: a delegated handler on #me-sparkline-chart walks up to the
+// nearest .sparkline-row via Element.closest, reads data-pair, and calls
+// OpenPairModal then a modal slot redraw. Enter and Space on a focused row open
+// the modal via the same path for keyboard users.
 //
 // Modal close: a delegated click handler on #me-pair-modal-slot checks the target
-// ID. Clicks on #me-pair-modal-close branch on HistoryOpen: when history is open
-// the click calls CloseHistory (one press); otherwise it calls ClosePairModal.
-// Clicks on #me-pair-modal-backdrop always call ClosePairModal unconditionally
-// (fast escape hatch). Content-area clicks are ignored.
+// ID. #me-pair-modal-close branches on HistoryOpen — when history is open it
+// calls CloseHistory (one press), else ClosePairModal. #me-pair-modal-backdrop
+// always calls ClosePairModal (fast escape hatch). Content-area clicks are ignored.
 //
 // History navigation: clicks on #me-pair-modal-history, #me-pair-history-prev,
-// #me-pair-history-next, #me-pair-history-source-all, and elements matching
-// .me-pair-history-source-chip are handled inside the same delegated listener
-// on #me-pair-modal-slot.
+// #me-pair-history-next, #me-pair-history-source-all, and .me-pair-history-source-chip
+// elements are handled inside the same delegated listener on #me-pair-modal-slot.
 //
-// Escape: a document-level keydown listener closes the history view first (one press),
-// then closes the modal (second press) when both are open.
+// Escape: a document-level keydown listener closes the history view first (one
+// press), then the modal (second press) when both are open.
 //
-// ctx is the screen-lifetime context (screenCtx from runRenderMeSubscriptions); it is
-// used when spawning goroutines for history fetches so they are cancelled on unmount.
-//
-// alive is a pointer into runRenderMeSubscriptions's alive bool; when false the
-// screen has been unmounted and DOM writes are skipped. lockBodyScroll is called
-// with true/false to prevent iOS scroll bleed under the modal overlay.
+// ctx is the screen-lifetime context (screenCtx from runRenderMeSubscriptions),
+// used for history-fetch goroutines so they are cancelled on unmount. alive is a
+// pointer into runRenderMeSubscriptions's alive bool; when false the screen is
+// unmounted and DOM writes are skipped. lockBodyScroll(true/false) prevents iOS
+// scroll bleed under the modal overlay.
 func bindMeSubsHandlers(
 	ctx context.Context,
 	doc js.Value,
@@ -720,8 +710,8 @@ func bindMeSubsHandlers(
 		}))
 	}
 
-	// Delegated click handler on the chart container: intercepts period-chip
-	// clicks first, then opens modal for the nearest .sparkline-row ancestor.
+	// Delegated click on the chart container: intercept period-chip clicks first,
+	// then open the modal for the nearest .sparkline-row ancestor.
 	chartDiv := doc.Call("getElementById", "me-sparkline-chart")
 	if !chartDiv.IsNull() && !chartDiv.IsUndefined() {
 		scr.addRelease(dom.On(chartDiv, "click", func(ev js.Value) {
@@ -789,7 +779,7 @@ func bindMeSubsHandlers(
 		}))
 	}
 
-	// Delegated click handler on the modal slot: close on backdrop or close-button;
+	// Delegated click on the modal slot: close on backdrop or close-button;
 	// navigate history via the history action buttons.
 	modalSlot := doc.Call("getElementById", "me-pair-modal-slot")
 	if !modalSlot.IsNull() && !modalSlot.IsUndefined() {
@@ -859,12 +849,12 @@ func bindMeSubsHandlers(
 	}
 
 	// Document-level Escape handler: one press closes the history view when open;
-	// a second press (or a single press when history is not open) closes the modal.
-	// Registered via dom.On and released via scr.addRelease so it is cleaned
-	// up on screen unmount even when navigating away with a modal open.
-	// NOTE: if a future feature adds another document-level keydown listener
-	// (e.g. a global search shortcut), the dispatch order becomes load-bearing;
-	// consider an event-bus pattern at that point.
+	// a second press (or a single press without history) closes the modal.
+	// Registered via dom.On and released via scr.addRelease so it is cleaned up on
+	// unmount even when navigating away with a modal open.
+	// NOTE: if a future feature adds another document-level keydown listener (e.g.
+	// a global search shortcut), the dispatch order becomes load-bearing; consider
+	// an event-bus pattern then.
 	scr.addRelease(dom.On(doc, "keydown", func(ev js.Value) {
 		if ev.Get("key").String() != "Escape" {
 			return
@@ -883,10 +873,9 @@ func bindMeSubsHandlers(
 }
 
 // runRenderPublicSubscriptions is the entry point for the unauthenticated guest
-// landing page. It renders the skeleton immediately, then loads the first page of
-// the public sparkline chart in a background goroutine. No initData is read; no
-// profile upload is performed. Must be called from a goroutine — never from the
-// main goroutine.
+// landing page. It renders the skeleton, then loads the first page of the public
+// sparkline chart in a background goroutine. No initData is read; no profile
+// upload is performed. Must run in a goroutine — never on the main goroutine.
 func runRenderPublicSubscriptions(client *apiclient.Client) {
 	screenCtx, cancelScreen := context.WithCancel(context.Background())
 	doc := js.Global().Get("document")
@@ -939,8 +928,8 @@ func runRenderPublicSubscriptions(client *apiclient.Client) {
 		paginationDiv.Set("innerHTML", ui.RenderPublicPagination(page.State()))
 	}
 
-	// Load the first page in a background goroutine so the skeleton is visible
-	// immediately. screenCtx cancels the fetch when the user navigates away.
+	// Load the first page in a background goroutine so the skeleton shows
+	// immediately. screenCtx cancels the fetch on navigation.
 	go func() {
 		fetchCtx, fetchCancel := context.WithTimeout(screenCtx, 15*time.Second)
 		defer fetchCancel()
@@ -954,14 +943,14 @@ func runRenderPublicSubscriptions(client *apiclient.Client) {
 	bindPublicSubsHandlers(screenCtx, doc, page, scr, &alive, lockBodyScroll)
 }
 
-// bindPublicSubsHandlers wires all event handlers for the public subscriptions screen.
+// bindPublicSubsHandlers wires the public subscriptions screen's event handlers.
 //
 // Row click / keydown: a delegated handler on #public-sparkline-chart walks up to
-// the nearest .sparkline-row via Element.closest, reads its data-pair attribute,
-// and calls OpenPairModal followed by a modal slot redraw.
+// the nearest .sparkline-row via Element.closest, reads data-pair, and calls
+// OpenPairModal then a modal slot redraw.
 //
 // Modal close: a delegated click handler on #public-pair-modal-slot closes the
-// modal on clicks to #public-pair-modal-close or #public-pair-modal-backdrop.
+// modal on #public-pair-modal-close or #public-pair-modal-backdrop.
 //
 // Pagination: a delegated click handler on #public-pagination reads data-section
 // and data-page to load the target page.
@@ -1023,8 +1012,8 @@ func bindPublicSubsHandlers(
 		redrawModal()
 	}
 
-	// Delegated click on the chart container: intercepts period-chip clicks
-	// first, then opens modal for the nearest .sparkline-row ancestor.
+	// Delegated click on the chart container: intercept period-chip clicks first,
+	// then open the modal for the nearest .sparkline-row ancestor.
 	chartDiv := doc.Call("getElementById", "public-sparkline-chart")
 	if !chartDiv.IsNull() && !chartDiv.IsUndefined() {
 		scr.addRelease(dom.On(chartDiv, "click", func(ev js.Value) {
@@ -1157,8 +1146,8 @@ func bindPublicSubsHandlers(
 }
 
 // bindPaginatedSection attaches a delegated click handler to the named section
-// div. Buttons inside the section carry data-section and data-page attributes;
-// the handler reads both to dispatch the page change.
+// div. Buttons inside carry data-section and data-page; the handler reads both
+// to dispatch the page change.
 func bindPaginatedSection(doc js.Value, sectionID string, page *application.SourceDetailPage, scr *screen) {
 	section := doc.Call("getElementById", sectionID)
 	if section.IsNull() || section.IsUndefined() {
@@ -1220,9 +1209,9 @@ func bindPaginatedSection(doc js.Value, sectionID string, page *application.Sour
 }
 
 // runRenderMeSubscriptionsEdit is the entry point for the subscription editor
-// screen. Reads initData once at mount, renders the skeleton immediately, loads
-// the subscription list + active sources in a background goroutine, then wires
-// event handlers. Must be called from a goroutine — never from the main goroutine.
+// screen. Reads initData once at mount, renders the skeleton, loads the
+// subscription list + active sources in a background goroutine, then wires event
+// handlers. Must run in a goroutine — never on the main goroutine.
 func runRenderMeSubscriptionsEdit(client *apiclient.Client) {
 	callWebAppIfDefined()
 
@@ -1251,7 +1240,7 @@ func runRenderMeSubscriptionsEdit(client *apiclient.Client) {
 	// Render skeleton immediately.
 	redraw()
 
-	// Load data in background so the skeleton is visible right away.
+	// Load data in background so the skeleton shows right away.
 	go func() {
 		fetchCtx, fetchCancel := context.WithTimeout(screenCtx, 15*time.Second)
 		defer fetchCancel()
@@ -1263,27 +1252,27 @@ func runRenderMeSubscriptionsEdit(client *apiclient.Client) {
 	}()
 }
 
-// bindMeSubsEditHandlers wires all event handlers for the subscription editor screen.
+// bindMeSubsEditHandlers wires the subscription editor screen's event handlers.
 //
-// All interactions are delegated to the stable #app container so that the listeners
-// survive repeated innerHTML replacements performed by redraw(). Newly rendered
-// child nodes are always inside #app, so delegated events bubble up correctly
-// without requiring re-binding after each redraw.
+// All interactions are delegated to the stable #app container so the listeners
+// survive the repeated innerHTML replacements performed by redraw(). Newly
+// rendered child nodes are always inside #app, so delegated events bubble up
+// without re-binding after each redraw.
 //
 // Back button (#me-edit-back): calls _wasm.renderMeSubscriptions() to navigate back.
 // Source select (#me-edit-source): updates draft source name via SetDraftSource.
-// Condition-type radios: update draft condition type via SetDraftConditionType; full
-// re-render on change so the placeholder and help text update immediately.
-// Value input (#me-edit-value): updates draft condition value via SetDraftConditionValue
-// on every input event without re-rendering (preserves cursor position).
+// Condition-type radios: update draft condition type via SetDraftConditionType;
+// full re-render on change so placeholder and help text update immediately.
+// Value input (#me-edit-value): updates draft condition value via
+// SetDraftConditionValue on every input event without re-rendering (preserves cursor).
 // Save (#me-edit-save): calls SaveDraft; re-renders on success or failure.
 // Cancel/Clear (#me-edit-cancel): clears the draft by re-constructing the form area.
-// Delete buttons (.me-edit-delete): reads data-id; calls window.Telegram.WebApp.showConfirm
-// when available, else falls back to window.confirm; calls DeleteRow and re-renders on
-// confirmation.
+// Delete buttons (.me-edit-delete): read data-id; use window.Telegram.WebApp.showConfirm
+// when available, else window.confirm; call DeleteRow and re-render on confirmation.
 //
-// ctx is the screen-lifetime context. alive is a pointer into runRenderMeSubscriptionsEdit's
-// alive bool. redraw repaints the full app element from the current page state.
+// ctx is the screen-lifetime context. alive is a pointer into
+// runRenderMeSubscriptionsEdit's alive bool. redraw repaints the full app element
+// from the current page state.
 func bindMeSubsEditHandlers(
 	ctx context.Context,
 	_ js.Value,
@@ -1293,8 +1282,8 @@ func bindMeSubsEditHandlers(
 	_ *bool,
 	redraw func(),
 ) {
-	// Delegated click handler on the stable #app container.
-	// Every button/link inside the editor routes here via event bubbling.
+	// Delegated click handler on the stable #app container: every button/link
+	// inside the editor routes here via event bubbling.
 	scr.addRelease(dom.On(app, "click", func(ev js.Value) {
 		target := ev.Get("target")
 		if target.IsNull() || target.IsUndefined() {
@@ -1337,8 +1326,8 @@ func bindMeSubsEditHandlers(
 			redraw()
 		default:
 			// Picker item click: dispatch by data-provider or data-source-name
-			// before falling through to the delete-button path. closest() walks
-			// up so child nodes inside the <li> still resolve correctly.
+			// before the delete-button path. closest() walks up so child nodes
+			// inside the <li> still resolve.
 			item := target.Call("closest", ".me-edit-picker-item")
 			if !item.IsNull() && !item.IsUndefined() {
 				ds := item.Get("dataset")
@@ -1355,7 +1344,7 @@ func bindMeSubsEditHandlers(
 			}
 
 			// Pagination prev/next: read data-kind and data-page; ignore the
-			// click when the button is disabled (HTML attr already blocks the
+			// click when the button is disabled (the HTML attr blocks the
 			// browser, but JS may dispatch synthetic events).
 			pageBtn := target.Call("closest", ".me-edit-picker-prev")
 			if pageBtn.IsNull() || pageBtn.IsUndefined() {
@@ -1387,7 +1376,7 @@ func bindMeSubsEditHandlers(
 				return
 			}
 
-			// Delete button: walk up to the nearest .me-edit-delete to handle
+			// Delete button: walk up to the nearest .me-edit-delete to catch
 			// clicks on child elements inside the button.
 			delBtn := target.Call("closest", ".me-edit-delete")
 			if delBtn.IsNull() || delBtn.IsUndefined() {
@@ -1418,8 +1407,8 @@ func bindMeSubsEditHandlers(
 			if !webApp.IsUndefined() && !webApp.IsNull() {
 				showConfirm := webApp.Get("showConfirm")
 				if !showConfirm.IsUndefined() && !showConfirm.IsNull() {
-					// js.FuncOf is Released inside the callback after it fires once
-					// to avoid leaking the WASM function-table slot.
+					// Release the js.Func inside the callback after it fires once,
+					// else it leaks a WASM function-table slot.
 					var cb js.Func
 					cb = js.FuncOf(func(_ js.Value, args []js.Value) any {
 						cb.Release()
@@ -1437,16 +1426,15 @@ func bindMeSubsEditHandlers(
 		}
 	}))
 
-	// Delegated change handler on the stable #app container.
-	// Handles condition-type radio changes; the source picker uses overlays that
-	// fire click events, not change.
+	// Delegated change handler on the stable #app container: condition-type radio
+	// changes. The source picker uses overlays firing click events, not change.
 	scr.addRelease(dom.On(app, "change", func(ev js.Value) {
 		t := ev.Get("target")
 		if t.IsNull() || t.IsUndefined() {
 			return
 		}
-		// Condition-type and direction radios are matched by name; they share
-		// the same group-class but route to different controller methods.
+		// Condition-type and direction radios are matched by name; they share a
+		// group-class but route to different controller methods.
 		switch t.Get("name").String() {
 		case "me-edit-cond-type":
 			page.SetDraftConditionType(t.Get("value").String())
@@ -1459,12 +1447,11 @@ func bindMeSubsEditHandlers(
 
 	// Delegated input handler on the stable #app container. Three sites:
 	//   1. #me-edit-value — condition-value keystrokes. No redraw; the value
-	//      input does not feed any visible list.
+	//      input feeds no visible list.
 	//   2. #me-edit-provider-search and #me-edit-pair-search — picker query
-	//      keystrokes. A FULL redraw would recreate the search input element
-	//      and lose caret position, so these update only the matching results
-	//      slot (#me-edit-{provider,pair}-results-slot) and leave the input
-	//      element alone.
+	//      keystrokes. A full redraw would recreate the search input and lose
+	//      caret position, so these update only the matching results slot
+	//      (#me-edit-{provider,pair}-results-slot) and leave the input alone.
 	scr.addRelease(dom.On(app, "input", func(ev js.Value) {
 		t := ev.Get("target")
 		if t.IsNull() || t.IsUndefined() {

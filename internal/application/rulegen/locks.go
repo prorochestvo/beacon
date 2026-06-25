@@ -7,13 +7,9 @@ func NewLockManager() *LockManager {
 	return &LockManager{locks: make(map[string]*sync.Mutex)}
 }
 
-// LockManager serialises rule generation per source name.
-// TryAcquire returns (release, true) on success; (nil, false) when another
-// call holds the lock for the same source. The caller MUST invoke release
-// exactly once when finished. The manager retains the per-source mutex
-// even after release so future contention is detected immediately
-// without re-allocating; this trades a small steady-state memory cost
-// (one mutex per ever-seen source name) for a branch-free fast path.
+// LockManager serialises rule generation per source name. The manager retains
+// each per-source mutex after release, trading one mutex per ever-seen source
+// name for a branch-free fast path.
 type LockManager struct {
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex

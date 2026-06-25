@@ -18,13 +18,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// stubWasm, stubGz, and stubJS are deterministic bytes used across tests.
-// Changing them here changes the expected hashes in all subtests that derive the
-// expected hash inline (they all call sha256.Sum256 themselves, so the value stays
-// consistent).
+// stubWasm, stubGz, and stubJS are deterministic bytes used across tests. Subtests
+// derive expected hashes inline via sha256.Sum256, so changing these stays consistent.
 var (
 	stubWasm = []byte("WASM_STUB")
-	stubGz   = []byte("GZ_STUB") // smaller, distinct bytes — simulates a pre-gzipped payload
+	stubGz   = []byte("GZ_STUB") // distinct bytes simulating a pre-gzipped payload
 	stubJS   = []byte("JS_STUB")
 )
 
@@ -35,10 +33,10 @@ func stubHash(b []byte) string {
 	return hex.EncodeToString(sum[:4])
 }
 
-// minimalMapFS returns a fstest.MapFS covering the two hashable assets, their
-// gzip sibling, and both HTML entry points. The HTML files contain the exact URL
-// patterns the rewriter targets (/app.wasm and /wasm_exec.js), plus a prose line
-// that must NOT be rewritten.
+// minimalMapFS returns a fstest.MapFS covering the two hashable assets, their gzip
+// sibling, and both HTML entry points. The HTML contains the URL patterns the
+// rewriter targets (/app.wasm, /wasm_exec.js) plus a prose line that must NOT be
+// rewritten.
 func minimalMapFS() fstest.MapFS {
 	indexHTML := []byte(`<html>
 <!-- baked into app.wasm at build time -->
@@ -173,8 +171,8 @@ func TestNewHashedAssetRegistry(t *testing.T) {
 
 	t.Run("hash is over raw bytes, not gz sibling", func(t *testing.T) {
 		t.Parallel()
-		// Construct two FS instances with the same raw wasm but different gz content.
-		// The hashed URL must be the same in both, proving the gz bytes are not hashed.
+		// Same raw wasm, different gz content: the hashed URL must match in both,
+		// proving the gz bytes are not hashed.
 		rawBytes := []byte("SAME_WASM_BYTES")
 		mapFS1 := fstest.MapFS{
 			"app.wasm":    {Data: rawBytes},
@@ -333,8 +331,8 @@ func TestHTMLCacheRewrite(t *testing.T) {
 		assert.False(t, bytes.Contains(body, []byte(`src="/wasm_exec.js"`)),
 			`src="/wasm_exec.js" must not remain in rewritten HTML`)
 
-		// Prose mention "app.wasm at build time" must survive — we only replaced the
-		// URL form (/app.wasm), not the bare token.
+		// Prose "app.wasm at build time" must survive — only the URL form
+		// (/app.wasm) is replaced, not the bare token.
 		assert.True(t, bytes.Contains(body, []byte("app.wasm at build time")),
 			"prose reference 'app.wasm at build time' must not be rewritten")
 	})
@@ -516,7 +514,7 @@ func TestStaticHandler(t *testing.T) {
 		// The FileServer will serve the raw file from the FS — stale-HTML recovery path.
 		w := get(t, "/app.wasm")
 		result := w.Result()
-		// FileServer returns 200 with the file bytes; it is not intercepted by the handler.
+		// 200 with file bytes; not intercepted by the handler.
 		assert.Equal(t, http.StatusOK, result.StatusCode)
 		body, readErr := io.ReadAll(result.Body)
 		require.NoError(t, readErr)
@@ -549,8 +547,8 @@ func TestStaticHandler(t *testing.T) {
 	})
 
 	t.Run("cached body pointer does not change across requests", func(t *testing.T) {
-		// The in-memory cache is built once at boot; this test asserts that serving the
-		// same endpoint twice reuses the same byte slice without copying.
+		// The cache is built once at boot; serving the same endpoint twice must
+		// reuse the same byte slice without copying.
 		snapshot := indexCache.body
 		_ = get(t, "/")
 		_ = get(t, "/")
@@ -563,7 +561,7 @@ func TestStaticHandler(t *testing.T) {
 		t.Parallel()
 		w := get(t, "/app.deadbeef.wasm.map")
 		result := w.Result()
-		// FileServer returns 404 for this path since it does not exist in the FS.
+		// FileServer returns 404 since this path does not exist in the FS.
 		assert.Equal(t, http.StatusNotFound, result.StatusCode)
 	})
 
@@ -596,9 +594,9 @@ func TestInsertHash(t *testing.T) {
 	}
 }
 
-// TestNewHTMLCache_FSOverswitching ensures that when different fs.FS instances are
-// passed to the registry and the cache, the cache reads from whichever FS was given
-// to it — mirroring the --static-dir vs embedded FS branching in main.go.
+// TestNewHTMLCache_FSOverswitching ensures the cache reads from whichever fs.FS it
+// was given, not the registry's — mirroring the --static-dir vs embedded FS
+// branching in main.go.
 func TestNewHTMLCache_FSOverswitching(t *testing.T) {
 	t.Parallel()
 

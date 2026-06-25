@@ -33,10 +33,10 @@ type MeHistoryRow struct {
 	// Ask is the ASK price; nil when the source only tracks BID.
 	Ask *float64 `json:"ask,omitempty"`
 	// BidDeltaPct is the percent change from the previous BID observation in
-	// this (title, direction) chain within the page. Nil for the first row.
+	// this (title, direction) chain within the page; nil for the first row.
 	BidDeltaPct *float64 `json:"bid_delta_pct,omitempty"`
 	// AskDeltaPct is the percent change from the previous ASK observation in
-	// this (title, direction) chain within the page. Nil for the first row.
+	// this (title, direction) chain within the page; nil for the first row.
 	AskDeltaPct *float64 `json:"ask_delta_pct,omitempty"`
 }
 
@@ -64,13 +64,12 @@ type MeChartPairRow struct {
 // ratepair.ColorAsk for ASK. Sparse is true when fewer than two data points
 // were found in the requested window.
 //
-// EffectiveDays is the actual number of days covered by this series. Always
-// >= 1 when Sparse==false and len(Points)>0; zero is reserved exclusively for
-// the sparse/no-data case. A value strictly less than the requested period
-// signals that the X-axis has been capped to actual data coverage; the renderer
-// should show "(max available)" in that case. Do NOT add omitempty to this
-// field: the WASM client relies on the zero value being present on the wire to
-// distinguish "sparse/no-data" from "field missing entirely".
+// EffectiveDays is the number of days covered by this series. Always >= 1 when
+// Sparse==false and len(Points)>0; zero is reserved for the sparse/no-data case.
+// A value below the requested period means the X-axis was capped to actual data
+// coverage; the renderer should show "(max available)". Do NOT add omitempty: the
+// WASM client relies on the zero value being on the wire to distinguish
+// "sparse/no-data" from "field missing entirely".
 type MeChartSeries struct {
 	Kind          string         `json:"kind"`
 	Color         string         `json:"color"`
@@ -88,9 +87,9 @@ type MeChartPoint struct {
 }
 
 // PublicChartResponse is the JSON envelope returned by GET /api/public/rates/chart.
-// Pairs reuses MeChartPairRow verbatim so both endpoints share the same wire
-// shape for chart rows. The pagination fields (Page, Limit, Total) are
-// intentionally absent from MeChartResponse to keep the two contracts independent.
+// Pairs reuses MeChartPairRow so both endpoints share the same chart-row wire
+// shape. The pagination fields (Page, Limit, Total) are absent from
+// MeChartResponse to keep the two contracts independent.
 type PublicChartResponse struct {
 	// Window is a human-readable label for the chart's time range (e.g. "7 days").
 	Window string `json:"window"`

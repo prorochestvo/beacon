@@ -244,24 +244,19 @@ func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsBySourcePage
 	return items, nil
 }
 
-// ObtainSubscriptionSummaryBySource returns one row per (source_name, user_type) pair
-// with aggregated subscription and event counts. user_id is never returned.
+// ObtainSubscriptionSummaryBySource returns one row per (source_name, user_type)
+// pair with aggregated subscription and event counts. user_id is never returned.
 //
 // Events are pre-aggregated per (source_name, user_type, user_id) in a subquery
 // before joining to subscriptions. Without this, a user with multiple
-// subscriptions to the same source (e.g. one delta + one daily) would have
-// every event counted once per subscription row, inflating success/failed
-// SUMs by the per-user subscription factor.
+// subscriptions on the same source (e.g. delta + daily) would have every event
+// counted once per subscription row, inflating success/failed SUMs by the
+// per-user subscription factor.
 //
-// All column and table identifiers are referenced via package consts so a
-// rename in either rate_user_subscriptions or rate_user_events surfaces at
-// compile time. The query is built with fmt.Sprintf rather than const
+// Identifiers are referenced via package consts so a rename in either table
+// surfaces at compile time. Built with fmt.Sprintf rather than const
 // concatenation because two repositories' consts are involved.
 func (r *RateUserSubscriptionRepository) ObtainSubscriptionSummaryBySource(ctx context.Context, sourceName string) ([]domain.RateUserSubscriptionSummary, error) {
-	// Subscriptions are deduplicated to one row per (source, user_type, user_id)
-	// BEFORE joining to the per-user event aggregates; otherwise a user with
-	// multiple subscriptions on the same source (e.g. delta + daily) would
-	// multiply that user's event counts by their subscription count.
 	query := fmt.Sprintf(
 		`SELECT
     s.%[2]s,

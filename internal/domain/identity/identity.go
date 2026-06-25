@@ -4,9 +4,7 @@
 //	<prefix>YYYYMMDDhhmmssZ<nanos>T<UUIDv4-hex-uppercase>
 //
 // where the prefix is determined by the Kind constant passed to New.
-// The on-disk contract (prefix strings, field order, case) is frozen:
-// no migration is required when adopting this package in place of the
-// per-repository helpers it replaces.
+// The on-disk contract (prefix strings, field order, case) is frozen.
 package identity
 
 import (
@@ -16,9 +14,9 @@ import (
 	"github.com/twinj/uuid"
 )
 
-// Kind is a closed enum that identifies the entity type an ID was minted for.
-// The string value of each Kind constant doubles as the on-disk prefix and must
-// not be changed without a data migration.
+// Kind is a closed enum identifying the entity type an ID was minted for.
+// Each Kind's string value doubles as the on-disk prefix and must not change
+// without a data migration.
 type Kind string
 
 // The string value of each constant below is the on-disk ID prefix and is frozen.
@@ -36,14 +34,12 @@ const (
 	KindExecutionHistory Kind = "H"
 )
 
-// New returns a new unique string identifier for the given Kind.
-// The format is:
+// New returns a new unique string identifier for the given Kind, in the format:
 //
 //	<prefix>YYYYMMDDhhmmssZ<nanos>T<UUIDv4-hex-uppercase>
 //
-// Time is taken from time.Now().UTC() at the moment of the call.
-// The UUID component uses UUIDv4 from github.com/twinj/uuid, formatted as
-// uppercase hex with no separators, matching the existing on-disk convention.
+// Time is time.Now().UTC() at the moment of the call. The UUID component is
+// UUIDv4 from github.com/twinj/uuid, uppercase hex with no separators.
 // Callers that need the prefix alone can cast the Kind to string.
 func New(k Kind) string {
 	now := time.Now().UTC()

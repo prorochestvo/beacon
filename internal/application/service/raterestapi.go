@@ -83,8 +83,8 @@ func (h *RateRestApi) ObtainLastNExecutionHistoryBySourceName(ctx context.Contex
 	return items, nil
 }
 
-// CheckUP runs a cheap read against the rate_sources repository to confirm
-// the database is reachable. Used by the /healthz endpoint.
+// CheckUP runs a cheap rate_sources read to confirm the database is reachable.
+// Used by the /healthz endpoint.
 func (h *RateRestApi) CheckUP(ctx context.Context) error {
 	if err := h.rateSourceRepository.CheckUP(ctx); err != nil {
 		return errors.Join(err, internal.NewTraceError())
@@ -93,9 +93,8 @@ func (h *RateRestApi) CheckUP(ctx context.Context) error {
 }
 
 // ObtainLatestExecutionHistoryBySources returns the most recent execution_history
-// row per source, keyed by source name. Sources with no rows are absent from
-// the map. Used by ListSources to replace an N+1 of one query per source with
-// a single bulk read.
+// row per source, keyed by source name; sources with no rows are absent from the
+// map. Used by ListSources to replace the per-source N+1 with one bulk read.
 func (h *RateRestApi) ObtainLatestExecutionHistoryBySources(ctx context.Context, names []string) (map[string]domain.ExecutionHistory, error) {
 	items, err := h.executionHistoryRepository.ObtainLatestExecutionHistoryBySources(ctx, names)
 	if err != nil {
@@ -115,9 +114,9 @@ func (h *RateRestApi) ObtainLastSuccessNExecutionHistoryBySourceName(ctx context
 	return items, nil
 }
 
-// UpdateRateSourceActive enables or disables the rate source identified by name.
-// Returns an error wrapping internal.ErrNotFound when the source does not exist,
-// so callers can distinguish 404 from 500 via errors.Is.
+// UpdateRateSourceActive enables or disables the named rate source. Wraps
+// internal.ErrNotFound when the source does not exist, so callers can distinguish
+// 404 from 500 via errors.Is.
 func (h *RateRestApi) UpdateRateSourceActive(ctx context.Context, name string, active bool) error {
 	src, err := h.rateSourceRepository.ObtainRateSourceByName(ctx, name)
 	if err != nil {

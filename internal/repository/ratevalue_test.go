@@ -39,9 +39,9 @@ func TestRateRepository_CheckUP(t *testing.T) {
 func TestRateRepository_TransactionErrors(t *testing.T) {
 	t.Parallel()
 
-	// For each method we create a valid repository (so migrations run), then
-	// replace the internal db with mockFailDB so the Transaction call errors out.
-	// This exercises the db.Transaction error branch in every public method.
+	// Create a valid repository (so migrations run), then swap its db for
+	// mockFailDB so Transaction errors out — exercising the db.Transaction error
+	// branch in every public method.
 	newBrokenRepo := func(t *testing.T) *RateValueRepository {
 		t.Helper()
 		r, err := NewRateValueRepository(stubSQLiteDB(t))
@@ -338,9 +338,9 @@ func TestRateValueRepository_ObtainLatestRateValuesBySourceNames(t *testing.T) {
 func TestRateValueRepository_ObtainValuesForPairsSince(t *testing.T) {
 	t.Parallel()
 
-	// seedWithTimestamp inserts a RateValue and then overwrites its timestamp
-	// via a direct SQL UPDATE so tests can control the timestamp precisely.
-	// RetainRateValue always sets Timestamp = now, so we need the override.
+	// seedWithTimestamp inserts a RateValue then overwrites its timestamp via a
+	// direct SQL UPDATE so tests can control it precisely. RetainRateValue always
+	// sets Timestamp = now, hence the override.
 	seedWithTimestamp := func(t *testing.T, r *RateValueRepository, rv domain.RateValue, ts time.Time) domain.RateValue {
 		t.Helper()
 		rv.ID = "" // let repo generate the ID

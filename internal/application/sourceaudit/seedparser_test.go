@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// realSeedLine is a synthetic positional 10-column INSERT fixture mirroring the
-// pre-consolidation seed form. It exercises the positional parse path of
-// parseSeedFile alongside a real regex pattern with escaped delimiters.
+// realSeedLine is a synthetic positional 10-column INSERT mirroring the
+// pre-consolidation seed form, exercising the positional parse path with a real
+// regex pattern containing escaped delimiters.
 const realSeedLine = `INSERT OR IGNORE INTO rate_sources VALUES('KZ_BCC_BID_USD_KZT','Center Credit Bank','USD','KZT','https://www.bcc.kz/kz/','6h','BID',1,'{}','[{"method":"regex","pattern":"USD \\/ KZT[\\s\\S]{1,500}?<div class=\"flex-x justify-end\">(\\d+\\.\\d+)<\\/div>"}]');`
 
 func TestParseSeedFiles(t *testing.T) {
@@ -187,8 +187,8 @@ INSERT OR IGNORE INTO other_table VALUES(1,2,3);
 	t.Run("recognised INSERT with malformed column list fails loudly", func(t *testing.T) {
 		t.Parallel()
 
-		// Missing closing paren on column list — the line looks like a rate_sources INSERT
-		// but cannot be parsed by either valid form; the loud-fail path must trigger.
+		// Missing closing paren — looks like a rate_sources INSERT but parses as
+		// neither valid form; the loud-fail path must trigger.
 		line := "INSERT OR IGNORE INTO rate_sources (name VALUES('x');"
 		fsys := fstest.MapFS{
 			"malformed.seed.sql": {Data: []byte(line)},

@@ -11,12 +11,11 @@
 //
 // Rationale: as of 2026-05-14, Groq's structured-output strict mode
 // (response_format: { type: "json_schema", strict: true }) is only supported
-// by the openai/gpt-oss-20b and openai/gpt-oss-120b families. The lighter
-// llama-3.1-8b-instant model does NOT support strict json_schema and returns
-// HTTP 400. openai/gpt-oss-20b is the cheapest model in the strict-schema
-// tier ($0.075/$0.30 per 1M tokens) and has been chosen as the default.
-// Before changing this default, verify the replacement model's strict-schema
-// support at https://console.groq.com/docs/structured-outputs.
+// by the openai/gpt-oss-20b and openai/gpt-oss-120b families; llama-3.1-8b-instant
+// does NOT support strict json_schema and returns HTTP 400. openai/gpt-oss-20b
+// is the cheapest model in the strict-schema tier ($0.075/$0.30 per 1M tokens),
+// hence the default. Before changing it, verify the replacement model's
+// strict-schema support at https://console.groq.com/docs/structured-outputs.
 package artificialintelligence
 
 import (
@@ -37,8 +36,7 @@ const groqDefaultModel = "openai/gpt-oss-20b"
 //
 // DSN: groq://_:<base64url(KEY)>@api.groq.com/openai/v1?model=<model>&timeout=<dur>
 //
-// proxyURL is an optional HTTP proxy URL string (e.g. "http://127.0.0.1:7788");
-// pass "" to use no proxy.
+// proxyURL is an optional HTTP proxy URL (e.g. "http://127.0.0.1:7788"); pass "" for none.
 func newGroqClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (*groqClient, error) {
 	apiKey, err := parseDSNKey(dns)
 	if err != nil {

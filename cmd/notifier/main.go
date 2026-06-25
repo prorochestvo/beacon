@@ -13,7 +13,7 @@ import (
 	"os/signal"
 	"path"
 	"syscall"
-	_ "time/tzdata" // embedded IANA tzdata so time.LoadLocation works without system tzdata package
+	_ "time/tzdata" // embedded IANA tzdata so time.LoadLocation works without system tzdata
 
 	"github.com/prorochestvo/dsninjector"
 	"github.com/seilbekskindirov/monitor/internal"
@@ -51,9 +51,8 @@ func main() {
 	}
 	log.Println("logger: initiated")
 
-	// Notifier only makes outbound calls to Telegram. Telegram traffic bypasses
-	// any proxy unconditionally via the hardcoded transport in NewTBotClient, so
-	// PROXY_URL is not relevant here and is intentionally not parsed.
+	// Notifier only calls Telegram, and Telegram traffic bypasses any proxy via the
+	// hardcoded transport in NewTBotClient, so PROXY_URL is intentionally not parsed.
 
 	dsnTelegramBOT, err := dsninjector.Unmarshal(envDsnTelegramBOT)
 	if err != nil {
@@ -105,9 +104,9 @@ func main() {
 	}
 	log.Println("repositories: initiated")
 
-	// SIGTERM and SIGINT cancel ctx mid-run so an in-flight tick aborts the
-	// next dispatch instead of the OS killing the process between
-	// transactions. The migrator uses the same pattern.
+	// SIGTERM/SIGINT cancel ctx mid-run so an in-flight tick aborts the next
+	// dispatch instead of the OS killing the process between transactions.
+	// The migrator uses the same pattern.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -129,16 +128,16 @@ func main() {
 	}
 
 	// Vacuum is housekeeping — never block execution on its failure. Use a
-	// background context so a SIGTERM mid-run doesn't surface as a Vacuum
-	// cancellation followed by Fatalf (and a false-positive crash exit).
+	// background context so a mid-run SIGTERM doesn't surface as a Vacuum
+	// cancellation and a false-positive crash exit.
 	if err = dispatchAgent.Vacuum(context.Background()); err != nil {
 		log.Printf("runners: vacuum failed (non-fatal): %s", err)
 	}
 	log.Println("runners: initiated")
 
 	var errs []error
-	// Skip context.Canceled so a clean shutdown reason isn't logged twice (once
-	// in the joined errors line, once in the "stopped by signal" line below).
+	// Skip context.Canceled so a clean shutdown reason isn't logged twice (joined
+	// errors line plus the "stopped by signal" line below).
 	if err = checkAgent.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		errs = append(errs, err)
 	}

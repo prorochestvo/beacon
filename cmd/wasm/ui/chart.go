@@ -11,10 +11,9 @@ import (
 	"github.com/seilbekskindirov/monitor/internal/dto"
 )
 
-// chart.go renders the sparkline-list view. Each pair row emits a flex row
-// containing a text block on the left (pair label + spread/delta) and the SVG
-// sparkline on the right. The renderChartArea helper is also called by the
-// list row; the pair-detail modal is text-only (no SVG).
+// chart.go renders the sparkline-list view. Each pair row is a flex row: text
+// block on the left (pair label + spread/delta), SVG sparkline on the right.
+// The pair-detail modal is text-only (no SVG).
 
 // svgW and svgH are the viewBox dimensions used for every sparkline SVG.
 // The polyline runs from x=5 to x=295 so the end halo never clips the edge.
@@ -30,14 +29,14 @@ const svgYMin = 8.0
 const svgYMax = 52.0
 
 // allowedUIPeriods is the ordered list of period values (days) shown in the
-// chip row. Matches application.AllowedChartPeriods; the list is inlined here
-// to keep the ui package free of an import cycle with application.
+// chip row. Mirrors application.AllowedChartPeriods; inlined to avoid an import
+// cycle with application.
 var allowedUIPeriods = []int{7, 30, 90, 180, 360}
 
-// RenderSparklineList returns the full HTML for the sparkline-list chart view.
-// One row is rendered per pair in chart.Pairs. An empty Pairs slice renders
-// the "no chart data" empty-state. The period selector row defaults to 7 days;
-// use RenderSparklineListForPeriod to supply the active selection explicitly.
+// RenderSparklineList returns the full HTML for the sparkline-list chart view,
+// one row per pair in chart.Pairs. An empty Pairs slice renders the empty-state.
+// The period selector defaults to 7 days; use RenderSparklineListForPeriod to
+// supply the active selection.
 func RenderSparklineList(chart dto.MeChartResponse) string {
 	return renderSparklineListInternal(chart, 7)
 }
@@ -50,9 +49,9 @@ func RenderSparklineListForPeriod(chart dto.MeChartResponse, period int) string 
 }
 
 // effectiveDaysForChart returns the maximum EffectiveDays across all series of
-// all pairs in chart. Series with EffectiveDays == 0 (sparse / no data) are
-// skipped. If every series is zero, 0 is returned and the caller should treat
-// coverage as equal to the requested period.
+// all pairs in chart. EffectiveDays == 0 (sparse / no data) is skipped. Returns
+// 0 when every series is zero; the caller then treats coverage as the requested
+// period.
 func effectiveDaysForChart(chart dto.MeChartResponse) int {
 	best := 0
 	for _, row := range chart.Pairs {
@@ -100,15 +99,11 @@ func renderSparklineListInternal(chart dto.MeChartResponse, period int) string {
 	return b.String()
 }
 
-// renderPeriodChips returns the HTML for the 5-chip period selector row.
-// The chip for activePeriod carries the period-chip--active class; all chips
-// carry a data-period attribute so the delegated click handler in main.go can
-// read it without traversing child nodes.
-//
-// Period labels use a compact suffix (e.g. "7d", "30d") to fit on narrow
-// screens. The active chip falls back to 7 when activePeriod is unrecognised.
+// renderPeriodChips returns the HTML for the 5-chip period selector row. The
+// chip for activePeriod carries period-chip--active; all chips carry data-period
+// so the delegated click handler reads it without traversing child nodes. Labels
+// use a compact suffix ("7d"). An unrecognised activePeriod falls back to 7.
 func renderPeriodChips(activePeriod int) string {
-	// Validate: if activePeriod is not in the whitelist, treat as 7.
 	valid := false
 	for _, p := range allowedUIPeriods {
 		if activePeriod == p {
@@ -136,11 +131,10 @@ func renderPeriodChips(activePeriod int) string {
 	return b.String()
 }
 
-// renderSparklineRow returns the HTML for one pair row in the sparkline list.
-// Layout: a left text block (pair label + spread/delta) and an SVG sparkline
-// on the right, side-by-side via flexbox. Zero-series rows omit the chart div
-// and render only the "no data" text block so the two empty states do not
-// stack on top of each other.
+// renderSparklineRow returns the HTML for one pair row in the sparkline list:
+// a left text block (pair label + spread/delta) and an SVG sparkline on the
+// right, side-by-side via flexbox. Zero-series rows omit the chart div and
+// render only the "no data" text block so the two empty states do not stack.
 func renderSparklineRow(row dto.MeChartPairRow) string {
 	var b strings.Builder
 	fmt.Fprintf(&b,
@@ -148,9 +142,7 @@ func renderSparklineRow(row dto.MeChartPairRow) string {
 		dom.Escape(row.Pair), dom.Escape(row.Pair),
 	)
 	b.WriteString(`<div class="sparkline-row-text">`)
-	// Line 1: pair label.
 	fmt.Fprintf(&b, `<div class="sparkline-pair-label">%s</div>`, dom.Escape(row.Pair))
-	// Line 2: Spread X.XX% (two-series) or Δ X.XX% (single series).
 	b.WriteString(renderCollapsedDelta(row))
 	b.WriteString(`</div>`)
 	if len(row.Series) > 0 {
@@ -163,11 +155,9 @@ func renderSparklineRow(row dto.MeChartPairRow) string {
 }
 
 // renderCollapsedDelta returns the second line of a collapsed sparkline row:
-// "↔ X.XX%" for two-series rows (the spread between BID and ASK), "Δ X.XX%"
-// for single-series rows (period change), or "no data" when no series are
-// present. Both indicators are single-glyph prefixes so the row keeps a
-// consistent visual rhythm — a font-style icon next to the value, never a
-// long word label.
+// "↔ X.XX%" for two-series rows (BID/ASK spread), "Δ X.XX%" for single-series
+// rows (period change), or "no data" when no series are present. Both use a
+// single-glyph prefix, never a word label, to keep a consistent visual rhythm.
 func renderCollapsedDelta(row dto.MeChartPairRow) string {
 	if len(row.Series) == 0 {
 		return `<div class="sparkline-row-delta sparkline-row-delta-empty">no data</div>`
@@ -180,7 +170,7 @@ func renderCollapsedDelta(row dto.MeChartPairRow) string {
 		)
 	}
 	// Single-series, or two-series without a SpreadPct: use the first
-	// non-sparse series for the delta, falling back to the first series.
+	// non-sparse series, falling back to the first series.
 	sr := row.Series[0]
 	for _, s := range row.Series {
 		if !s.Sparse {
@@ -248,15 +238,14 @@ func seriesPrefixAndColor(kind string, compact bool) (prefix, color string) {
 // It builds a single Y-frame fitting all series values, draws one polyline per
 // series, and adds an end-of-line halo on each.
 //
-// Both-sparse / no-data: if every series has Latest==0 and no Points, render a
-// "no data" badge. Mixed-sparse: draw the sparse direction as a flat horizontal
-// line at its Latest in its role color.
+// All series with Latest==0 and no Points: render a "no data" badge. A sparse
+// direction in a mixed row is drawn as a flat horizontal line at its Latest in
+// its role color.
 func renderChartArea(series []dto.MeChartSeries) string {
 	if len(series) == 0 {
 		return ""
 	}
 
-	// Check no-data: all series are no-data (zero Latest and no Points).
 	allNoData := true
 	for _, sr := range series {
 		if sr.Latest != 0 || len(sr.Points) > 0 {
@@ -268,7 +257,7 @@ func renderChartArea(series []dto.MeChartSeries) string {
 		return `<span class="sparkline-no-data">no data</span>`
 	}
 
-	// Compute the union min/max across all series (excluding flat-zero no-data series).
+	// Union min/max across all series (excluding flat-zero no-data series).
 	minV, maxV := 0.0, 0.0
 	first := true
 	for _, sr := range series {
@@ -312,7 +301,7 @@ func renderChartArea(series []dto.MeChartSeries) string {
 
 	for _, sr := range series {
 		if sr.Latest == 0 && len(sr.Points) == 0 {
-			// No-data series within a mixed row: skip entirely.
+			// No-data series in a mixed row: skip.
 			continue
 		}
 		if sr.Sparse {
@@ -341,7 +330,7 @@ func renderFlatLine(color string, value, minV, maxV float64) string {
 
 // renderPolyline draws a multi-point polyline plus end-of-line halo for a
 // non-sparse series. Falls back to a flat line when fewer than two points exist
-// (belt-and-suspenders for the min/max equality case).
+// (guards the min/max equality case).
 func renderPolyline(sr dto.MeChartSeries, minV, maxV float64) string {
 	if len(sr.Points) < 2 {
 		return renderFlatLine(sr.Color, sr.Latest, minV, maxV)
@@ -410,8 +399,8 @@ func formatSpreadPct(v float64) string {
 	return strconv.FormatFloat(v, 'f', 2, 64) + "%"
 }
 
-// spreadGlyph is the single-character prefix used in both the list row and the
-// modal to denote bid/ask spread. The double-headed arrow ↔ (U+2194) renders
-// as a font glyph in every Telegram client we target and visually pairs with
-// the Δ used for single-series rows.
+// spreadGlyph is the single-character prefix denoting bid/ask spread in the list
+// row and modal. The double-headed arrow ↔ (U+2194) renders as a font glyph in
+// every targeted Telegram client and pairs visually with the Δ on single-series
+// rows.
 const spreadGlyph = "↔"

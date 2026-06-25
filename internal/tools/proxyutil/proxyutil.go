@@ -11,20 +11,16 @@ import (
 	"github.com/prorochestvo/dsninjector"
 )
 
-// ResolveURL reads envName from the process environment, parses it via
-// dsninjector.Unmarshal, and returns the URL string. Returns "" when the
-// variable is unset or empty (no proxy). Calls log.Fatalf when the value is
-// present but cannot be parsed by dsninjector, because a malformed proxy URL
-// is an operator configuration error that must be fixed before the service
-// starts.
+// ResolveURL reads envName, parses it via dsninjector.Unmarshal, and returns the
+// URL string. Returns "" when unset or empty (no proxy). Calls log.Fatalf on a
+// present-but-unparseable value — a malformed proxy URL is an operator config
+// error that must be fixed before the service starts.
 //
-// On every call a single startup line is emitted via log.Printf — the same
-// sink every other startup line uses, so the message lands in both stdout
-// and the file logger and is not silently filtered by the global verbosity
-// level:
+// Emits one startup line via log.Printf (the same sink as every other startup
+// line, so it reaches stdout and the file logger regardless of verbosity level):
 //   - "proxy: not configured" when the variable is absent.
-//   - "proxy: PROXY_URL=<redacted>" when a valid URL is found; credentials in
-//     the userinfo component are stripped from the logged value.
+//   - "proxy: PROXY_URL=<redacted>" when a valid URL is found; userinfo
+//     credentials are stripped from the logged value.
 func ResolveURL(envName string) string {
 	_, ok := os.LookupEnv(envName)
 	if !ok {
@@ -40,9 +36,8 @@ func ResolveURL(envName string) string {
 	return raw
 }
 
-// RedactURL strips the password from a proxy URL before it is written to any
-// log sink. If the URL contains no userinfo or cannot be parsed it is returned
-// unchanged.
+// RedactURL strips the password from a proxy URL before logging. A URL with no
+// userinfo or one that fails to parse is returned unchanged.
 func RedactURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.User == nil {

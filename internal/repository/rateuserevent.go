@@ -64,7 +64,7 @@ func (r *RateUserEventRepository) ObtainLastNRateUserEvents(ctx context.Context,
 	}
 	defer printRollbackError(tx)
 
-	// whereClause is used for COUNT (no LIMIT/OFFSET — those must not be applied to COUNT).
+	// whereClause is for COUNT — no LIMIT/OFFSET, which must not apply to COUNT.
 	whereClause := ""
 	var statusArgs []any
 	if l := len(status); l > 0 {
@@ -83,7 +83,7 @@ func (r *RateUserEventRepository) ObtainLastNRateUserEvents(ctx context.Context,
 		return []domain.RateUserEvent{}, nil
 	}
 
-	// Build full condition with ORDER BY / LIMIT / OFFSET for the SELECT query.
+	// Full condition adds ORDER BY / LIMIT / OFFSET for the SELECT.
 	fullCondition := whereClause + "ORDER BY " + rateUserEventCreatedAtFieldName + " ASC\nLIMIT ?\nOFFSET ?;"
 	selectArgs := append(statusArgs, limit, offset)
 
@@ -326,9 +326,9 @@ func (r *RateUserEventRepository) RetainRateUserEvent(ctx context.Context, recor
 		sentAt = &s
 	}
 
-	// source_name is nullable and carries an FK to rate_sources(name). Empty
-	// string would violate the FK (no rate_source has name=''); send NULL when
-	// the event is not bound to a source.
+	// source_name is nullable and FKs to rate_sources(name). Empty string would
+	// violate the FK (no rate_source has name=''); send NULL when the event is
+	// not bound to a source.
 	sourceName := sourceNameForDB(record.SourceName)
 
 	var res sql.Result

@@ -116,12 +116,10 @@ func TestChromedpRateExtractor_RunBatch(t *testing.T) {
 	t.Run("tombstoned URL in batch short-circuits to the cached error", func(t *testing.T) {
 		t.Parallel()
 
-		// Live ctx + single tombstoned source. newExecAllocator returns a
-		// usable allocCtx without launching Chromium (chromedp.NewExecAllocator
-		// is lazy — the subprocess spawns on first NewContext / Run), and the
-		// tombstone short-circuit fires inside fetchRenderedPageInAllocator
-		// before any chromedp.NewContext is invoked. The whole path stays
-		// hermetic without a real Chromium binary.
+		// Live ctx + single tombstoned source. NewExecAllocator is lazy (the
+		// subprocess spawns on first NewContext/Run), and the tombstone
+		// short-circuit fires inside fetchRenderedPageInAllocator before any
+		// NewContext, so the path stays hermetic without a real Chromium binary.
 		e := NewChromedpRateExtractor("", "", io.Discard, &mockRateValueRepository{})
 		prior := errors.New("prior network error")
 		e.recordFailedURL("https://example.com/dead", prior)

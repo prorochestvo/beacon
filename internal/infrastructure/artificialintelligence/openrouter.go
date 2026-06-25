@@ -13,10 +13,9 @@
 // DSN query-string parsers. The decoder lives in aiclient.go — see parseDSNKey.
 //
 // Model validation is intentionally absent: OpenRouter supports many providers
-// (e.g. anthropic/claude-..., google/gemini-...) and the caller is responsible
-// for supplying a model string that the selected plan actually supports.
-// Note: not all OpenRouter models support response_format:json_schema — a 400
-// will be returned at runtime if an unsupported model is configured.
+// (e.g. anthropic/claude-..., google/gemini-...) and the caller must supply a
+// model string the selected plan supports. Not all OpenRouter models support
+// response_format:json_schema — an unsupported one returns HTTP 400 at runtime.
 package artificialintelligence
 
 import (
@@ -31,17 +30,16 @@ import (
 	"github.com/seilbekskindirov/monitor/internal"
 )
 
-// openRouterCheckUPModel is the cheapest paid variant on OpenRouter used for
+// openRouterCheckUPModel is the cheapest paid variant on OpenRouter, used for
 // liveness probes. The paid 1B model has its own quota and avoids the heavy
-// rate-limiting that affects :free tier models.
+// rate-limiting on :free tier models.
 const openRouterCheckUPModel = "meta-llama/llama-3.2-1b-instruct"
 
 // newOpenRouterClient parses the DSN and returns a ready-to-use openRouterClient.
 //
 // DSN: openrouterai://_:<base64url(KEY)>@<host>/<base-path>?model=<model>&timeout=<duration>
 //
-// proxyURL is an optional HTTP proxy URL string (e.g. "http://127.0.0.1:7788");
-// pass "" to use no proxy.
+// proxyURL is an optional HTTP proxy URL (e.g. "http://127.0.0.1:7788"); pass "" for none.
 func newOpenRouterClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (*openRouterClient, error) {
 	apiKey, err := parseDSNKey(dns)
 	if err != nil {

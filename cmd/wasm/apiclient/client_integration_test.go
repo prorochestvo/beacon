@@ -23,8 +23,8 @@ import (
 )
 
 // newIntegrationClient creates a test server, wires a Client to it via
-// NewHTTPFetcher, and returns both together with a cleanup function. Each
-// integration test owns its own server so parallel execution is safe.
+// NewHTTPFetcher, and returns both with a cleanup function. Each integration
+// test owns its own server so parallel execution is safe.
 func newIntegrationClient(t *testing.T) (*apiclient.Client, *http.ServeMux, func()) {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -358,8 +358,7 @@ func TestClient_Integration_ListRates_PathEscape(t *testing.T) {
 		defer cleanup()
 
 		mux.HandleFunc("/api/sources/", func(w http.ResponseWriter, r *http.Request) {
-			// net/http decodes the path in URL.Path; EscapedPath preserves the
-			// raw percent-encoded form as sent on the wire.
+			// EscapedPath preserves the raw percent-encoded form sent on the wire.
 			assert.Equal(t, "/api/sources/a%2Fb/rates", r.URL.EscapedPath())
 			writeJSON(t, w, []dto.RateResponse{})
 		})

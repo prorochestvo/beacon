@@ -19,7 +19,7 @@ import (
 type ProbeStatus string
 
 const (
-	// StatusOK indicates the source was fetched and the extraction rule returned a plausible value.
+	// StatusOK indicates the rule returned a plausible value.
 	StatusOK ProbeStatus = "OK"
 	// StatusFetchError indicates the HTTP request failed.
 	StatusFetchError ProbeStatus = "FETCH_ERROR"
@@ -177,9 +177,8 @@ func truncate(s string, max int) string {
 	return string(r[:max])
 }
 
-// validateSourceURL rejects any URL whose scheme is not http or https. It
-// prevents SSRF when the source URL originates from a seed file. Empty or
-// malformed URLs are also rejected.
+// validateSourceURL rejects empty, malformed, or non-http(s) URLs to prevent
+// SSRF from seed-file source URLs.
 func validateSourceURL(rawURL string) error {
 	if rawURL == "" {
 		return fmt.Errorf("source URL must not be empty")

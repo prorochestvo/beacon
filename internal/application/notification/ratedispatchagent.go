@@ -32,8 +32,7 @@ func NewRateDispatchAgent(
 }
 
 // RateDispatchAgent delivers pending and failed notification events and cancels
-// events that exceed the 24-hour TTL. It is designed to run to completion on
-// each invocation (one-shot).
+// events past the 24-hour TTL. One-shot: runs to completion per invocation.
 type RateDispatchAgent struct {
 	telegramClient          telegramClient
 	rateUserEventRepository rateUserEventRepository
@@ -94,9 +93,8 @@ func (a *RateDispatchAgent) Run(ctx context.Context) error {
 			errs = append(errs, errors.Join(err, internal.NewTraceError()))
 		}
 
-		// Delay to avoid hitting Telegram rate limits. Use a ctx-aware wait so
-		// SIGTERM mid-batch aborts immediately instead of holding the process
-		// alive for up to (500ms × remaining events) past the signal.
+		// Delay to avoid Telegram rate limits. ctx-aware so SIGTERM mid-batch
+		// aborts immediately instead of holding for up to (500ms × remaining events).
 		select {
 		case <-time.After(500 * time.Millisecond):
 		case <-ctx.Done():

@@ -8,8 +8,8 @@ import (
 	"github.com/seilbekskindirov/monitor/internal/dto"
 )
 
-// SourcesState holds all client-side state for the Sources List screen. It is
-// the single source of truth that the UI layer reads to render the page.
+// SourcesState holds all client-side state for the Sources List screen — the
+// single source of truth the UI layer reads to render the page.
 type SourcesState struct {
 	All          []dto.SourceResponse
 	Stats        dto.StatsResponse
@@ -58,9 +58,9 @@ func (s SourcesState) Visible() []dto.SourceResponse {
 	return out
 }
 
-// SourcesPage is the page controller for the Sources List screen. It owns the
-// SourcesState and exposes methods for every user action. It has no DOM
-// dependencies and is testable as plain Go.
+// SourcesPage is the page controller for the Sources List screen. It owns
+// SourcesState and exposes a method per user action. No DOM dependencies;
+// testable as plain Go.
 type SourcesPage struct {
 	state  SourcesState
 	client *apiclient.Client

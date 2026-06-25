@@ -213,9 +213,9 @@ func TestOpenAIClient_Complete(t *testing.T) {
 	})
 }
 
-// TestNewOpenAIClient verifies that newOpenAIClient threads the proxyURL into
-// the underlying *http.Transport. The OpenAI SDK builds its own transport
-// internally; without option.WithHTTPClient the proxy is silently ignored.
+// TestNewOpenAIClient verifies newOpenAIClient threads proxyURL into the
+// underlying *http.Transport. The OpenAI SDK builds its own transport; without
+// option.WithHTTPClient the proxy is silently ignored.
 func TestNewOpenAIClient(t *testing.T) {
 	t.Parallel()
 

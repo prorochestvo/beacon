@@ -83,11 +83,9 @@ func (r *RateValueRepository) ObtainAllRateValueBySourceName(ctx context.Context
 
 // ObtainLatestRateValuesBySourceNames returns the most recent rate_value row
 // per source for every name in sourceNames, keyed by source_name. Sources
-// without any rows are absent from the result. Used by ListMeSubscriptions to
-// replace an N+1 of one ObtainLastNRateValuesBySourceName transaction per
-// page item with a single bulk read.
-//
-// Empty input is a fast no-op (no query is issued).
+// without rows are absent. Used by ListMeSubscriptions to replace an N+1 of one
+// ObtainLastNRateValuesBySourceName per page item with a single bulk read.
+// Empty input is a no-op (no query issued).
 func (r *RateValueRepository) ObtainLatestRateValuesBySourceNames(ctx context.Context, sourceNames []string) (map[string]domain.RateValue, error) {
 	if len(sourceNames) == 0 {
 		return map[string]domain.RateValue{}, nil
@@ -165,8 +163,8 @@ func (r *RateValueRepository) ObtainLastNRateValuesBySourceName(ctx context.Cont
 	}
 	defer printRollbackError(tx)
 
-	// Secondary sort by rowid DESC ensures deterministic newest-first ordering when
-	// multiple rows share the same RFC3339 timestamp string (second precision).
+	// Secondary sort by rowid DESC keeps newest-first deterministic when rows
+	// share the same second-precision RFC3339 timestamp string.
 	sqlCommand := " WHERE " + rateValueSourceNameFieldName + " = ?" + " ORDER BY " + rateValueTimestampFieldName + " DESC, " + rateValueIdFieldName + " DESC LIMIT ?;"
 	rates, err := rateValueQueryContext(tx, ctx, sqlCommand, sourceName, limit)
 	if err != nil {
@@ -287,24 +285,23 @@ func (r *RateValueRepository) RemoveRateValue(ctx context.Context, record *domai
 // subscribed to for that pair.
 //
 // All three queries (COUNT(*), SELECT page, COUNT(DISTINCT title+timestamp))
-// run inside a single ReadOnlyTransaction, guaranteeing a consistent snapshot:
-// a collector write between two separate reads would make rowTotal disagree
-// with groupedTotal; keeping them in one transaction prevents that.
+// run in a single ReadOnlyTransaction for a consistent snapshot: a collector
+// write between separate reads would make rowTotal disagree with groupedTotal.
 //
 // Returns:
 //   - rows: the paginated rate_values for this page.
-//   - rowTotal: the un-paginated row count (one count per rate_values row).
+//   - rowTotal: the un-paginated row count (one per rate_values row).
 //   - groupedTotal: the count of distinct (rate_sources.title || '|' || timestamp)
 //     tuples. Two sibling BID/ASK sources sharing the same provider title at the
 //     same scrape moment count as one. Use this as the pagination total shown to
 //     the user; rowTotal is for internal diagnostics only.
 //
-// Empty pairs is a fast no-op (returns empty slice and totals=0).
+// Empty pairs is a no-op (empty slice, totals=0).
 //
-// NOTE: SQLite's expression-tree limit is ~1000 terms by default. Each pair
-// tuple contributes 3 terms. A user with ~333+ unique source subscriptions on
-// one pair would overflow that limit. Vanishingly unlikely given current data;
-// chunking is left for a future iteration.
+// NOTE: SQLite's expression-tree limit is ~1000 terms by default; each pair
+// tuple contributes 3. A user with ~333+ unique source subscriptions on one
+// pair would overflow it. Vanishingly unlikely given current data; chunking is
+// left for a future iteration.
 func (r *RateValueRepository) ObtainHistoryForPairsPaged(
 	ctx context.Context,
 	pairs []domain.SourcePairKey,
@@ -326,16 +323,16 @@ func (r *RateValueRepository) ObtainHistoryForPairsPaged(
 		tuples = append(tuples, "(?, ?, ?)")
 		args = append(args, p.SourceName, p.BaseCurrency, p.QuoteCurrency)
 	}
-	// inClause is used in queries that reference rate_values alone; column names
-	// are unambiguous there. The JOIN query below uses the rv-prefixed variant.
+	// inClause is for queries referencing rate_values alone, where column names
+	// are unambiguous. The JOIN query below uses the rv-prefixed variant.
 	inClause := "(" +
 		rateValueSourceNameFieldName + ", " +
 		rateValueBaseCurrencyFieldName + ", " +
 		rateValueQuoteCurrencyFieldName + ") IN (" +
 		strings.Join(tuples, ", ") + ")"
-	// inClauseJoin qualifies every column with the rv alias so the JOIN query
-	// does not produce "ambiguous column name" when rate_sources shares column
-	// names with rate_values (source_name, base_currency, quote_currency).
+	// inClauseJoin qualifies every column with the rv alias to avoid "ambiguous
+	// column name" where rate_sources shares column names with rate_values
+	// (source_name, base_currency, quote_currency).
 	inClauseJoin := "(" +
 		"rv." + rateValueSourceNameFieldName + ", " +
 		"rv." + rateValueBaseCurrencyFieldName + ", " +
@@ -389,12 +386,11 @@ func (r *RateValueRepository) ObtainHistoryForPairsPaged(
 		return nil, 0, 0, errors.Join(iterErr, internal.NewTraceError())
 	}
 
-	// Query 3: grouped count of distinct (title, timestamp) tuples. Runs inside
-	// the same read-only transaction as the row queries to guarantee a consistent
-	// snapshot. The pipe-delimited concatenation is used because SQLite's
-	// COUNT(DISTINCT) only accepts a single expression; '|' is safe as long as
-	// provider titles do not contain '|' — see plans/015-history-group-by-provider.md
-	// Assumption 2.
+	// Query 3: grouped count of distinct (title, timestamp) tuples, in the same
+	// read-only transaction for a consistent snapshot. Pipe-delimited
+	// concatenation because SQLite's COUNT(DISTINCT) takes a single expression;
+	// '|' is safe as long as provider titles contain no '|' — see
+	// plans/015-history-group-by-provider.md Assumption 2.
 	groupedQuery := "SELECT COUNT(DISTINCT " +
 		"rs." + rateSourceTitleFieldName + " || '|' || rv." + rateValueTimestampFieldName +
 		") FROM " + rateValueTableName + " rv" +
@@ -414,13 +410,12 @@ func (r *RateValueRepository) ObtainHistoryForPairsPaged(
 // rows that share a second-precision RFC3339 timestamp.
 //
 // The Kind field on each SourcePairKey is not used in the SQL filter because
-// rate_values does not store kind — the kind is a property of rate_sources
-// and is threaded through SourcePairKey for the service layer to use when
-// grouping results.
+// rate_values does not store kind — kind is a property of rate_sources, threaded
+// through SourcePairKey for the service layer to use when grouping results.
 //
-// Empty pairs is a fast no-op (no query issued) to avoid an invalid IN ()
-// clause. SQLite's expression-tree limit is ~1000 terms by default; for users
-// with very many subscriptions, chunking may be necessary in a future iteration.
+// Empty pairs is a no-op (no query issued) to avoid an invalid IN () clause.
+// SQLite's expression-tree limit is ~1000 terms by default; users with very
+// many subscriptions may need chunking in a future iteration.
 func (r *RateValueRepository) ObtainValuesForPairsSince(ctx context.Context, pairs []domain.SourcePairKey, since time.Time) ([]domain.RateValue, error) {
 	if len(pairs) == 0 {
 		return []domain.RateValue{}, nil
@@ -432,7 +427,7 @@ func (r *RateValueRepository) ObtainValuesForPairsSince(ctx context.Context, pai
 	}
 	defer printRollbackError(tx)
 
-	// Build WHERE (source_name, base_currency, quote_currency) IN ((?,?,?), ...) AND timestamp >= ?
+	// WHERE (source_name, base_currency, quote_currency) IN ((?,?,?), ...) AND timestamp >= ?
 	// Each tuple contributes 3 placeholders.
 	tuples := make([]string, 0, len(pairs))
 	args := make([]any, 0, len(pairs)*3+2)
@@ -443,8 +438,8 @@ func (r *RateValueRepository) ObtainValuesForPairsSince(ctx context.Context, pai
 	args = append(args, since.UTC().Format(time.RFC3339))
 
 	// LIMIT caps the result set to prevent an unbounded scan on large data sets.
-	// len(pairs)*2000 covers ~12 days of minute-grain data per pair and is well
-	// below SQLite's default expression-tree limit of ~1000 terms.
+	// len(pairs)*2000 covers ~12 days of minute-grain data per pair and stays
+	// well below SQLite's default expression-tree limit of ~1000 terms.
 	limit := len(pairs) * 2000
 	args = append(args, limit)
 

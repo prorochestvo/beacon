@@ -72,7 +72,7 @@ func TestRun(t *testing.T) {
 		code := run([]string{"audit", "--help"}, &out, &errOut)
 
 		assert.Equal(t, 0, code)
-		// flag package writes usage to errOut for FlagSet; verify something was written
+		// FlagSet writes usage to errOut; verify something was written
 		combined := out.String() + errOut.String()
 		assert.True(t, strings.Contains(combined, "seed-glob") || strings.Contains(combined, "Usage"),
 			"expected audit usage text, got: %q", combined)

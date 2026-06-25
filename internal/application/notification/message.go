@@ -16,37 +16,33 @@ const (
 	telegramMaxMessageLen = 2048
 
 	// hashtagDelta is the per-trigger hashtag emitted when a delta condition
-	// fired. Hashtags are uppercase ASCII so they render as a single clickable
-	// token in every Telegram client and so the user can filter their chat
-	// history by trigger type. Tag list is closed — see message.go godoc.
+	// fired. Uppercase ASCII so it renders as one clickable token in every
+	// Telegram client and lets users filter chat history by trigger type.
 	hashtagDelta = "#DELTA"
 
-	// hashtagInterval/hashtagDaily/hashtagCron identify time-based triggers
-	// separately so users can distinguish e.g. a daily 09:00 alert from a
-	// fixed-interval one. The schedule-family triggers are NOT collapsed
-	// to a single tag because the user explicitly asked for per-type filtering.
+	// hashtagInterval/hashtagDaily/hashtagCron tag time-based triggers
+	// separately (not collapsed to one tag) so users can distinguish e.g. a
+	// daily 09:00 alert from a fixed-interval one.
 	hashtagInterval = "#INTERVAL"
 	hashtagDaily    = "#DAILY"
 	hashtagCron     = "#CRON"
 
-	// arrowUp is the in-table arrow for a positive delta. ASCII-range compatible
-	// with <pre> rendering; replaces the old wide emoji.
+	// arrowUp is the in-table arrow for a positive delta.
 	arrowUp = "↑" // U+2191
 
 	// arrowDown is the in-table arrow for a negative delta.
 	arrowDown = "↓" // U+2193
 
 	// minusSign is the U+2212 MINUS SIGN used in the delta and value columns so
-	// it lines up visually with the ASCII '+' used for positive values.
+	// it aligns visually with the ASCII '+' for positive values.
 	minusSign = "−" // U+2212
 )
 
 // alert carries the data for one row in the notification table.
-// BaseCurrency and QuoteCurrency are passed through html.EscapeString in pairLabel
-// before insertion into the HTML <pre> block, so free-text or odd source codes
-// cannot break or inject HTML.
-// SourceName is stored pre-escaped (html.EscapeString applied at assignment in foldIntoBuckets);
-// if it is ever rendered directly into HTML output it must not be escaped a second time.
+// BaseCurrency and QuoteCurrency are HTML-escaped in pairLabel before insertion
+// into the <pre> block, so odd source codes cannot inject HTML.
+// SourceName is stored pre-escaped (escaped at assignment in foldIntoBuckets);
+// if rendered directly into HTML it must not be escaped again.
 type alert struct {
 	SourceName    string
 	BaseCurrency  string                // e.g. "USD"
@@ -65,10 +61,8 @@ type alertTrigger struct {
 }
 
 // buildAlertMessage renders alerts into one or more Telegram HTML message parts.
-// now is the run timestamp, used verbatim in the header — the function never
-// reads time.Now() itself (project preference: clock is injected, not read).
-// loc controls the timezone the timestamp is rendered in; nil falls back to
-// UTC so callers without a loaded location stay safe.
+// now is the run timestamp used verbatim in the header — the clock is injected,
+// never read here. loc is the render timezone; nil falls back to UTC.
 // Returns an empty slice when alerts is empty.
 func buildAlertMessage(now time.Time, loc *time.Location, alerts ...alert) ([]string, error) {
 	if len(alerts) == 0 {
@@ -86,8 +80,7 @@ func buildAlertMessage(now time.Time, loc *time.Location, alerts ...alert) ([]st
 }
 
 // pairLabel returns the display pair string for a row (BID → base/quote, ASK → quote/base).
-// Each currency code is HTML-escaped so that future free-text or odd source codes cannot
-// break or inject HTML into the <pre> block. Current ASCII codes are unaffected.
+// Each currency code is HTML-escaped so odd source codes cannot inject HTML into the <pre> block.
 func pairLabel(a alert) string {
 	base := html.EscapeString(a.BaseCurrency)
 	quote := html.EscapeString(a.QuoteCurrency)
@@ -128,10 +121,9 @@ func buildRows(alerts []alert) []tableRow {
 	return rows
 }
 
-// renderBlock formats a slice of tableRow values into an aligned text block
-// ready to wrap in <pre>…</pre>. Column separator is 2 spaces. Widths are
-// computed by rune count (not bytes) so multibyte characters align correctly.
-// Trailing whitespace is trimmed from each line.
+// renderBlock formats tableRow values into an aligned text block ready to wrap
+// in <pre>…</pre>. Column separator is 2 spaces. Widths are computed by rune
+// count (not bytes) so multibyte characters align. Trailing whitespace is trimmed.
 func renderBlock(rows []tableRow) string {
 	if len(rows) == 0 {
 		return ""
@@ -165,16 +157,14 @@ func renderBlock(rows []tableRow) string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-// reasonHashtags returns the first header-line prefix for a message part.
-// It collects which trigger types fired across partAlerts and emits one
-// hashtag per distinct type. Order is canonical: #DELTA first when present,
-// then schedule-family in alphabetical order (#CRON, #DAILY, #INTERVAL).
-// Deterministic ordering keeps tests stable and avoids visual reshuffle in
-// the user's chat history when the same alert recurs.
+// reasonHashtags returns the header-line hashtag prefix for a message part:
+// one hashtag per distinct trigger type fired across partAlerts. Order is
+// canonical — #DELTA first when present, then schedule-family alphabetically
+// (#CRON, #DAILY, #INTERVAL) — so tests stay stable and the user's chat
+// history does not visually reshuffle when the same alert recurs.
 //
-// Returns an empty string when no trigger types are present (e.g. a
-// first-fire row that has no Triggers attached); the header still renders
-// "FX rates" cleanly without a leading hashtag.
+// Returns "" when no trigger types are present (e.g. a first-fire row with no
+// Triggers); the header still renders "FX rates" without a leading hashtag.
 func reasonHashtags(partAlerts []alert) string {
 	var hasDelta, hasInterval, hasDaily, hasCron bool
 	for _, a := range partAlerts {
@@ -209,15 +199,11 @@ func reasonHashtags(partAlerts []alert) string {
 
 // headerLines returns the two header lines for a message part.
 //
-// Line 1: "#TAG1 #TAG2 FX rates" or just "FX rates" when partAlerts carry
+// Line 1: "#TAG1 #TAG2 FX rates", or just "FX rates" when partAlerts carry no
+// triggers. The hashtag prefix lets users filter history by trigger type.
 //
-//	no triggers. The hashtag prefix lets Telegram users tap a tag to
-//	filter notification history by trigger type.
-//
-// Line 2: the timestamp rendered in loc with a numeric offset suffix, e.g.
-//
-//	"Sun 24 May, 14:57 +05" for Asia/Almaty or "Sun 24 May, 09:57 +00"
-//	for UTC. No leading glyph. loc=nil falls back to UTC.
+// Line 2: the timestamp in loc with a numeric offset suffix, e.g.
+// "Sun 24 May, 14:57 +05". loc=nil falls back to UTC.
 func headerLines(now time.Time, loc *time.Location, partAlerts []alert) string {
 	if loc == nil {
 		loc = time.UTC
@@ -231,10 +217,9 @@ func headerLines(now time.Time, loc *time.Location, partAlerts []alert) string {
 }
 
 // splitIntoParts packs rows into message parts bounded by telegramMaxMessageLen,
-// re-emitting the header and a balanced <pre>…</pre> block per part.
-// Widths are recomputed per part so each part is tightly aligned.
-// A single row that would alone exceed the limit is still emitted as its own
-// part (Telegram will reject it, but the loop must not spin forever).
+// re-emitting the header and a balanced <pre>…</pre> block per part with widths
+// recomputed per part. A single oversized row is still emitted as its own part
+// (Telegram rejects it, but the loop must not spin forever).
 func splitIntoParts(now time.Time, loc *time.Location, rows []tableRow, alerts []alert) []string {
 	var parts []string
 	start := 0

@@ -43,13 +43,11 @@ func IntervalLabel(v string) string {
 	}
 }
 
-// GroupThousands formats v with exactly two decimal places and groups the integer
-// part in threes using an ASCII space (0x20) as the separator. The ASCII space does
-// not collapse inside an HTML <pre> block, which is why it is used instead of a
-// thin/no-break space. Negative numbers render with a U+2212 MINUS SIGN (not ASCII
-// '-') and the sign is placed before the grouped digits, e.g. -68382.564 → "−68 382.56".
-// The value is rounded to 2 decimal places via %.2f before grouping, so 999.999
-// becomes "1 000.00". Non-finite inputs (NaN, ±Inf) return the sentinel "?.??".
+// GroupThousands formats v with two decimal places (rounded via %.2f, so 999.999
+// becomes "1 000.00") and groups the integer part in threes with an ASCII space
+// (0x20) — it does not collapse inside an HTML <pre> block, unlike a thin/no-break
+// space. Negatives use a U+2212 MINUS SIGN (not ASCII '-') before the grouped
+// digits, e.g. -68382.564 → "−68 382.56". Non-finite inputs (NaN, ±Inf) return "?.??".
 func GroupThousands(v float64) string {
 	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return "?.??"

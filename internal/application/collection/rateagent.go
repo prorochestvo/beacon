@@ -15,11 +15,10 @@ import (
 )
 
 // NewRateAgent constructs a RateAgent. proxyURL may be empty to disable proxying.
-// chromiumPath is the absolute path to the Chromium/Chrome binary used for
-// chromedp sources; pass an empty string to let chromedp search PATH.
-// The chromedp extractor is constructed eagerly but Chromium is only launched on
-// the first Run call for a chromedp source, so a plain-only deployment pays no
-// startup cost from Chromium being absent.
+// chromiumPath is the absolute path to the Chromium/Chrome binary for chromedp
+// sources; pass empty to let chromedp search PATH. The chromedp extractor is
+// constructed eagerly, but Chromium launches only on the first Run for a chromedp
+// source, so plain-only deployments pay no startup cost.
 func NewRateAgent(
 	proxyURL string,
 	chromiumPath string,
@@ -92,13 +91,10 @@ type rateValueRepository interface {
 // Run fetches all active, due rate sources and stores the results.
 // Returns a joined error containing all per-source failures; nil if all succeeded.
 func (a *RateAgent) Run(ctx context.Context) (err error) {
-	// isDue returns true if the source should run in this invocation.
-	// The grace period is interval/4, clamped to [30s, 1h], to absorb scheduling
-	// jitter between sources that share the same declared interval. For example, a
-	// 4h source uses a 1h grace (fires when elapsed ≥ 3h) so that two sources whose
-	// last runs drifted by several minutes still land in the same invocation.
-	// Short intervals (≤ 2m) keep the original 30s grace unchanged.
-	// If no successful execution history exists, the source is always considered due.
+	// isDue reports whether the source should run this invocation. The grace
+	// period is interval/4 clamped to [30s, 1h], absorbing scheduling jitter
+	// between sources sharing a declared interval (e.g. a 4h source fires at
+	// elapsed ≥ 3h). With no successful execution history, the source is due.
 	isDue := func(
 		ctx context.Context,
 		repository executionHistoryRepository,
@@ -160,10 +156,9 @@ func (a *RateAgent) execution(ctx context.Context, sources []domain.RateSource) 
 	now := time.Now().UTC()
 	errs := make(map[string]error, len(sources))
 
-	// Partition sources by fetcher_kind so chromedp sources can share one
-	// Chromium subprocess via RunBatch. The execution_history persistence
-	// loop below preserves the original source order regardless of how the
-	// batch was partitioned.
+	// Partition by fetcher_kind so chromedp sources share one Chromium
+	// subprocess via RunBatch. The persistence loop below preserves the original
+	// source order regardless of partitioning.
 	sourceErrs := make(map[string]error, len(sources))
 	var chromedpBatch []*domain.RateSource
 	for i := range sources {
@@ -179,9 +174,7 @@ func (a *RateAgent) execution(ctx context.Context, sources []domain.RateSource) 
 		}
 	}
 
-	// chromedp sources run as one batch under a shared allocator. Empty
-	// chromedpBatch is a fast no-op inside RunBatch — Chromium is never
-	// launched for plain-only ticks.
+	// chromedp sources run as one batch under a shared allocator.
 	if len(chromedpBatch) > 0 {
 		batchResults := a.chromedpExtractor.RunBatch(ctx, chromedpBatch)
 		for _, s := range chromedpBatch {
@@ -189,12 +182,11 @@ func (a *RateAgent) execution(ctx context.Context, sources []domain.RateSource) 
 		}
 	}
 
-	// Persistence runs under context.Background() so SIGTERM (which cancels
-	// the agent's ctx) does not drop execution_history rows for sources that
-	// already finished fetching. The rows are small and idempotent-per-tick;
-	// dropping them would force the next tick to re-fetch every source that
-	// completed under the dying process (cron loses observability into what
-	// actually ran).
+	// Persistence runs under context.Background() so SIGTERM (cancelling the
+	// agent's ctx) does not drop execution_history rows for sources that already
+	// finished fetching. Dropping them would force the next tick to re-fetch
+	// everything that completed under the dying process, losing cron's
+	// observability into what actually ran.
 	persistCtx := context.Background()
 	for _, source := range sources {
 		h := &domain.ExecutionHistory{

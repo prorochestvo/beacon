@@ -169,9 +169,8 @@ func TestRateCheckAgent_Run(t *testing.T) {
 	t.Run("subscription condition not satisfied — no event retained", func(t *testing.T) {
 		t.Parallel()
 
-		// Delta threshold of 1.0 with LatestNotifiedRate=0.99 and current=1.0
-		// gives delta=0.01, which is below the threshold — IsDeltaSatisfied
-		// returns false and no event is retained.
+		// delta=0.01 (1.0-0.99) is below the 1.0 threshold → IsDeltaSatisfied
+		// false, no event retained.
 		eventRepo := &mockCheckEventRepository{}
 		a := &RateCheckAgent{
 			rateSourceRepository: &mockCheckSourceRepository{sources: []domain.RateSource{{Name: "src1"}}},
@@ -311,9 +310,8 @@ func TestRateCheckAgent_Run(t *testing.T) {
 		require.Empty(t, eventRepo.retained, "no notification expected when rate is unchanged")
 	})
 
-	// Previously asserted bank titles in the message body (old format). Under the new
-	// table format source names are not shown; assert the two distinct pair strings
-	// (USD/KZT and EUR/KZT) appear as two rows in the one consolidated message.
+	// Table format does not show source names; assert the two distinct pair
+	// strings (USD/KZT, EUR/KZT) appear as two rows in one consolidated message.
 	t.Run("two sources same user — consolidated into one event with two pair rows", func(t *testing.T) {
 		t.Parallel()
 
@@ -453,8 +451,8 @@ func TestRateCheckAgent_Run(t *testing.T) {
 	t.Run("cross-source dedup same pair+kind — one row per user", func(t *testing.T) {
 		t.Parallel()
 
-		// Two BID sources for USD/KZT; the user is subscribed at both. Must produce
-		// exactly ONE row (not two) and retain both subscriptions.
+		// Two BID sources for USD/KZT, user subscribed at both → exactly ONE
+		// row, both subscriptions retained.
 		const (
 			priceA = 471.0
 			priceB = 473.0 // BID-MAX: priceB wins
@@ -493,10 +491,9 @@ func TestRateCheckAgent_Run(t *testing.T) {
 		// Count occurrences of the pair label — should appear exactly once.
 		require.Equal(t, 1, countLines(msg, "USD/KZT"), "pair must appear in exactly one row")
 
-		// Both subscriptions (one per source) must be retained, each with its
-		// own per-source LatestNotifiedRate. This catches the bug where the
-		// assignment is hoisted out of the per-source loop and the losing
-		// source's sub gets the winning price instead of its own.
+		// Both subs (one per source) retained, each with its own per-source
+		// LatestNotifiedRate. Catches the bug where hoisting the assignment out
+		// of the per-source loop gives the losing source's sub the winning price.
 		require.Len(t, subRepo.retained, 2, "retain-count canary: both subs must be retained")
 		retainedPrices := make(map[float64]bool, 2)
 		for _, s := range subRepo.retained {
@@ -509,9 +506,8 @@ func TestRateCheckAgent_Run(t *testing.T) {
 	t.Run("BID-MAX selection — higher price wins, delta follows winner", func(t *testing.T) {
 		t.Parallel()
 
-		// SRC_A has price 471, SRC_B has price 473 → SRC_B wins (MAX for BID).
-		// Delta for SRC_B = 473 - 0 (LatestNotifiedRate=0) = 473 (first-fire, suppressed in render).
-		// We test by checking the winning price in the rendered message.
+		// SRC_B (473) wins over SRC_A (471) under BID-MAX; assert the winning
+		// price in the rendered message.
 		const (
 			priceA = 471.0
 			priceB = 473.0
@@ -561,7 +557,7 @@ func TestRateCheckAgent_Run(t *testing.T) {
 	t.Run("ASK-MIN selection — lower price wins, delta follows winner", func(t *testing.T) {
 		t.Parallel()
 
-		// SRC_A has price 471, SRC_B has price 473 → SRC_A wins (MIN for ASK).
+		// SRC_A (471) wins over SRC_B (473) under ASK-MIN.
 		const (
 			priceA = 471.0
 			priceB = 473.0

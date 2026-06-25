@@ -7,11 +7,11 @@
 //	EditViewForm — create form (provider/pair/direction/condition) plus a
 //	               Back button that returns to the list view.
 //
-// The provider and pair pickers replace the original flat <select> that
-// listed every (provider, pair) combination at once. They share one CSS class
-// family (.me-edit-picker-*) and the same backdrop element; only one picker is
-// open at a time. The search input drives a targeted slot redraw of just the
-// results region so the input element survives keystrokes and keeps focus.
+// The provider and pair pickers replace the original flat <select> that listed
+// every (provider, pair) combination at once. They share one CSS class family
+// (.me-edit-picker-*) and the same backdrop; only one is open at a time. The
+// search input drives a targeted redraw of just the results region so the input
+// element survives keystrokes and keeps focus.
 //
 // AuthFailure short-circuits both views to the auth-failure message.
 package ui
@@ -27,9 +27,9 @@ import (
 )
 
 // RenderMeSubscriptionsEdit returns the full HTML for the subscription editor
-// screen. The actual content is dispatched by state.ActiveView: list view
-// shows the paginated subscription list with search; form view shows the
-// create form. AuthFailure and load-error states short-circuit both.
+// screen. Content is dispatched by state.ActiveView: list view shows the
+// paginated subscription list with search; form view shows the create form.
+// AuthFailure and load-error states short-circuit both.
 //
 // Every user-influenced field is escaped through dom.Escape before interpolation.
 func RenderMeSubscriptionsEdit(state application.MeSubscriptionsEditState) string {
@@ -51,12 +51,10 @@ func RenderMeSubscriptionsEdit(state application.MeSubscriptionsEditState) strin
 		return b.String()
 	}
 
-	// Dispatch by ActiveView. The list view requires explicit opt-in via
-	// EditViewList; the zero-value (unset) falls through to the form view.
-	// This keeps existing tests that pre-date the split working with their
-	// zero-valued state literals. Production state is always constructed
-	// with EditViewList by NewMeSubscriptionsEditPage so users land on the
-	// list first.
+	// List view requires explicit opt-in via EditViewList; the zero-value
+	// falls through to the form view, keeping pre-split tests working with
+	// their zero-valued state literals. Production state is always built with
+	// EditViewList by NewMeSubscriptionsEditPage, so users land on the list.
 	if state.ActiveView == application.EditViewList {
 		b.WriteString(renderEditListView(state))
 	} else {
@@ -66,13 +64,10 @@ func RenderMeSubscriptionsEdit(state application.MeSubscriptionsEditState) strin
 }
 
 // renderEditTopbar emits the screen header. The Back button's destination
-// depends on the active view: from the list view it returns to the main
-// Mini App screen; from the form view it returns to the list view. Routing
-// is handled entirely by the click dispatcher, which reads state.ActiveView
-// off the controller — the rendered HTML carries the same id either way.
-//
-// The title also tracks the view so the user always knows what page they
-// are on.
+// depends on the active view: from list view it returns to the main Mini App
+// screen; from form view it returns to the list. Routing is done by the click
+// dispatcher reading state.ActiveView off the controller — the HTML carries the
+// same id either way. The title tracks the view too.
 func renderEditTopbar(state application.MeSubscriptionsEditState) string {
 	title := "Manage subscriptions"
 	if state.ActiveView == application.EditViewForm {
@@ -87,12 +82,11 @@ func renderEditTopbar(state application.MeSubscriptionsEditState) string {
 	)
 }
 
-// renderEditListView returns the list-view body in this top-to-bottom order:
-// section title, "+ Add new subscription" CTA, search input, paginated list,
-// pagination row. The Add button sits up top so it is reachable without
-// scrolling past the (potentially long) list. The list-area / pagination
-// split inside the slot mirrors the picker pattern so the pagination row
-// stays in reach regardless of list length.
+// renderEditListView returns the list-view body top-to-bottom: section title,
+// "+ Add new subscription" CTA, search input, paginated list, pagination row.
+// The Add button sits up top so it is reachable without scrolling past a long
+// list. The list-area / pagination split inside the slot mirrors the picker
+// pattern so the pagination row stays in reach regardless of list length.
 func renderEditListView(state application.MeSubscriptionsEditState) string {
 	var b strings.Builder
 	b.WriteString(`<section class="me-edit-list">`)
@@ -102,16 +96,15 @@ func renderEditListView(state application.MeSubscriptionsEditState) string {
 	b.WriteString(`<button class="me-edit-save" id="me-edit-add" type="button">+ Add new subscription</button>`)
 	b.WriteString(`</div>`)
 
-	// Search input — always present so the user can filter without leaving
-	// the screen. Targeted slot redraw preserves caret position.
+	// Search input — always present. Targeted slot redraw preserves caret.
 	b.WriteString(fmt.Sprintf(
 		`<input class="me-edit-list-search" id="me-edit-list-search" type="text" `+
 			`placeholder="Search subscriptions…" value="%s" autocomplete="off">`,
 		dom.Escape(state.ListQuery),
 	))
 
-	// Results slot — items + pagination together. Search-input handler
-	// rewrites only this slot, leaving the search input alive.
+	// Results slot — items + pagination. The search-input handler rewrites
+	// only this slot, leaving the search input alive.
 	b.WriteString(`<div class="me-edit-list-results" id="me-edit-list-results-slot">`)
 	b.WriteString(RenderEditListResultsSlot(state))
 	b.WriteString(`</div>`)
@@ -121,8 +114,8 @@ func renderEditListView(state application.MeSubscriptionsEditState) string {
 }
 
 // RenderEditListResultsSlot emits the filtered + paginated list rows and the
-// prev/info/next bar. Exported so the search-input handler can redraw only
-// this slot without recreating the search input element.
+// prev/info/next bar. Exported so the search-input handler can redraw only this
+// slot without recreating the search input element.
 func RenderEditListResultsSlot(state application.MeSubscriptionsEditState) string {
 	items := filterSubscriptionItems(state.Items, state.ListQuery)
 	page := state.ListPage
@@ -281,16 +274,14 @@ func paginateSubscriptionItems(items []dto.MeSubscriptionEditRow, page, size int
 }
 
 // renderDirectionRadios emits a radio group whose options come from the
-// resolved PairDirections of the chosen pair. Labels are derived from the
-// differing segments of the underlying source names by the application
-// layer; the renderer just escapes and prints them. The BID/ASK help line
-// is shown only when both literal labels appear, so non-BID/ASK schemes
-// don't get a misleading explanation.
+// resolved PairDirections of the chosen pair. Labels are derived by the
+// application layer; the renderer escapes and prints them. The BID/ASK help
+// line shows only when both literal labels appear, so non-BID/ASK schemes don't
+// get a misleading explanation.
 //
 // Each radio carries name="me-edit-direction" and value=<source-name> so the
-// change handler routes to SetDraftDirection. No radio is pre-checked when
-// no direction has been picked yet — the user must make an explicit choice
-// for Save to succeed.
+// change handler routes to SetDraftDirection. No radio is pre-checked until a
+// direction is picked — the user must choose explicitly for Save to succeed.
 func renderDirectionRadios(state application.MeSubscriptionsEditState) string {
 	var b strings.Builder
 	b.WriteString(`<label class="me-edit-label">Direction</label>`)
@@ -325,9 +316,9 @@ func renderDirectionRadios(state application.MeSubscriptionsEditState) string {
 	return b.String()
 }
 
-// renderSourcePickers emits the provider trigger, pair trigger, optional
-// shared backdrop, and either open overlay. The triggers are always visible;
-// the overlays are conditional on state.{Provider,Pair}PickerOpen.
+// renderSourcePickers emits the provider trigger, pair trigger, optional shared
+// backdrop, and either open overlay. Triggers are always visible; overlays are
+// conditional on state.{Provider,Pair}PickerOpen.
 //
 // Layout invariant: the backdrop, when present, is the immediate previous
 // sibling of the open overlay so a click on it does not pass through to the
@@ -387,11 +378,10 @@ func renderSourcePickers(state application.MeSubscriptionsEditState) string {
 	return b.String()
 }
 
-// renderProviderPickerOverlay emits the open provider overlay with search
-// input and a results slot. The results slot is wrapped in its own div with
-// id me-edit-provider-results-slot so input-handler keystrokes can redraw the
-// list and pagination without recreating the search input element (preserving
-// caret position and focus).
+// renderProviderPickerOverlay emits the open provider overlay with search input
+// and a results slot. The slot has its own div (id me-edit-provider-results-slot)
+// so keystrokes redraw the list and pagination without recreating the search
+// input element, preserving caret position and focus.
 func renderProviderPickerOverlay(state application.MeSubscriptionsEditState) string {
 	var b strings.Builder
 	b.WriteString(`<div class="me-edit-picker-backdrop" id="me-edit-picker-backdrop"></div>`)
@@ -408,9 +398,9 @@ func renderProviderPickerOverlay(state application.MeSubscriptionsEditState) str
 	return b.String()
 }
 
-// RenderProviderResultsSlot renders the list + pagination block for the
-// provider picker. Exported so the input handler can update only this slot,
-// keeping the search-input element alive across keystrokes.
+// RenderProviderResultsSlot renders the list + pagination block for the provider
+// picker. Exported so the input handler can update only this slot, keeping the
+// search-input element alive across keystrokes.
 func RenderProviderResultsSlot(state application.MeSubscriptionsEditState) string {
 	titles := distinctProviderTitles(state.Sources, state.ProviderQuery)
 	page := state.ProviderPage
@@ -467,14 +457,13 @@ func RenderPairResultsSlot(state application.MeSubscriptionsEditState) string {
 }
 
 // renderPickerListAndPagination wraps the pre-built item HTML in a scrollable
-// list-area and emits the prev/info/next pagination bar as a separate sibling
-// outside that scroll area. The slot's flex column layout grows the list-area
-// to fill available height while the pagination row stays pinned at the
-// bottom of the overlay — so the user can change pages without scrolling
-// through a long list first.
+// list-area and emits the prev/info/next pagination bar as a sibling outside
+// that scroll area. The slot's flex column grows the list-area to fill height
+// while the pagination row stays pinned at the bottom, so the user can change
+// pages without scrolling through a long list first.
 //
-// itemKind is "provider" or "pair" and is forwarded to the pagination buttons
-// via data-kind so the click handler routes to the right controller method.
+// itemKind ("provider" or "pair") is forwarded to the pagination buttons via
+// data-kind so the click handler routes to the right controller method.
 func renderPickerListAndPagination(itemsHTML string, totalItems, page, totalPages int, itemKind string) string {
 	var b strings.Builder
 	b.WriteString(`<div class="me-edit-picker-list-area">`)
@@ -488,8 +477,7 @@ func renderPickerListAndPagination(itemsHTML string, totalItems, page, totalPage
 	b.WriteString(`</div>`)
 
 	if totalPages <= 1 {
-		// Pagination row is hidden when there is at most one page so the
-		// overlay stays compact for short lists.
+		// Pagination row hidden for a single page so the overlay stays compact.
 		return b.String()
 	}
 
@@ -579,17 +567,13 @@ func distinctProviderTitles(sources []dto.SourceResponse, query string) []string
 // substring match on either currency. Results are sorted by Base then Quote
 // so a paginated page is deterministic.
 //
-// Dedup rationale: each currency pair is persisted as TWO distinct source
-// rows — one for BID (bank purchase) and one for ASK (bank sale) — with the
-// same Title/Base/Quote but different Name (e.g. KZ_BCC_FX_BID_USD_KZT and
-// KZ_BCC_FX_ASK_USD_KZT). Showing both creates a visual duplicate ("USD/KZT"
-// listed twice) without giving the user any clue what differs between them.
-// We collapse the visual duplicate and let the user subscribe to whichever
-// underlying source sorts first by Name within the bucket; in the current
-// data set that lands on the ASK side because "ASK" < "BID" alphabetically.
-// Users who explicitly want to subscribe to BOTH directions create two
-// subscriptions today (one per source); a future UI step can surface the
-// direction toggle if a real user asks for it.
+// Dedup rationale: each currency pair is persisted as TWO source rows — BID
+// (bank purchase) and ASK (bank sale) — with the same Title/Base/Quote but
+// different Name (e.g. KZ_BCC_FX_BID_USD_KZT, KZ_BCC_FX_ASK_USD_KZT). Showing
+// both lists "USD/KZT" twice with no visible difference. We collapse the
+// duplicate and keep whichever source sorts first by Name (ASK in the current
+// data, since "ASK" < "BID"). Subscribing to both directions today means two
+// subscriptions; a direction toggle can come later if a user asks.
 func pairsForProvider(sources []dto.SourceResponse, title, query string) []dto.SourceResponse {
 	if title == "" {
 		return nil

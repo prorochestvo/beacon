@@ -14,9 +14,8 @@ import (
 	"github.com/seilbekskindirov/monitor/internal/gateway/httpV1"
 )
 
-// NewGateway builds the v1 HTTP mux with all routes registered.
-// It returns the configured *http.ServeMux ready to be passed to http.ListenAndServe.
-// chartSvc is required for the GET /api/me/rates/chart endpoint.
+// NewGateway builds the v1 HTTP mux with all routes registered, ready for
+// http.ListenAndServe. chartSvc is required for GET /api/me/rates/chart.
 func NewGateway(
 	srvRateRestApi *service.RateRestApi,
 	botToken string,

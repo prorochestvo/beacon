@@ -7,9 +7,8 @@
 //	doctor audit   --source NAME   probe one source by exact name
 //	doctor audit   --only REGEX    probe sources whose names match a regex
 //
-// Daily logs are written to <logsDir>/doctor.YYYYMMDD.log regardless of
-// subcommand. (The rulegen subcommand specifically logs to that file; the audit
-// subcommand writes its report to stdout only.)
+// rulegen logs to <logsDir>/doctor.YYYYMMDD.log; audit writes its report to
+// stdout only.
 //
 // Top-level exit codes:
 //

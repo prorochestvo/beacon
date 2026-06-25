@@ -18,9 +18,8 @@ import (
 )
 
 // meSubsFakeFetcher is a Fetcher that records every FetchJSON call and lets
-// tests configure the response per call or globally. When urlResponses is
-// non-nil, FetchJSON looks up the URL prefix in that map first; if no entry
-// matches it falls back to jsonResponse / jsonErr.
+// tests configure the response per URL prefix or globally. FetchJSON checks
+// urlResponses by prefix first, then falls back to jsonResponse / jsonErr.
 type meSubsFakeFetcher struct {
 	jsonResponse []byte
 	jsonErr      error
@@ -673,20 +672,9 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 	})
 
 	t.Run("stale result is dropped when OpenPair changed mid-fetch", func(t *testing.T) {
-		// The fake is synchronous, so we simulate "mid-fetch pair switch" by having
-		// LoadHistory succeed, then immediately overwriting OpenPair before the
-		// write-back check runs. We do this by calling OpenPairModal("EUR/KZT")
-		// inside the fake's response — instead, we test the equivalent: call
-		// LoadHistory for USD/KZT, then manually switch OpenPair to EUR/KZT so that
-		// the guard catches it.
-		//
-		// Because the fake resolves synchronously, the actual guard is exercised by
-		// calling page.OpenPairModal("EUR/KZT") after LoadHistory returns but we need
-		// to test the guard fires *before* write-back. We achieve this by inserting a
-		// hook: load page 1 successfully for USD/KZT, switch OpenPair to EUR/KZT,
-		// then load page 1 again — the result for USD/KZT must not clobber EUR/KZT.
-		// This tests the branch via the only controllable observable: state after the
-		// call where the pair was already different at call time.
+		// The fake resolves synchronously, so a true mid-fetch switch is not
+		// reproducible. Instead: load page 1 for USD/KZT, switch OpenPair to
+		// EUR/KZT, then load again — the USD/KZT result must not clobber EUR/KZT.
 		t.Parallel()
 		items := sampleHistoryItems()
 		histBody := meHistoryResponse("USD/KZT", 1, 20, int64(len(items)), items)
@@ -701,24 +689,16 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 		// Switch to a different pair without loading history for it yet.
 		page.OpenPairModal("EUR/KZT")
 
-		// The fake still returns USD/KZT data; LoadHistory for EUR/KZT should
-		// see that *OpenPair != targetPair after the fetch and drop the result.
-		// Since the URL and the fake body don't match the new pair, this exercises
-		// the guard: targetPair="EUR/KZT", *OpenPair is "EUR/KZT" — guard passes.
-		// To actually trip the guard (OpenPair != targetPair after fetch), we need
-		// the pair to change between the snapshot and the write-back. Since the fake
-		// is synchronous, we indirectly verify the guard is reachable by testing the
-		// nil-OpenPair path below.
+		// The fake still returns USD/KZT data. A true OpenPair != targetPair trip
+		// needs the pair to change between snapshot and write-back, which the
+		// synchronous fake cannot do; the nil-OpenPair subtest below covers the guard.
 		require.NoError(t, page.LoadHistory(t.Context(), 1))
 	})
 
 	t.Run("stale result is dropped when OpenPair was cleared mid-fetch", func(t *testing.T) {
-		// Simulate a goroutine that calls ClosePairModal while LoadHistory is in
-		// flight. Since the fake is synchronous, we verify the nil-guard path by
-		// having the fake close the modal before LoadHistory returns. We do this by
-		// directly manipulating state between snapshot and write-back: call
-		// LoadHistory for a page, then verify that if we close first and reload, the
-		// second call is a no-op.
+		// Simulates ClosePairModal racing an in-flight LoadHistory. The fake is
+		// synchronous, so we verify the nil-guard path directly: load a page, close
+		// the modal, then confirm the reload is a no-op.
 		t.Parallel()
 		items := sampleHistoryItems()
 		histBody := meHistoryResponse("USD/KZT", 1, 20, int64(len(items)), items)
@@ -740,9 +720,9 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 	})
 
 	t.Run("drops stale fetch when SelectedSourceTitle changes mid-flight", func(t *testing.T) {
-		// Channel-gated fake: the first FetchJSON call blocks until the test
-		// sends on release, so we can mutate SelectedSourceTitle between the snapshot
-		// and the write-back to verify the stale guard fires.
+		// Channel-gated fake: the first FetchJSON call blocks until release, so we
+		// can mutate SelectedSourceTitle between snapshot and write-back to verify
+		// the stale guard fires.
 		t.Parallel()
 
 		items := sampleHistoryItems()
@@ -804,8 +784,8 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 }
 
 // gatedFetcher is a test-only Fetcher. The first FetchJSON call signals started
-// and then blocks until the test sends on release. Subsequent calls return the
-// fallback response immediately.
+// then blocks until the test sends on release; subsequent calls return the
+// fallback immediately.
 type gatedFetcher struct {
 	// firstResponse is returned by the first (blocked) FetchJSON call.
 	firstResponse []byte
@@ -816,7 +796,7 @@ type gatedFetcher struct {
 	// release must be sent on to unblock the first FetchJSON.
 	release chan struct{}
 	// calls counts FetchJSON invocations; atomic because the gated goroutine and
-	// the main test goroutine both read/write it concurrently.
+	// the main test goroutine access it concurrently.
 	calls atomic.Int32
 }
 
@@ -1070,12 +1050,10 @@ func TestMeSubscriptionsPage_SetPeriod(t *testing.T) {
 	})
 
 	t.Run("stale chart fetch is dropped when period changes mid-flight", func(t *testing.T) {
-		// The gatedFetcher blocks the first FetchJSON call (the period=30 chart
-		// fetch) until the test releases it. While it is blocked, the test calls
-		// SetPeriod(7) — which completes immediately because the fallback response
-		// is used for the second call. When the blocked (stale) call is released
-		// it finds p.state.Period == 7 != 30 and drops the result, leaving Chart
-		// as set by the period=7 fetch.
+		// The gatedFetcher blocks the period=30 fetch until release. Meanwhile
+		// SetPeriod(7) completes via the fallback response. When the stale call is
+		// released it finds Period == 7 != 30 and drops the result, leaving Chart
+		// from the period=7 fetch.
 		t.Parallel()
 
 		pairs7 := []dto.MeChartPairRow{

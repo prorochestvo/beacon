@@ -356,9 +356,9 @@ func (m *mockRateExtractor) Run(_ context.Context, _ *domain.RateSource) error {
 	return m.err
 }
 
-// RunBatch lets the same mock satisfy chromedpBatchExtractor. Each source in
-// the batch counts as one call so existing per-source assertions (chrome.calls
-// == 1 for a single chromedp source) still hold.
+// RunBatch lets the same mock satisfy chromedpBatchExtractor. Each batch source
+// counts as one call so per-source assertions (chrome.calls == 1 for one
+// chromedp source) still hold.
 func (m *mockRateExtractor) RunBatch(_ context.Context, batch []*domain.RateSource) map[string]error {
 	out := make(map[string]error, len(batch))
 	for _, s := range batch {

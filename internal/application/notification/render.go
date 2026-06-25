@@ -7,24 +7,24 @@ import (
 	"github.com/seilbekskindirov/monitor/internal/domain"
 )
 
-// SubscriptionSnapshot pairs one subscription with the source metadata and the
-// currently-known rate value needed to build a row in the digest. Sources with
-// no current rate must be omitted by the caller — we cannot fabricate one.
+// SubscriptionSnapshot pairs one subscription with its source metadata and the
+// current rate value for a digest row. The caller must omit sources with no
+// current rate — one cannot be fabricated.
 type SubscriptionSnapshot struct {
 	Subscription domain.RateUserSubscription
 	Source       domain.RateSource
 	CurrentPrice float64
 }
 
-// BuildSubscriptionDigest renders all caller subscriptions into one or more
-// Telegram HTML message parts using the same aligned-table format the scheduled
-// notifier produces. Cross-source dedup on (BaseCurrency, QuoteCurrency, Kind)
-// matches RateCheckAgent.Run: BID keeps MAX price, ASK keeps MIN price, ties
-// resolved by first-seen. The header is the plain "FX rates" title — no
-// hashtag — because the digest is on-demand, not a trigger fire.
+// BuildSubscriptionDigest renders caller subscriptions into one or more Telegram
+// HTML message parts using the scheduled notifier's aligned-table format.
+// Cross-source dedup on (BaseCurrency, QuoteCurrency, Kind) matches
+// RateCheckAgent.Run: BID keeps MAX price, ASK keeps MIN, ties go to first-seen.
+// The header is the plain "FX rates" title — no hashtag — since the digest is
+// on-demand, not a trigger fire.
 //
-// Returns an empty slice when snapshots is empty (the caller is responsible
-// for the "no subscriptions yet" empty-state UX).
+// Returns an empty slice when snapshots is empty (the caller owns the
+// "no subscriptions yet" empty-state UX).
 func BuildSubscriptionDigest(now time.Time, loc *time.Location, snapshots []SubscriptionSnapshot) ([]string, error) {
 	if len(snapshots) == 0 {
 		return nil, nil
@@ -37,22 +37,20 @@ func BuildSubscriptionDigest(now time.Time, loc *time.Location, snapshots []Subs
 
 	alerts := make([]alert, 0, len(buckets))
 	for _, b := range buckets {
-		// Digest is on-demand, not a trigger fire — Triggers is nil (zero value)
-		// so reasonHashtags returns "" and headerLines produces the bare header.
+		// Digest is on-demand — Triggers is nil, so reasonHashtags returns ""
+		// and headerLines produces the bare header.
 		alerts = append(alerts, b.a)
 	}
 
 	return buildAlertMessage(now, loc, alerts...)
 }
 
-// foldIntoBuckets inserts or updates a dedupBucket for the snapshot's (base, quote, kind)
-// key, applying the BID-MAX / ASK-MIN extremum rule. Price and delta are always kept
-// coherent: they are replaced together and always come from the same source.
-// Strict > (BID) / < (ASK) means first-seen wins on equal prices, matching
-// the behaviour in RateCheckAgent.Run.
+// foldIntoBuckets inserts or updates a dedupBucket for the snapshot's
+// (base, quote, kind) key under the BID-MAX / ASK-MIN extremum rule. Price and
+// delta are always replaced together (coherent, from the same source). Strict
+// > (BID) / < (ASK) means first-seen wins on equal prices, matching RateCheckAgent.Run.
 //
-// Trigger accumulation is intentionally absent — only the agent path collects
-// triggers. The digest path calls this helper with no trigger side-effects.
+// No trigger accumulation — only the agent path collects triggers.
 func foldIntoBuckets(buckets map[string]*dedupBucket, snap SubscriptionSnapshot) {
 	key := snap.Source.BaseCurrency + "|" + snap.Source.QuoteCurrency + "|" + string(snap.Source.Kind)
 	delta := snap.CurrentPrice - snap.Subscription.LatestNotifiedRate
@@ -74,9 +72,8 @@ func foldIntoBuckets(buckets map[string]*dedupBucket, snap SubscriptionSnapshot)
 		return
 	}
 
-	// Extremum selection: BID keeps MAX price, ASK keeps MIN price.
-	// Price and delta are replaced together (coherence invariant).
-	// SourceName tracks whichever source holds the winning price.
+	// Extremum selection: BID keeps MAX, ASK keeps MIN. Price, delta, and
+	// SourceName are replaced together (coherence invariant).
 	switch snap.Source.Kind {
 	case domain.RateSourceKindBID:
 		if snap.CurrentPrice > b.a.CurrentPrice {

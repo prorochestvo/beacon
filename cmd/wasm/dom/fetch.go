@@ -10,12 +10,11 @@ import (
 )
 
 // FetchNoContent issues an HTTP request via window.fetch and discards the
-// response body. It is intended for endpoints that return 204 No Content (e.g.
-// PATCH /api/sources/{name}/active). Trying to JSON-decode a 204 response would
-// produce an unmarshal error, so this helper exists to keep that path clean.
+// response body. For 204 No Content endpoints (e.g. PATCH
+// /api/sources/{name}/active), where JSON-decoding would yield an unmarshal
+// error.
 //
-// The same js.Func lifecycle rules as FetchJSON apply: every allocation is paired
-// with a deferred Release.
+// Same js.Func lifecycle as FetchJSON: every allocation has a deferred Release.
 func FetchNoContent(ctx context.Context, method, url string, body any, headers map[string]string) error {
 	opts := map[string]any{"method": method}
 
@@ -44,8 +43,8 @@ func FetchNoContent(ctx context.Context, method, url string, body any, headers m
 
 	thenFn = js.FuncOf(func(_ js.Value, args []js.Value) any {
 		resp := args[0]
-		// window.fetch resolves its promise even for 4xx/5xx responses.
-		// response.ok is false for any status outside 200–299; treat those as errors.
+		// window.fetch resolves even for 4xx/5xx; response.ok is false for any
+		// status outside 200–299, so treat those as errors.
 		if !resp.Get("ok").Bool() {
 			ch <- result{err: fmt.Errorf("http %d", resp.Get("status").Int())}
 			return nil
@@ -73,21 +72,20 @@ func FetchNoContent(ctx context.Context, method, url string, body any, headers m
 // FetchJSON issues an HTTP request via window.fetch and decodes the response
 // body as JSON into T.
 //
-// FetchJSON MUST be called from a goroutine. The JS event loop is owned by the
-// main goroutine; waiting synchronously there deadlocks.
+// FetchJSON MUST be called from a goroutine: the JS event loop is owned by the
+// main goroutine, where waiting synchronously deadlocks.
 //
-// Every js.FuncOf allocation is paired with a deferred Release so that the
-// runtime's function table does not grow unbounded across calls.
+// Every js.FuncOf allocation has a deferred Release so the runtime's function
+// table does not grow unbounded across calls.
 //
-// When body is nil the "body" key is omitted from the fetch options; passing
-// an explicit null for GET requests can misbehave in older browsers.
-// When headers is nil or empty the "headers" key is omitted entirely.
+// When body is nil the "body" key is omitted (an explicit null on GET can
+// misbehave in older browsers); when headers is nil or empty "headers" is
+// omitted.
 //
-// When ctx is cancelled while the fetch is in flight, FetchJSON returns
-// ctx.Err() immediately. The browser-side promise still runs to completion;
-// the callbacks are released before it settles, so the WASM runtime logs
-// "call to released function" to the browser console for each callback the
-// promise eventually fires. This is cosmetic — no panic, no leak.
+// If ctx is cancelled mid-flight, FetchJSON returns ctx.Err() immediately. The
+// browser-side promise still runs to completion, but the callbacks are released
+// before it settles, so the WASM runtime logs "call to released function" to the
+// console for each callback it eventually fires. Cosmetic — no panic, no leak.
 func FetchJSON[T any](ctx context.Context, method, url string, body any, headers map[string]string) (T, error) {
 	var zero T
 
@@ -119,8 +117,8 @@ func FetchJSON[T any](ctx context.Context, method, url string, body any, headers
 
 	thenFn = js.FuncOf(func(_ js.Value, args []js.Value) any {
 		resp := args[0]
-		// window.fetch resolves its promise even for 4xx/5xx responses.
-		// response.ok is false for any status outside 200–299; treat those as errors.
+		// window.fetch resolves even for 4xx/5xx; response.ok is false for any
+		// status outside 200–299, so treat those as errors.
 		if !resp.Get("ok").Bool() {
 			ch <- result{err: fmt.Errorf("http %d", resp.Get("status").Int())}
 			return nil
