@@ -225,17 +225,19 @@ make run           # starts collector, notifier, web
 ```
 
 Deployment ordering: the `.github/workflows/release.yml` deploy job (triggered
-by a `v*` tag) runs `cmd/migrator` over SSH against the target host (with the
-service's `EnvironmentFile` sourced) before swapping the service binary and
-restarting the unit. The service systemd unit in `configs/` does **not** invoke
-the migrator via `ExecStartPre` — schema reconciliation is a deploy-time step,
-not a startup-time step.
+by an `r_*` release tag) runs the migrator via the `beacon-migrate` one-shot
+systemd unit after flipping the `bin/release` channel symlink and before
+restarting the service. The service systemd unit in `configs/` does **not**
+invoke the migrator via `ExecStartPre` — schema reconciliation is a deploy-time
+step, not a startup-time step.
 
 ### Environment Variables
 
 - `BEACON_SQLITEDB_DSN` — SQLite connection string, parsed via `dsninjector.Unmarshal`. Format: `sqlite://<path-to-db-file>`
 - `BEACON_TELEGRAMBOT_DSN` — Telegram bot credentials parsed via `dsninjector.Unmarshal`. Format: `<adminChatID>:<botToken>@<host>` where `Addr()` returns the token and `Login()` returns the admin chat ID.
 - `BEACON_PROXY_URL` — optional outbound proxy URL, parsed via `dsninjector.Unmarshal`. Format: `<scheme>://<host>:<port>` (e.g. `http://127.0.0.1:7788`). When unset or empty all outbound traffic is direct. Used by `cmd/collector` (plain and chromedp rate sources) and `cmd/doctor` (AI provider calls and chromedp fetcher). Telegram Bot API traffic bypasses the proxy unconditionally — the bypass is enforced in code via a hardcoded `Proxy: nil` transport in `internal/infrastructure/telegrambot/tbotclient.go`. Do not configure `HTTPS_PROXY`, `HTTP_PROXY`, or `NO_PROXY` for proxy routing — they are not consulted by any component in this project.
+- `BEACON_CHROMIUM_PATH` — optional absolute path to the Chromium/Chrome binary for `fetcher_kind='chromedp'` sources. Read by `cmd/collector` and `cmd/doctor`. When unset, chromedp searches PATH (`chromium`, `chromium-browser`, `google-chrome`, `chrome`).
+- `BEACON_AI_PRIMARY_DSN` (required) and `BEACON_AI_FALLBACK_DSN` (optional) — AI provider DSNs read only by `cmd/doctor rulegen`. See `cmd/doctor/README.md` for the DSN format and provider details.
 
 > The public HTTPS origin of the `cmd/web` server is **not** an env var — see the `--api-dsn` CLI flag on the `cmd/web` binary, baked into the systemd unit's `ExecStart` line.
 
@@ -277,8 +279,8 @@ The host uses the standard release layout: immutable `/opt/beacon/artifacts/<VER
 build sets and a `bin/release` channel symlink the units run through
 (`ExecStart=/opt/beacon/bin/release/webapp …`). The CI deploy user may write only
 inside `artifacts/` and `bin/`; `.env`, the DB, and the base dir are root-owned and
-out of its reach. The `.github/workflows/release.yml` deploy job (triggered by a `v*`
-tag) uploads a new `artifacts/<VERSION_ID>/`, flips the symlink, runs migrations via
+out of its reach. The `.github/workflows/release.yml` deploy job (triggered by an `r_*`
+release tag) uploads a new `artifacts/<VERSION_ID>/`, flips the symlink, runs migrations via
 the `beacon-migrate` one-shot unit (root, so the deploy user never writes the DB),
 restarts `beacon`, and health-gates on `/health/check` (readiness probe) with a one-symlink rollback. Schema
 reconciliation is a deploy-time step, not a startup-time step — the service unit does
