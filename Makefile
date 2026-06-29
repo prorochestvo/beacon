@@ -36,8 +36,8 @@ init:
 		sudo curl -fsSL https://developers.cloudflare.com/ssl/static/authenticated_origin_pull_ca.pem -o /etc/nginx/certificates/cloudflare/origin-pull-ca.pem; \
 		sudo install -m 0644 /tmp/nginx.beacon_common_settings.conf /etc/nginx/snippets/beacon.common_settings.conf; \
 		sudo install -m 0644 /tmp/nginx.beacon_gzip.conf /etc/nginx/snippets/beacon.gzip.conf; \
-		sudo install -m 0644 /tmp/nginx.beacon.conf /etc/nginx/sites-available/beacon.seilbekskindirov.dev; \
-		sudo ln -sfn /etc/nginx/sites-available/beacon.seilbekskindirov.dev /etc/nginx/sites-enabled/beacon.seilbekskindirov.dev.conf; \
+		sudo install -m 0644 /tmp/nginx.beacon.conf /etc/nginx/sites-available/dev.seilbekskindirov.beacon; \
+		sudo ln -sfn /etc/nginx/sites-available/dev.seilbekskindirov.beacon /etc/nginx/sites-enabled/dev.seilbekskindirov.beacon.conf; \
 		sudo rm -f /tmp/beacon.service /tmp/beacon-migrate.service /tmp/beacon-deploy.sudoers /tmp/sqlite_dump.sh /tmp/sqlite_dump.env.example /tmp/nginx.beacon.conf /tmp/nginx.beacon_common_settings.conf /tmp/nginx.beacon_gzip.conf; \
 		if sudo test -s /etc/nginx/certificates/cloudflare/seilbekskindirov.dev.pem && sudo test -s /etc/nginx/certificates/cloudflare/seilbekskindirov.dev.key; then \
 			sudo nginx -t && sudo systemctl reload nginx && echo "nginx: beacon edge vhost live"; \
