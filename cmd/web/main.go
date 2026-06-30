@@ -145,6 +145,7 @@ func main() {
 		},
 		[]inspector.Inspector{
 			inspector.NewOpenMeteoInspector(),
+			inspector.NewGismeteoInspector(),
 		},
 	)
 	log.Println("dependencies: initiated")

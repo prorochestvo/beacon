@@ -90,20 +90,26 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		}
 	}
 
+	today := time.Now().UTC().Format("2006-01-02")
+
 	tempMax := 25.0
 	tempMin := 15.0
 	goodObs := &domain.WeatherObservation{
-		Provider:   "open-meteo",
-		LocationID: "loc1",
-		TempMax:    &tempMax,
-		TempMin:    &tempMin,
+		Provider:     domain.ProviderOpenMeteo,
+		LocationID:   "loc1",
+		TempMax:      &tempMax,
+		TempMin:      &tempMin,
+		ForecastDate: today,
+		CapturedAt:   time.Now().UTC(),
 	}
 
 	t.Run("due city with observation queues one event and advances", func(t *testing.T) {
 		t.Parallel()
 		city := dueCity("c1", "user1", "loc1")
 		cityRepo := &mockWeatherCheckCityRepo{cities: []domain.WeatherUserCity{city}}
-		obsRepo := &mockWeatherCheckObsRepo{obs: goodObs}
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: goodObs,
+		}}
 		eventRepo := &mockCheckEventRepository{}
 
 		a := &WeatherCheckAgent{
@@ -129,7 +135,9 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		t.Parallel()
 		city := notDueCity("c1", "user1", "loc1")
 		cityRepo := &mockWeatherCheckCityRepo{cities: []domain.WeatherUserCity{city}}
-		obsRepo := &mockWeatherCheckObsRepo{obs: goodObs}
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: goodObs,
+		}}
 		eventRepo := &mockCheckEventRepository{}
 
 		a := &WeatherCheckAgent{
@@ -147,7 +155,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		t.Parallel()
 		city := dueCity("c1", "user1", "loc1")
 		cityRepo := &mockWeatherCheckCityRepo{cities: []domain.WeatherUserCity{city}}
-		obsRepo := &mockWeatherCheckObsRepo{obsErr: internal.ErrNotFound}
+		obsRepo := &mockWeatherCheckObsRepo{globalErr: internal.ErrNotFound}
 		eventRepo := &mockCheckEventRepository{}
 
 		a := &WeatherCheckAgent{
@@ -172,7 +180,9 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 			NotifyHour:  0,
 		}
 		cityRepo := &mockWeatherCheckCityRepo{cities: []domain.WeatherUserCity{badCity}}
-		obsRepo := &mockWeatherCheckObsRepo{obs: goodObs}
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: goodObs,
+		}}
 		eventRepo := &mockCheckEventRepository{}
 		var logBuf strings.Builder
 
@@ -192,7 +202,9 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		t.Parallel()
 		city := dueCity("c1", "user1", "loc1")
 		cityRepo := &mockWeatherCheckCityRepo{cities: []domain.WeatherUserCity{city}}
-		obsRepo := &mockWeatherCheckObsRepo{obs: goodObs}
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: goodObs,
+		}}
 		eventRepo := &mockCheckEventRepository{err: errors.New("db write fail")}
 
 		a := &WeatherCheckAgent{
@@ -217,17 +229,14 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		require.Error(t, a.Run(t.Context()))
 	})
 
-	t.Run("one city fails render, other cities still processed", func(t *testing.T) {
+	t.Run("one city fails obs load, other cities still processed", func(t *testing.T) {
 		t.Parallel()
-		// The observation repo is configured to return an error for loc1 and succeed
-		// for loc2. The per-location obs-load error is accumulated (not fatal) so loc2
-		// still gets its event queued and last_notified_at advanced.
 		city1 := dueCity("c1", "user1", "loc1")
 		city2 := dueCity("c2", "user2", "loc2")
-		// obs repo returns error for loc1, ok for loc2
-		obsRepo := &mockWeatherCheckObsRepo{obsErrByLocation: map[string]error{
-			"loc1": errors.New("transient fail"),
-		}, obs: goodObs}
+		obsRepo := &mockWeatherCheckObsRepo{
+			obsErrByLocation: map[string]error{"loc1": errors.New("transient fail")},
+			obsByProvider:    map[string]*domain.WeatherObservation{domain.ProviderOpenMeteo: goodObs},
+		}
 		eventRepo := &mockCheckEventRepository{}
 		cityRepo := &mockWeatherCheckCityRepo{cities: []domain.WeatherUserCity{city1, city2}}
 
@@ -242,6 +251,144 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		assert.Len(t, eventRepo.retained, 1, "city2 must still be queued")
 		assert.Len(t, cityRepo.advanced, 1, "only city2 must be advanced")
 		assert.Equal(t, "c2", cityRepo.advanced[0])
+	})
+
+	// Gismeteo cross-provider subtests.
+
+	t.Run("due city with fresh gismeteo observation renders both providers", func(t *testing.T) {
+		t.Parallel()
+		city := dueCity("c1", "user1", "loc1")
+		gismeteoObs := &domain.WeatherObservation{
+			Provider:     domain.ProviderGismeteo,
+			LocationID:   "loc1",
+			ForecastDate: today,
+			CapturedAt:   time.Now().UTC().Add(-1 * time.Hour), // recent
+		}
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: goodObs,
+			domain.ProviderGismeteo:  gismeteoObs,
+		}}
+		eventRepo := &mockCheckEventRepository{}
+		cityRepo := &mockWeatherCheckCityRepo{cities: []domain.WeatherUserCity{city}}
+
+		a := &WeatherCheckAgent{
+			cityRepo:  cityRepo,
+			obsRepo:   obsRepo,
+			eventRepo: eventRepo,
+			logger:    io.Discard,
+		}
+		require.NoError(t, a.Run(t.Context()))
+		require.Len(t, eventRepo.retained, 1)
+		assert.Contains(t, eventRepo.retained[0].Message, "Gismeteo",
+			"message must contain the Gismeteo provider label when a fresh gismeteo observation is available")
+	})
+
+	t.Run("due city with only Open-Meteo renders single-provider summary", func(t *testing.T) {
+		t.Parallel()
+		city := dueCity("c1", "user1", "loc1")
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: goodObs,
+			// no gismeteo entry → ErrNotFound for gismeteo lookup
+		}}
+		eventRepo := &mockCheckEventRepository{}
+		cityRepo := &mockWeatherCheckCityRepo{cities: []domain.WeatherUserCity{city}}
+
+		a := &WeatherCheckAgent{
+			cityRepo:  cityRepo,
+			obsRepo:   obsRepo,
+			eventRepo: eventRepo,
+			logger:    io.Discard,
+		}
+		require.NoError(t, a.Run(t.Context()))
+		require.Len(t, eventRepo.retained, 1)
+		assert.NotContains(t, eventRepo.retained[0].Message, "Gismeteo",
+			"message must not mention Gismeteo when no gismeteo observation exists")
+	})
+
+	t.Run("stale gismeteo observation (old forecast_date) yields single-provider summary", func(t *testing.T) {
+		t.Parallel()
+		city := dueCity("c1", "user1", "loc1")
+		yesterday := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+		staleGismeteoObs := &domain.WeatherObservation{
+			Provider:     domain.ProviderGismeteo,
+			LocationID:   "loc1",
+			ForecastDate: yesterday, // yesterday's date → not fresh for today's summary
+			CapturedAt:   time.Now().UTC().Add(-2 * time.Hour),
+		}
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: goodObs,
+			domain.ProviderGismeteo:  staleGismeteoObs,
+		}}
+		eventRepo := &mockCheckEventRepository{}
+		cityRepo := &mockWeatherCheckCityRepo{cities: []domain.WeatherUserCity{city}}
+
+		a := &WeatherCheckAgent{
+			cityRepo:  cityRepo,
+			obsRepo:   obsRepo,
+			eventRepo: eventRepo,
+			logger:    io.Discard,
+		}
+		require.NoError(t, a.Run(t.Context()))
+		require.Len(t, eventRepo.retained, 1)
+		assert.NotContains(t, eventRepo.retained[0].Message, "Gismeteo",
+			"stale gismeteo (wrong forecast_date) must not appear in summary")
+	})
+
+	t.Run("gismeteo observation beyond CapturedAt age limit yields single-provider summary", func(t *testing.T) {
+		t.Parallel()
+		city := dueCity("c1", "user1", "loc1")
+		tooOldGismeteoObs := &domain.WeatherObservation{
+			Provider:     domain.ProviderGismeteo,
+			LocationID:   "loc1",
+			ForecastDate: today,                                 // same date
+			CapturedAt:   time.Now().UTC().Add(-25 * time.Hour), // older than 24 h limit
+		}
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: goodObs,
+			domain.ProviderGismeteo:  tooOldGismeteoObs,
+		}}
+		eventRepo := &mockCheckEventRepository{}
+		cityRepo := &mockWeatherCheckCityRepo{cities: []domain.WeatherUserCity{city}}
+
+		a := &WeatherCheckAgent{
+			cityRepo:  cityRepo,
+			obsRepo:   obsRepo,
+			eventRepo: eventRepo,
+			logger:    io.Discard,
+		}
+		require.NoError(t, a.Run(t.Context()))
+		require.Len(t, eventRepo.retained, 1)
+		assert.NotContains(t, eventRepo.retained[0].Message, "Gismeteo",
+			"a gismeteo observation older than weatherGismeteoMaxAge must be treated as absent")
+	})
+
+	t.Run("non-ErrNotFound gismeteo error is logged but does not block Open-Meteo summary", func(t *testing.T) {
+		t.Parallel()
+		city := dueCity("c1", "user1", "loc1")
+		gismeteoErr := errors.New("gismeteo db corrupted")
+		obsRepo := &mockWeatherCheckObsRepo{
+			obsByProvider: map[string]*domain.WeatherObservation{
+				domain.ProviderOpenMeteo: goodObs,
+			},
+			gismeteoErr: gismeteoErr, // returned for gismeteo lookup only
+		}
+		eventRepo := &mockCheckEventRepository{}
+		cityRepo := &mockWeatherCheckCityRepo{cities: []domain.WeatherUserCity{city}}
+		var logBuf strings.Builder
+
+		a := &WeatherCheckAgent{
+			cityRepo:  cityRepo,
+			obsRepo:   obsRepo,
+			eventRepo: eventRepo,
+			logger:    &logBuf,
+		}
+		// The Run must NOT return an error: gismeteo never blocks the summary.
+		require.NoError(t, a.Run(t.Context()))
+		require.Len(t, eventRepo.retained, 1, "Open-Meteo summary must still be queued")
+		assert.NotContains(t, eventRepo.retained[0].Message, "Gismeteo",
+			"message must not mention Gismeteo when lookup errored")
+		assert.Contains(t, logBuf.String(), "gismeteo",
+			"error must be logged for observability")
 	})
 }
 
@@ -262,24 +409,35 @@ func (m *mockWeatherCheckCityRepo) AdvanceLastNotifiedAt(_ context.Context, id s
 }
 
 // mockWeatherCheckObsRepo simulates ObtainLatestObservation for the check agent.
+// Priority of lookups:
+//  1. obsErrByLocation[locationID] — per-location error regardless of provider.
+//  2. gismeteoErr — returned for any gismeteo lookup when set.
+//  3. obsByProvider[provider] — provider-keyed observation.
+//  4. globalErr — returned when none of the above match.
 type mockWeatherCheckObsRepo struct {
-	obs              *domain.WeatherObservation
-	obsErr           error
+	obsByProvider    map[string]*domain.WeatherObservation
 	obsErrByLocation map[string]error
+	gismeteoErr      error // non-nil → returned for gismeteo lookups only
+	globalErr        error // fallback when no entry found
 }
 
-func (m *mockWeatherCheckObsRepo) ObtainLatestObservation(_ context.Context, locationID, _ string) (*domain.WeatherObservation, error) {
+func (m *mockWeatherCheckObsRepo) ObtainLatestObservation(_ context.Context, locationID, provider string) (*domain.WeatherObservation, error) {
 	if m.obsErrByLocation != nil {
 		if err, ok := m.obsErrByLocation[locationID]; ok {
 			return nil, err
 		}
 	}
-	if m.obsErr != nil {
-		return nil, m.obsErr
+	if provider == domain.ProviderGismeteo && m.gismeteoErr != nil {
+		return nil, m.gismeteoErr
 	}
-	if m.obs == nil {
-		return nil, internal.ErrNotFound
+	if m.obsByProvider != nil {
+		if obs, ok := m.obsByProvider[provider]; ok {
+			cp := *obs
+			return &cp, nil
+		}
 	}
-	cp := *m.obs
-	return &cp, nil
+	if m.globalErr != nil {
+		return nil, m.globalErr
+	}
+	return nil, internal.ErrNotFound
 }

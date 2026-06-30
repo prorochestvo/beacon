@@ -11,6 +11,12 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
+// weatherGismeteoMaxAge is the maximum age of a gismeteo observation that will be
+// included in the morning summary. An observation older than this constant is treated
+// as stale and the summary falls back to Open-Meteo only. This is a belt-and-braces
+// backstop: the forecast_date equality check is the primary freshness guard.
+const weatherGismeteoMaxAge = 24 * time.Hour
+
 // NewWeatherCheckAgent constructs a WeatherCheckAgent. All arguments are required.
 func NewWeatherCheckAgent(
 	cityRepo weatherCheckCityRepository,
@@ -36,6 +42,11 @@ func NewWeatherCheckAgent(
 // summaries, and queues them as RateUserEvents for delivery by RateDispatchAgent.
 // It reuses the existing FX notification queue (rate_user_events) with an empty
 // SourceName → NULL so there is no FK dependency on rate_sources.
+//
+// When a fresh gismeteo observation exists for the same forecast_date, both
+// observations are passed to RenderMorningSummary for a side-by-side comparison.
+// A missing or stale gismeteo observation is a normal non-error condition — the
+// summary falls back to Open-Meteo only.
 type WeatherCheckAgent struct {
 	cityRepo  weatherCheckCityRepository
 	obsRepo   weatherCheckObsRepository
@@ -55,8 +66,9 @@ type weatherCheckObsRepository interface {
 }
 
 // Run loads all morning-summary city subscriptions, evaluates which are due in
-// each city's local timezone, loads the latest Open-Meteo observation, renders the
-// summary, and queues it as a RateUserEvent.
+// each city's local timezone, loads the latest Open-Meteo observation, optionally
+// loads a gismeteo observation for cross-provider comparison, renders the summary,
+// and queues it as a RateUserEvent.
 //
 // Critical ordering: AdvanceLastNotifiedAt is called only after the event is
 // successfully queued. On a RetainRateUserEvent failure, the city is NOT marked
@@ -96,7 +108,14 @@ func (a *WeatherCheckAgent) Run(ctx context.Context) error {
 			continue
 		}
 
-		htmlMsg, renderErr := RenderMorningSummary(city, *obs)
+		// Attempt to load a fresh gismeteo observation for cross-provider comparison.
+		// A missing or stale gismeteo observation is a normal non-error condition.
+		observations := []domain.WeatherObservation{*obs}
+		if gObs := a.loadFreshGismeteo(ctx, city.LocationID, obs.ForecastDate, now); gObs != nil {
+			observations = append(observations, *gObs)
+		}
+
+		htmlMsg, renderErr := RenderMorningSummary(city, observations...)
 		if renderErr != nil {
 			errs = append(errs, fmt.Errorf("weather check city=%s: render: %w", city.ID, renderErr))
 			continue
@@ -127,4 +146,41 @@ func (a *WeatherCheckAgent) Run(ctx context.Context) error {
 	// Proof-of-execution marker matching RateCheckAgent's pattern.
 	fmt.Fprintf(a.logger, "weather check: queued %d/%d events\n", totalQueued, totalAttempted)
 	return errors.Join(errs...)
+}
+
+// loadFreshGismeteo attempts to load the latest gismeteo observation for locationID.
+// Returns nil (without error) when:
+//   - no gismeteo observation exists (ErrNotFound),
+//   - the observation's ForecastDate does not match openMeteoForecastDate,
+//   - the observation's CapturedAt is older than weatherGismeteoMaxAge.
+//
+// A non-ErrNotFound error is logged and treated the same as an absent observation —
+// gismeteo must never block the morning summary.
+func (a *WeatherCheckAgent) loadFreshGismeteo(ctx context.Context, locationID, openMeteoForecastDate string, now time.Time) *domain.WeatherObservation {
+	gObs, err := a.obsRepo.ObtainLatestObservation(ctx, locationID, domain.ProviderGismeteo)
+	if err != nil {
+		if !errors.Is(err, internal.ErrNotFound) {
+			// Unexpected error — log so operators can investigate without failing the summary.
+			fmt.Fprintf(a.logger, "weather check: location %s: load gismeteo observation: %v\n", locationID, err)
+		}
+		return nil
+	}
+
+	// forecast_date equality is the primary guard: yesterday's gismeteo scrape must
+	// not appear next to today's Open-Meteo observation.
+	if gObs.ForecastDate != openMeteoForecastDate {
+		fmt.Fprintf(a.logger, "weather check: location %s: gismeteo observation skipped (forecast_date %q != open-meteo %q)\n",
+			locationID, gObs.ForecastDate, openMeteoForecastDate)
+		return nil
+	}
+
+	// CapturedAt age bound is a belt-and-braces backstop in case forecast_date
+	// comparison passes but the observation is nonetheless very old.
+	if now.Sub(gObs.CapturedAt) > weatherGismeteoMaxAge {
+		fmt.Fprintf(a.logger, "weather check: location %s: gismeteo observation skipped (captured_at %s is older than %s)\n",
+			locationID, gObs.CapturedAt.Format(time.RFC3339), weatherGismeteoMaxAge)
+		return nil
+	}
+
+	return gObs
 }

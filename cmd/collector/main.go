@@ -203,7 +203,18 @@ func buildRunners(
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("weather: open-meteo provider: %w", err), internal.NewTraceError())
 	}
-	weatherAgent, err := collection.NewWeatherAgent(openMeteoProvider, weatherCity, weatherObs, collection.DefaultWeatherThrottleInterval, logger)
+
+	gismeteoProvider, err := weatherinfra.NewGismeteo(proxyURL)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("weather: gismeteo provider: %w", err), internal.NewTraceError())
+	}
+
+	weatherAgent, err := collection.NewWeatherAgent(
+		openMeteoProvider, weatherCity, weatherObs,
+		collection.DefaultWeatherThrottleInterval,
+		logger,
+		collection.WithGismeteo(gismeteoProvider, collection.DefaultGismeteoThrottleInterval),
+	)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("weather: agent: %w", err), internal.NewTraceError())
 	}

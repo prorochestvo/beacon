@@ -63,6 +63,23 @@ The `web` binary serves a REST API plus an embedded dashboard (HTML and a WASM b
 and routes Telegram callbacks. `migrator` applies schema migrations; `doctor` provides
 operator tooling (LLM rule generation and source auditing).
 
+### Weather providers
+
+Two weather providers feed the daily morning summary:
+
+- **Open-Meteo** (`domain.ProviderOpenMeteo`): global, keyless JSON API; the primary
+  source of truth. All cities can use it. Egress in `cmd/collector` honours
+  `BEACON_PROXY_URL`; the `OpenMeteoInspector` in `cmd/web` probes direct.
+- **Gismeteo** (`domain.ProviderGismeteo`): plain-HTTP scrape of `www.gismeteo.kz`
+  (`.kz` — Russian-language, metric units). Used for cross-provider comparison in the
+  morning summary. Coverage is limited to a hand-curated map
+  (`internal/infrastructure/weather/gismeteo.go`: `gismeteoCities`) keyed by the
+  Open-Meteo geocoding id — cities outside the map skip gismeteo silently. Egress in
+  `cmd/collector` honours `BEACON_PROXY_URL`. The `GismeteoInspector` in `cmd/web`
+  probes the host directly (cmd/web does not parse `BEACON_PROXY_URL`), so it tests
+  a different egress path than the collector; a false "down" cannot fail the deploy
+  gate because the inspector is registered advisory.
+
 ### Layer Responsibilities
 
 | Layer | Location | Role |
@@ -115,7 +132,7 @@ operator tooling (LLM rule generation and source auditing).
 - `GET /` — unified Mini App / guest landing page (served by embedded static file server). Dispatcher inline script checks `window.Telegram.WebApp.initData`: non-empty → `_wasm.renderMeSubscriptions()`, empty → `_wasm.renderPublicSubscriptions()`
 - `GET /admin/` — operator dashboard (served by embedded static file server, `cmd/web/static/admin/index.html`; no dedicated route needed)
 - `GET /ping` — liveness probe; always returns 200 `{"status":"ok"}`, touches no dependency. No authentication. `GET /healthz` is a backward-compatible alias for this endpoint.
-- `GET /health/check` — readiness probe; runs all registered dependency inspectors (SQLite, Telegram bot) under a bounded 3s timeout and returns per-component JSON: `{"status": bool, "server": {"version": "...", "uptime": "..."}, "services": {"sqlite": "ok|<error>", "telegram": "ok|<error>"}}`. Returns 200 when all healthy, 503 when any are down. No authentication; deployed to health-gate in CI and referenced by uptime monitors.
+- `GET /health/check` — readiness probe; runs all registered dependency inspectors under a bounded 3s timeout and returns per-component JSON: `{"status": bool, "server": {"version": "...", "uptime": "..."}, "services": {"sqlite": "ok|<error>", "telegram": "ok|<error>", "open-meteo": "ok|<error>", "gismeteo": "ok|<error>"}}`. Critical inspectors (sqlite, telegram) set `status=false` and return HTTP 503 on failure. Advisory inspectors (open-meteo, gismeteo) appear in the report but never flip the aggregate to 503 — a third-party weather outage must not fail the deploy health-gate. Returns 200 when all critical inspectors are healthy. No authentication; deployed to health-gate in CI and referenced by uptime monitors.
 
 ### Static asset caching
 
@@ -220,6 +237,11 @@ Repository files in `internal/repository/` reference table and column names
 exclusively through `const` declarations (e.g. `rateSourceTableName`,
 `rateSourceNameFieldName`) so a schema rename surfaces at compile time and via
 `grep`, never via a runtime "no such column" error.
+
+`weather_user_cities.gismeteo_city_id` (added in migration 011) is currently always
+NULL — it is reserved for a future "comparison available" UI hint. Gismeteo eligibility
+is determined at runtime from the curated `gismeteoCities` map in
+`internal/infrastructure/weather/gismeteo.go`, not from this column.
 
 Deploy flow:
 ```
