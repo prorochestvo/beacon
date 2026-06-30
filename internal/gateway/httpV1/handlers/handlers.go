@@ -71,10 +71,11 @@ type Handler struct {
 	serverVersion   string
 	serverStart     time.Time
 
-	// Weather city endpoints — both are nil when not wired. Each weather
-	// handler returns 503 when nil so the binary can start without them.
+	// Weather city endpoints — nil when not wired; handlers return 503 in that case.
 	meWeatherCityRepo meWeatherCityRepository
 	weatherGeocoder   weatherGeocoder
+	// meWeatherObsRepo is required by GetMeWeatherCurrent; nil until WithWeatherObsRepo is called.
+	meWeatherObsRepo meWeatherObsRepository
 
 	// validateInitData is the Telegram WebApp initData verifier. A field so tests
 	// can inject a fake without real bot tokens.

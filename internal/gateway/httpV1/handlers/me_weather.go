@@ -23,6 +23,13 @@ type meWeatherCityRepository interface {
 	RemoveWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
 }
 
+// meWeatherObsRepository is the read-only storage contract for weather
+// observations, used by GetMeWeatherCurrent. Returns internal.ErrNotFound when
+// no observation exists for the given (locationID, provider) pair.
+type meWeatherObsRepository interface {
+	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
+}
+
 // weatherGeocoder is the geocoding contract used by SearchWeatherCities. It
 // returns display-ready search items with resolved location_id, coordinates,
 // and IANA timezone. The implementation calls an external geocoding API; callers
@@ -37,6 +44,14 @@ type weatherGeocoder interface {
 func (h *Handler) WithWeatherDeps(cityRepo meWeatherCityRepository, geocoder weatherGeocoder) *Handler {
 	h.meWeatherCityRepo = cityRepo
 	h.weatherGeocoder = geocoder
+	return h
+}
+
+// WithWeatherObsRepo injects the weather observation repository for the
+// on-demand current-weather endpoint. Returns h to allow chaining. Nil-safe:
+// GetMeWeatherCurrent returns 503 when the repo is not wired.
+func (h *Handler) WithWeatherObsRepo(obsRepo meWeatherObsRepository) *Handler {
+	h.meWeatherObsRepo = obsRepo
 	return h
 }
 
@@ -293,6 +308,116 @@ func (h *Handler) meWeatherCityOwnershipCheck(w http.ResponseWriter, r *http.Req
 		return nil
 	}
 	return city
+}
+
+// GetMeWeatherCurrent returns the latest stored Open-Meteo observation for each
+// distinct city the authenticated caller subscribes to. A city with multiple
+// notify-kind rows (e.g. morning_summary + an alert) appears exactly once,
+// deduplicated by location_id. A city whose first collection has not yet
+// completed returns an item with has_data:false so the client can render a
+// "no data yet" placeholder without treating the absence as an error.
+//
+// Sunrise and sunset times are pre-formatted as "15:04" in the city's IANA
+// timezone so the WASM client requires no tzdata. A timezone that fails to load
+// is skipped (the numeric fields are still returned).
+//
+// GET /api/me/weather/current
+// Auth: X-Telegram-Init-Data header only.
+//
+// 200 with WeatherCurrentResponse on success.
+// 401 on auth failure.
+// 503 when the weather service is not wired.
+// 500 on unexpected repo errors.
+func (h *Handler) GetMeWeatherCurrent(w http.ResponseWriter, r *http.Request) {
+	if h.meWeatherCityRepo == nil || h.meWeatherObsRepo == nil {
+		http.Error(w, `{"error":"weather service unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	initData := r.Header.Get("X-Telegram-Init-Data")
+	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
+	if err != nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	tgUserID := strconv.FormatInt(userID, 10)
+
+	cities, err := h.meWeatherCityRepo.ObtainWeatherUserCitiesByUserID(r.Context(), domain.UserTypeTelegram, tgUserID)
+	if err != nil {
+		h.internalError(w, fmt.Errorf("GetMeWeatherCurrent cities: %w", err))
+		return
+	}
+
+	// Dedup by location_id: each notify kind is its own row, but the endpoint
+	// returns one observation per physical city regardless of kind count.
+	type cityEntry struct {
+		city domain.WeatherUserCity
+	}
+	seen := make(map[string]struct{}, len(cities))
+	order := make([]domain.WeatherUserCity, 0, len(cities))
+	for _, c := range cities {
+		if _, ok := seen[c.LocationID]; !ok {
+			seen[c.LocationID] = struct{}{}
+			order = append(order, c)
+		}
+	}
+
+	items := make([]dto.WeatherCurrentItem, 0, len(order))
+	for _, city := range order {
+		item := dto.WeatherCurrentItem{
+			LocationID:  city.LocationID,
+			DisplayName: city.DisplayName,
+			Timezone:    city.Timezone,
+		}
+
+		obs, err := h.meWeatherObsRepo.ObtainLatestObservation(r.Context(), city.LocationID, domain.ProviderOpenMeteo)
+		if err != nil {
+			if errors.Is(err, internal.ErrNotFound) {
+				// No observation yet — the collector hasn't run for this city.
+				// Return the row with HasData:false so the client can show a placeholder.
+				items = append(items, item)
+				continue
+			}
+			h.internalError(w, fmt.Errorf("GetMeWeatherCurrent obs %s: %w", city.LocationID, err))
+			return
+		}
+
+		item.HasData = true
+		item.TempCurrent = obs.TempCurrent
+		item.TempFeels = obs.TempFeels
+		item.Humidity = obs.Humidity
+		item.WindSpeed = obs.WindSpeed
+		item.WindDir = obs.WindDir
+		item.Precip = obs.Precip
+		item.CloudCover = obs.CloudCover
+		item.TempMax = obs.TempMax
+		item.TempMin = obs.TempMin
+		item.WeatherCode = obs.WeatherCode
+		if obs.WeatherCode != nil {
+			text, emoji := domain.WMOWeatherCode(*obs.WeatherCode)
+			item.ConditionText = text
+			item.ConditionEmoji = emoji
+		}
+		item.CapturedAt = obs.CapturedAt.UTC().Format(time.RFC3339)
+
+		// Convert sunrise/sunset to city-local "15:04" strings server-side so
+		// the WASM bundle needs no tzdata. A bad timezone skips only the sun
+		// times — numeric fields are still returned.
+		if city.Timezone != "" {
+			if loc, locErr := time.LoadLocation(city.Timezone); locErr == nil {
+				if obs.Sunrise != nil {
+					item.SunriseLocal = obs.Sunrise.In(loc).Format("15:04")
+				}
+				if obs.Sunset != nil {
+					item.SunsetLocal = obs.Sunset.In(loc).Format("15:04")
+				}
+			}
+		}
+
+		items = append(items, item)
+	}
+
+	writeJSON(w, dto.WeatherCurrentResponse{Items: items})
 }
 
 const (

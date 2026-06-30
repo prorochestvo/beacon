@@ -117,6 +117,11 @@ func meSubscriptionByIDURL(id string) string {
 	return "/api/me/subscriptions/" + url.PathEscape(id)
 }
 
+// meWeatherCurrentURL returns the on-demand current-weather endpoint.
+func meWeatherCurrentURL() string {
+	return "/api/me/weather/current"
+}
+
 // meWeatherCitiesSearchURL returns the geocoding search endpoint for city-picker.
 // q is the search term; url.Values.Encode percent-encodes it safely.
 func meWeatherCitiesSearchURL(q string) string {

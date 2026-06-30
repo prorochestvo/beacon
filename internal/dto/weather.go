@@ -62,3 +62,48 @@ type WeatherCityRow struct {
 type WeatherCitiesResponse struct {
 	Items []WeatherCityRow `json:"items"`
 }
+
+// WeatherCurrentItem is one city's latest stored weather observation in the
+// GET /api/me/weather/current response. HasData is false when the collector has
+// not yet produced an observation for this location; all observation fields are
+// omitted in that case so the client can render a "no data yet" state without
+// interpreting absent numeric fields as zero.
+type WeatherCurrentItem struct {
+	LocationID  string `json:"location_id"`
+	DisplayName string `json:"display_name"`
+	Timezone    string `json:"timezone"`
+	// HasData is true when a stored Open-Meteo observation exists for this city.
+	// When false all remaining fields are absent in the JSON.
+	HasData bool `json:"has_data"`
+
+	// Current snapshot fields. Nil when the observation has no value for this field.
+	TempCurrent *float64 `json:"temp_current,omitempty"`
+	TempFeels   *float64 `json:"temp_feels,omitempty"`
+	Humidity    *int     `json:"humidity,omitempty"`
+	WindSpeed   *float64 `json:"wind_speed,omitempty"`
+	WindDir     *int     `json:"wind_dir,omitempty"`
+	Precip      *float64 `json:"precip,omitempty"`
+	CloudCover  *int     `json:"cloud_cover,omitempty"`
+
+	// Daily forecast fields for the observation date.
+	TempMax *float64 `json:"temp_max,omitempty"`
+	TempMin *float64 `json:"temp_min,omitempty"`
+	// WeatherCode is the raw WMO Weather Interpretation Code. Resolved to
+	// human text in ConditionText and ConditionEmoji server-side.
+	WeatherCode    *int   `json:"weather_code,omitempty"`
+	ConditionText  string `json:"condition_text,omitempty"`
+	ConditionEmoji string `json:"condition_emoji,omitempty"`
+	// SunriseLocal and SunsetLocal are formatted as "15:04" in the city's IANA
+	// timezone, computed server-side so the WASM client needs no tzdata.
+	SunriseLocal string `json:"sunrise_local,omitempty"`
+	SunsetLocal  string `json:"sunset_local,omitempty"`
+	// CapturedAt is the UTC timestamp of the observation in RFC 3339 format.
+	CapturedAt string `json:"captured_at,omitempty"`
+}
+
+// WeatherCurrentResponse is the JSON envelope for GET /api/me/weather/current.
+// Items contains one entry per distinct subscribed location_id; it is always a
+// non-nil slice so the client can distinguish "no subscriptions" from an error.
+type WeatherCurrentResponse struct {
+	Items []WeatherCurrentItem `json:"items"`
+}

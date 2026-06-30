@@ -16,12 +16,24 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/gateway/httpV1"
 )
 
+// WeatherGatewayDeps groups the weather-specific dependencies passed to NewGateway.
+// Each field is nil-safe: the corresponding endpoints return 503 when a dep is absent.
+type WeatherGatewayDeps struct {
+	// CityRepo is the weather city subscription repository.
+	CityRepo meWeatherCityRepo
+	// Geocoder is the geocoding provider for the city-search endpoint.
+	Geocoder meWeatherGeocoder
+	// ObsRepo is the weather observation repository for the on-demand
+	// current-weather endpoint (GET /api/me/weather/current).
+	ObsRepo meWeatherObsRepo
+}
+
 // NewGateway builds the v1 HTTP mux with all routes registered, ready for
 // http.ListenAndServe. chartSvc is required for GET /api/me/rates/chart.
 // healthAgent drives GET /health/check; when nil the endpoint returns 503.
 // serverVersion and serverStart populate the "server" block in the health response.
-// weatherCityRepo and weatherGeocoder power the /api/me/weather/cities* endpoints;
-// both are nil-safe — the endpoints return 503 when either is not wired.
+// weather groups the weather-specific dependencies; each is nil-safe — the
+// corresponding endpoints return 503 when a dep is not wired.
 func NewGateway(
 	srvRateRestApi *service.RateRestApi,
 	botToken string,
@@ -33,11 +45,18 @@ func NewGateway(
 	healthAgent healthCheckAgent,
 	serverVersion string,
 	serverStart time.Time,
-	weatherCityRepo meWeatherCityRepo,
-	weatherGeocoder meWeatherGeocoder,
+	weather WeatherGatewayDeps,
 ) (*http.ServeMux, error) {
 	mux := http.NewServeMux()
-	mux, err := httpV1.NewRouter(mux, srvRateRestApi, botToken, subRepo, sourceRepo, rateValueRepo, profileRepo, chartSvc, healthAgent, serverVersion, serverStart, weatherCityRepo, weatherGeocoder)
+	mux, err := httpV1.NewRouter(
+		mux, srvRateRestApi, botToken, subRepo, sourceRepo, rateValueRepo, profileRepo,
+		chartSvc, healthAgent, serverVersion, serverStart,
+		httpV1.WeatherGatewayDeps{
+			CityRepo: weather.CityRepo,
+			Geocoder: weather.Geocoder,
+			ObsRepo:  weather.ObsRepo,
+		},
+	)
 	if err != nil {
 		err = errors.Join(err, internal.NewTraceError())
 		return nil, err
@@ -90,4 +109,10 @@ type meWeatherCityRepo interface {
 // weatherGeocoder interface exactly.
 type meWeatherGeocoder interface {
 	Geocode(ctx context.Context, name string, count int) ([]dto.WeatherCitySearchItem, error)
+}
+
+// meWeatherObsRepo is a pass-through interface for the weather observation
+// repository used by the on-demand current-weather endpoint.
+type meWeatherObsRepo interface {
+	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
 }

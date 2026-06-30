@@ -121,8 +121,9 @@ func renderWeatherSearchResults(state application.WeatherCitiesState) string {
 	return b.String()
 }
 
-// renderWeatherCityList emits the caller's saved city subscription list. Each
-// row carries a delete button with data-id so the WASM dispatcher can call
+// renderWeatherCityList emits the caller's saved city subscription list and a
+// "View current weather" button that navigates to the current-weather screen.
+// Each row carries a delete button with data-id so the WASM dispatcher can call
 // DeleteCity(id).
 func renderWeatherCityList(state application.WeatherCitiesState) string {
 	var b strings.Builder
@@ -137,6 +138,7 @@ func renderWeatherCityList(state application.WeatherCitiesState) string {
 			b.WriteString(renderWeatherCityRow(c.ID, c.DisplayName, c.Country, c.Admin1, c.Timezone, c.NotifyHour))
 		}
 		b.WriteString(`</ul>`)
+		b.WriteString(`<button class="weather-current-btn" id="weather-view-current" type="button">View current weather</button>`)
 	}
 
 	b.WriteString(`</section>`)

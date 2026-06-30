@@ -179,6 +179,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("repositories: %s", err.Error())
 	}
+	weatherObsRepo, err := repository.NewWeatherObservationRepository(db)
+	if err != nil {
+		log.Fatalf("repositories: %s", err.Error())
+	}
 	log.Println("repositories: initiated")
 
 	restAPI, err := service.NewRateRestAPI(
@@ -214,7 +218,11 @@ func main() {
 	}
 	geoAdapter := &openMeteoGeoAdapter{client: openMeteoClient}
 
-	mux, err := gateway.NewGateway(restAPI, botToken, subscriptionRepo, sourceRepo, rateValueRepo, profileRepo, chartSvc, healthAgent, BuildVersion, serviceStart, weatherCityRepo, geoAdapter)
+	mux, err := gateway.NewGateway(restAPI, botToken, subscriptionRepo, sourceRepo, rateValueRepo, profileRepo, chartSvc, healthAgent, BuildVersion, serviceStart, gateway.WeatherGatewayDeps{
+		CityRepo: weatherCityRepo,
+		Geocoder: geoAdapter,
+		ObsRepo:  weatherObsRepo,
+	})
 	if err != nil {
 		log.Fatalf("services: mux api is failed, %s", err.Error())
 		return

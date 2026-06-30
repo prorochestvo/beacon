@@ -80,6 +80,12 @@ const (
 	// IANA timezone). Auth via Telegram WebApp initData HMAC, same as MeSubscriptions.
 	MeProfile = "/api/me/profile"
 
+	// MeWeatherCurrent returns the latest stored Open-Meteo observation for each
+	// of the caller's subscribed cities (one item per distinct location_id).
+	// HasData is false for a city whose first collection has not yet completed.
+	// Auth via Telegram WebApp initData HMAC (X-Telegram-Init-Data header only).
+	MeWeatherCurrent = "/api/me/weather/current"
+
 	// MeWeatherCitiesSearch returns geocoding matches for the ?q= query string.
 	// Must be registered before MeWeatherCities to win longest-path matching.
 	// Auth via Telegram WebApp initData HMAC (X-Telegram-Init-Data header only).

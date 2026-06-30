@@ -8,6 +8,23 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/dto"
 )
 
+// MeWeatherCurrent fetches the latest stored Open-Meteo observation for each
+// of the authenticated caller's subscribed cities. initData is forwarded via
+// the X-Telegram-Init-Data header (never as a query parameter). Returns a
+// zero-value WeatherCurrentResponse (with nil Items) when the server returns
+// an empty list; the controller normalises nil to an empty slice.
+func (c *Client) MeWeatherCurrent(ctx context.Context, initData string) (dto.WeatherCurrentResponse, error) {
+	raw, err := c.fetcher.FetchJSON(ctx, "GET", meWeatherCurrentURL(), nil, meSubscriptionsHeaders(initData))
+	if err != nil {
+		return dto.WeatherCurrentResponse{}, err
+	}
+	var out dto.WeatherCurrentResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return dto.WeatherCurrentResponse{}, fmt.Errorf("decode weather current: %w", err)
+	}
+	return out, nil
+}
+
 // MeWeatherCitiesSearch calls the geocoding search endpoint with the given
 // query. initData is forwarded via the X-Telegram-Init-Data header (never as
 // a query parameter). Returns an empty Items slice (not an error) when the

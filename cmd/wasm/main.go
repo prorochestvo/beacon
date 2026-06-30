@@ -94,6 +94,11 @@ func main() {
 		return nil
 	}))
 
+	wasmObj.Set("renderMeWeatherCurrent", js.FuncOf(func(_ js.Value, _ []js.Value) any {
+		go runRenderMeWeatherCurrent(client)
+		return nil
+	}))
+
 	js.Global().Set("_wasm", wasmObj)
 
 	select {} // keep the WASM runtime alive
@@ -1531,6 +1536,67 @@ func runRenderMeWeatherCities(client *apiclient.Client) {
 	}()
 }
 
+// runRenderMeWeatherCurrent is the entry point for the on-demand current-weather
+// screen. Reads initData once at mount, renders the skeleton, loads the latest
+// observations for the caller's cities in a background goroutine, then wires the
+// back button. Must run in a goroutine — never on the main goroutine.
+func runRenderMeWeatherCurrent(client *apiclient.Client) {
+	callWebAppIfDefined()
+
+	initData := readInitData()
+
+	screenCtx, cancelScreen := context.WithCancel(context.Background())
+	doc := js.Global().Get("document")
+	app := doc.Call("getElementById", "app")
+
+	scr := mountScreen()
+	scr.addRelease(cancelScreen)
+
+	page := application.NewMeWeatherCurrentPage(client, initData)
+
+	alive := true
+	scr.addRelease(func() { alive = false })
+
+	redraw := func() {
+		if !alive {
+			return
+		}
+		app.Set("innerHTML", ui.RenderMeWeatherCurrent(page.State()))
+	}
+
+	// Render skeleton immediately.
+	redraw()
+
+	// Load data in a background goroutine so the skeleton shows right away.
+	go func() {
+		fetchCtx, fetchCancel := context.WithTimeout(screenCtx, 15*time.Second)
+		defer fetchCancel()
+		if err := page.Load(fetchCtx); err != nil {
+			js.Global().Get("console").Call("warn", "weather current Load:", err.Error())
+		}
+		redraw()
+		bindWeatherCurrentHandlers(app, scr, &alive)
+	}()
+}
+
+// bindWeatherCurrentHandlers wires the current-weather screen's event handlers.
+// Currently only the back button is interactive; the screen is read-only.
+// The back button navigates to the city-picker screen.
+func bindWeatherCurrentHandlers(app js.Value, scr *screen, alive *bool) {
+	scr.addRelease(dom.On(app, "click", func(ev js.Value) {
+		if !*alive {
+			return
+		}
+		target := ev.Get("target")
+		if target.IsNull() || target.IsUndefined() {
+			return
+		}
+		if target.Get("id").String() == "weather-current-back" {
+			js.Global().Get("_wasm").Call("renderMeWeatherCities")
+		}
+	}))
+}
+
 // bindWeatherCitiesHandlers wires the city weather subscription screen's event
 // handlers.
 //
@@ -1580,6 +1646,9 @@ func bindWeatherCitiesHandlers(
 		switch id {
 		case "weather-back":
 			js.Global().Get("_wasm").Call("renderMeSubscriptions")
+			return
+		case "weather-view-current":
+			js.Global().Get("_wasm").Call("renderMeWeatherCurrent")
 			return
 		case "weather-save-btn":
 			go func() {
