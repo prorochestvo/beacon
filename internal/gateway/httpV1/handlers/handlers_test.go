@@ -128,6 +128,44 @@ func TestHealthCheck(t *testing.T) {
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Empty(t, body.Server.Uptime)
 	})
+
+	t.Run("advisory open-meteo failure yields HTTP 200 with component error", func(t *testing.T) {
+		t.Parallel()
+		// The aggregator returns healthy=true when only advisory inspectors fail;
+		// the handler must map that to HTTP 200 even though a component has an error.
+		agent := &mockHealthAgent{
+			healthy: true,
+			report:  map[string]string{"sqlite": "ok", "telegram": "ok", "open-meteo": "geocoding unreachable"},
+		}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil, agent, "v1.0.0", time.Now())
+		require.NoError(t, err)
+		rr := httptest.NewRecorder()
+		h.HealthCheck(rr, httptest.NewRequest(http.MethodGet, "/health/check", nil))
+		require.Equal(t, http.StatusOK, rr.Code, "advisory failure must not flip HTTP status to 503")
+		var body dto.HealthCheckResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+		require.True(t, body.Status)
+		require.Equal(t, "geocoding unreachable", body.Services["open-meteo"])
+	})
+
+	t.Run("critical sqlite failure yields HTTP 503", func(t *testing.T) {
+		t.Parallel()
+		// A critical dependency failure makes the aggregator return healthy=false;
+		// the handler must map that to HTTP 503.
+		agent := &mockHealthAgent{
+			healthy: false,
+			report:  map[string]string{"sqlite": "connection refused", "telegram": "ok", "open-meteo": "ok"},
+		}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil, agent, "v1.0.0", time.Now())
+		require.NoError(t, err)
+		rr := httptest.NewRecorder()
+		h.HealthCheck(rr, httptest.NewRequest(http.MethodGet, "/health/check", nil))
+		require.Equal(t, http.StatusServiceUnavailable, rr.Code, "critical sqlite failure must return 503")
+		var body dto.HealthCheckResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+		require.False(t, body.Status)
+		require.Equal(t, "connection refused", body.Services["sqlite"])
+	})
 }
 
 func TestListSources(t *testing.T) {

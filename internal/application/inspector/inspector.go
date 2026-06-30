@@ -22,39 +22,74 @@ type Inspector interface {
 	CheckUP(ctx context.Context) error
 }
 
-// Agent runs all registered inspectors under a single bounded context timeout.
-type Agent struct {
-	inspectors []Inspector
-	timeout    time.Duration
+// inspectorEntry pairs an Inspector with an advisory flag. An advisory inspector's
+// failure is reported in the /health/check component map but does not flip the
+// aggregate healthy flag, so a third-party outage cannot fail the deploy health-gate.
+type inspectorEntry struct {
+	inspector Inspector
+	advisory  bool
 }
 
-// NewAgent constructs an Agent that probes each inspector within timeout.
+// Agent runs all registered inspectors under a single bounded context timeout.
+// Inspectors registered as critical (the default) flip the aggregate healthy flag
+// on failure; advisory inspectors are reported but do not affect the aggregate.
+type Agent struct {
+	entries []inspectorEntry
+	timeout time.Duration
+}
+
+// NewAgent constructs an Agent where all inspectors are critical.
 // When timeout is zero or negative, inspectorTimeout (3 s) is used.
 func NewAgent(timeout time.Duration, inspectors ...Inspector) *Agent {
 	if timeout <= 0 {
 		timeout = inspectorTimeout
 	}
-	return &Agent{inspectors: inspectors, timeout: timeout}
+	entries := make([]inspectorEntry, len(inspectors))
+	for i, insp := range inspectors {
+		entries[i] = inspectorEntry{inspector: insp, advisory: false}
+	}
+	return &Agent{entries: entries, timeout: timeout}
+}
+
+// NewAgentWithAdvisory constructs an Agent with separate critical and advisory
+// inspector slices. Critical inspector failures set healthy=false; advisory
+// inspector failures appear in the report but leave healthy unaffected.
+// When timeout is zero or negative, inspectorTimeout (3 s) is used.
+func NewAgentWithAdvisory(timeout time.Duration, critical []Inspector, advisory []Inspector) *Agent {
+	if timeout <= 0 {
+		timeout = inspectorTimeout
+	}
+	entries := make([]inspectorEntry, 0, len(critical)+len(advisory))
+	for _, insp := range critical {
+		entries = append(entries, inspectorEntry{inspector: insp, advisory: false})
+	}
+	for _, insp := range advisory {
+		entries = append(entries, inspectorEntry{inspector: insp, advisory: true})
+	}
+	return &Agent{entries: entries, timeout: timeout}
 }
 
 // CheckUp probes every registered inspector under a single deadline and returns a
 // per-component report. One slow or failing check never prevents the others from
-// running. Returns healthy=true iff every inspector returned nil; the report maps
-// each inspector's Name() to "ok" or the verbatim error message.
+// running. Returns healthy=true iff every critical inspector returned nil; advisory
+// failures appear in the report but do not set healthy=false. The report maps each
+// inspector's Name() to "ok" or the verbatim error message.
 func (a *Agent) CheckUp(ctx context.Context) (healthy bool, report map[string]string) {
 	ctx, cancel := context.WithTimeout(ctx, a.timeout)
 	defer cancel()
 
 	healthy = true
-	report = make(map[string]string, len(a.inspectors))
-	for _, insp := range a.inspectors {
-		name := insp.Name()
+	report = make(map[string]string, len(a.entries))
+	for _, entry := range a.entries {
+		name := entry.inspector.Name()
 		if name == "" {
 			continue
 		}
-		if err := insp.CheckUP(ctx); err != nil {
+		if err := entry.inspector.CheckUP(ctx); err != nil {
 			report[name] = err.Error()
-			healthy = false
+			if !entry.advisory {
+				healthy = false
+			}
 			continue
 		}
 		report[name] = "ok"

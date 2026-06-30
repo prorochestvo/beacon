@@ -107,6 +107,10 @@ operator tooling (LLM rule generation and source auditing).
 - `GET /api/me/rates/chart` — sparkline-list chart data for the caller's subscribed pairs; authenticated via Telegram WebApp initData HMAC (`X-Telegram-Init-Data` header only). Query params: `period` (integer days, must be one of `{7, 30, 90, 180, 360}`, default 7; any other value returns 400 with a PublicError body)
 - `GET /api/me/rates/history` — paginated rate-collection events for the calling user's subscribed sources matching a canonical pair label; authenticated via Telegram WebApp initData HMAC (`X-Telegram-Init-Data` header only). Query params: `pair` (required, e.g. `USD/KZT`), `source_title` (optional, filters to one provider by its human-readable title, which is unique per provider; unknown value returns 200 with empty items), `page` (default 1), `limit` (default 20, max 100)
 - `POST /api/me/profile` — upsert the caller's profile preferences (IANA `timezone`, optional BCP-47 `locale`) so notification timestamps render in local time; body: `{"timezone":"Asia/Almaty"}`. Fire-and-forget from the Mini App on mount. Returns 204 on success, 400 on a timezone that fails `time.LoadLocation`; authenticated via `X-Telegram-Init-Data` header only
+- `GET /api/me/weather/cities/search?q=` — geocoding search via Open-Meteo; returns up to 5 `WeatherCitySearchItem` matches for the given query string. Returns 200 with empty items on blank or whitespace-only query. Open-Meteo egress is direct (no proxy). Authenticated via `X-Telegram-Init-Data` header only.
+- `GET /api/me/weather/cities` — list the authenticated caller's saved city weather subscriptions, ordered by `created_at`. Returns `{"items": [...]}`. Authenticated via `X-Telegram-Init-Data` header only.
+- `POST /api/me/weather/cities` — create a new city weather subscription; body: `{"location_id":"...", "display_name":"...", "latitude":..., "longitude":..., "timezone":"...", "country":"...", "admin1":"..."}`. Server re-validates `timezone` via `time.LoadLocation`, `latitude` ∈ [-90,90], `longitude` ∈ [-180,180], and `notify_hour` ∈ [0,23] (defaults to 7 when absent). Returns `{"id":"..."}` on 201. Authenticated via `X-Telegram-Init-Data` header only.
+- `DELETE /api/me/weather/cities/{id}` — delete a city subscription; returns 204 on success; returns 404 when not found or belonging to a different user (cross-user access returns 404, not 403, to avoid existence disclosure). Authenticated via `X-Telegram-Init-Data` header only.
 - `GET /api/public/rates/chart` — paginated system-wide sparkline-list chart; no authentication. Query params: `page` (default 1), `limit` (default 20, max 100), `period` (integer days, must be one of `{7, 30, 90, 180, 360}`, default 7; any other value returns 400 with a PublicError body)
 - `GET /` — unified Mini App / guest landing page (served by embedded static file server). Dispatcher inline script checks `window.Telegram.WebApp.initData`: non-empty → `_wasm.renderMeSubscriptions()`, empty → `_wasm.renderPublicSubscriptions()`
 - `GET /admin/` — operator dashboard (served by embedded static file server, `cmd/web/static/admin/index.html`; no dedicated route needed)
@@ -357,6 +361,13 @@ These may be stored in user-scoped tables without further discussion:
   one of ~400 values, weak identifying power on its own.
 - **BCP-47 locale** (e.g. `ru-RU`, `kk-KZ`, `en-US`). Same as timezone —
   low-sensitivity, useful for future localisation of notification text.
+- **City coordinates** (`latitude`, `longitude` in `weather_user_cities`). These
+  are user-volunteered preferences — the user explicitly searches for and selects a
+  named city from a geocoding result list. They are not device-collected, geolocation
+  API, or IP-derived coordinates. The coordinates are stored to request weather data
+  for the chosen city and carry no more identifying power than the city name itself.
+  Guardrails: values are server-re-validated (lat ∈ [-90,90], lng ∈ [-180,180]) before
+  persistence; the Open-Meteo geocoding call is the only source of coordinate values.
 
 ### Off-limits fields
 
@@ -368,7 +379,10 @@ without persisting the field:
 - Telegram `@username` / display name / first name / last name.
 - Phone, email, or any other contact channel.
 - Photo URL or any biometric.
-- Precise location (lat/lng); city/country-level may be discussed case-by-case.
+- Device-collected or IP-derived precise location (lat/lng). Note: city coordinates
+  explicitly chosen by the user from a geocoding search result are **pre-approved** (see
+  above) — this prohibition is about coordinates obtained without the user's active
+  selection (geolocation API, IP geolocation, etc.).
 - IP address, device fingerprint, browser user-agent string.
 
 ### When a request looks borderline

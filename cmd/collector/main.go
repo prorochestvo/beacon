@@ -24,6 +24,7 @@ import (
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/application/collection"
 	"github.com/seilbekskindirov/beacon/internal/infrastructure/sqlitedb"
+	weatherinfra "github.com/seilbekskindirov/beacon/internal/infrastructure/weather"
 	"github.com/seilbekskindirov/beacon/internal/repository"
 	"github.com/seilbekskindirov/beacon/internal/tools/proxyutil"
 	_ "modernc.org/sqlite"
@@ -99,9 +100,21 @@ func main() {
 	if err != nil {
 		log.Fatalf("repositories: %s", err.Error())
 	}
+	weatherCityRepo, err := repository.NewWeatherUserCityRepository(db)
+	if err != nil {
+		log.Fatalf("repositories: %s", err.Error())
+	}
+	weatherObsRepo, err := repository.NewWeatherObservationRepository(db)
+	if err != nil {
+		log.Fatalf("repositories: %s", err.Error())
+	}
 	log.Println("repositories: initiated")
 
-	runners, err := buildRunners(sourceRepo, historyRepo, rateValueRepo, proxyURL, l.WriterAs(internal.LogLevelWarning))
+	runners, err := buildRunners(
+		sourceRepo, historyRepo, rateValueRepo,
+		weatherCityRepo, weatherObsRepo,
+		proxyURL, l.WriterAs(internal.LogLevelWarning),
+	)
 	if err != nil {
 		log.Fatalf("runners: runners building is failed: %s", err)
 		return
@@ -169,6 +182,8 @@ func buildRunners(
 	source *repository.RateSourceRepository,
 	history *repository.ExecutionHistoryRepository,
 	value *repository.RateValueRepository,
+	weatherCity *repository.WeatherUserCityRepository,
+	weatherObs *repository.WeatherObservationRepository,
 	proxyURL string,
 	logger io.Writer,
 ) ([]runner, error) {
@@ -183,5 +198,15 @@ func buildRunners(
 	if err != nil {
 		return nil, errors.Join(err, internal.NewTraceError())
 	}
-	return []runner{collectionRateAgent}, nil
+
+	openMeteoProvider, err := weatherinfra.NewOpenMeteo(proxyURL)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("weather: open-meteo provider: %w", err), internal.NewTraceError())
+	}
+	weatherAgent, err := collection.NewWeatherAgent(openMeteoProvider, weatherCity, weatherObs, collection.DefaultWeatherThrottleInterval, logger)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("weather: agent: %w", err), internal.NewTraceError())
+	}
+
+	return []runner{collectionRateAgent, weatherAgent}, nil
 }

@@ -102,6 +102,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("repositories: %s", err.Error())
 	}
+	weatherCityRepo, err := repository.NewWeatherUserCityRepository(db)
+	if err != nil {
+		log.Fatalf("repositories: %s", err.Error())
+	}
+	weatherObsRepo, err := repository.NewWeatherObservationRepository(db)
+	if err != nil {
+		log.Fatalf("repositories: %s", err.Error())
+	}
 	log.Println("repositories: initiated")
 
 	// SIGTERM/SIGINT cancel ctx mid-run so an in-flight tick aborts the next
@@ -122,6 +130,16 @@ func main() {
 		log.Fatalf("runners: check agent build is failed: %s", err)
 	}
 
+	weatherCheckAgent, err := notification.NewWeatherCheckAgent(
+		weatherCityRepo,
+		weatherObsRepo,
+		eventRepo,
+		l.WriterAs(internal.LogLevelWarning),
+	)
+	if err != nil {
+		log.Fatalf("runners: weather check agent build is failed: %s", err)
+	}
+
 	dispatchAgent, err := notification.NewRateDispatchAgent(tbot, eventRepo)
 	if err != nil {
 		log.Fatalf("runners: dispatch agent build is failed: %s", err)
@@ -139,6 +157,9 @@ func main() {
 	// Skip context.Canceled so a clean shutdown reason isn't logged twice (joined
 	// errors line plus the "stopped by signal" line below).
 	if err = checkAgent.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		errs = append(errs, err)
+	}
+	if err = weatherCheckAgent.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		errs = append(errs, err)
 	}
 	if err = dispatchAgent.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {

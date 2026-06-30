@@ -32,6 +32,10 @@ const (
 	KindRateUserSubscription Kind = "RUS"
 	// KindExecutionHistory is the Kind for execution_history entities.
 	KindExecutionHistory Kind = "H"
+	// KindWeatherUserCity is the Kind for weather_user_cities entities.
+	KindWeatherUserCity Kind = "WUC"
+	// KindWeatherObservation is the Kind for weather_observations entities.
+	KindWeatherObservation Kind = "WOB"
 )
 
 // New returns a new unique string identifier for the given Kind, in the format:

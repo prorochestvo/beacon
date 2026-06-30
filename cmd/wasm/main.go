@@ -89,6 +89,11 @@ func main() {
 		return nil
 	}))
 
+	wasmObj.Set("renderMeWeatherCities", js.FuncOf(func(_ js.Value, _ []js.Value) any {
+		go runRenderMeWeatherCities(client)
+		return nil
+	}))
+
 	js.Global().Set("_wasm", wasmObj)
 
 	select {} // keep the WASM runtime alive
@@ -1479,5 +1484,184 @@ func bindMeSubsEditHandlers(
 				slot.Set("innerHTML", ui.RenderEditListResultsSlot(page.State()))
 			}
 		}
+	}))
+}
+
+// runRenderMeWeatherCities is the entry point for the city weather subscription
+// screen. Reads initData once at mount, renders the skeleton, loads saved cities
+// in a background goroutine, then wires event handlers including a debounced
+// search input. Must run in a goroutine — never on the main goroutine.
+func runRenderMeWeatherCities(client *apiclient.Client) {
+	callWebAppIfDefined()
+
+	initData := readInitData()
+
+	screenCtx, cancelScreen := context.WithCancel(context.Background())
+	doc := js.Global().Get("document")
+	app := doc.Call("getElementById", "app")
+
+	scr := mountScreen()
+	scr.addRelease(cancelScreen)
+
+	page := application.NewMeWeatherCitiesPage(client, initData)
+
+	// alive guards DOM writes against stale screens after navigation.
+	alive := true
+	scr.addRelease(func() { alive = false })
+
+	redraw := func() {
+		if !alive {
+			return
+		}
+		app.Set("innerHTML", ui.RenderMeWeatherCities(page.State()))
+	}
+
+	// Render skeleton immediately.
+	redraw()
+
+	// Load saved cities in the background so the skeleton shows right away.
+	go func() {
+		fetchCtx, fetchCancel := context.WithTimeout(screenCtx, 15*time.Second)
+		defer fetchCancel()
+		if err := page.LoadCities(fetchCtx); err != nil {
+			js.Global().Get("console").Call("warn", "weather LoadCities:", err.Error())
+		}
+		redraw()
+		bindWeatherCitiesHandlers(screenCtx, app, page, scr, &alive, redraw)
+	}()
+}
+
+// bindWeatherCitiesHandlers wires the city weather subscription screen's event
+// handlers.
+//
+// All interactions are delegated to the stable #app container so listeners
+// survive repeated innerHTML replacements performed by redraw().
+//
+// Back button (#weather-back): calls _wasm.renderMeSubscriptions() to return
+// to the main Mini App screen.
+// Search input (#weather-search): fires a debounced geocoding request after
+// 400 ms of inactivity so the API is not called on every keystroke.
+// Search result clicks (.weather-search-item): read data-index and call
+// SelectSearchResult; redraw shows the save affordance.
+// Save button (#weather-save-btn): calls SaveSelected in a goroutine; redraw
+// clears the form and updates the city list.
+// Clear button (#weather-clear-btn): calls ClearSearch and redraws.
+// Delete buttons (.weather-city-delete): read data-id; call DeleteCity in a
+// goroutine and redraw on completion.
+//
+// ctx is the screen-lifetime context used for fetch goroutines so they are
+// cancelled on unmount. alive is a pointer into runRenderMeWeatherCities's
+// alive bool. redraw repaints the full app element from the current page state.
+func bindWeatherCitiesHandlers(
+	ctx context.Context,
+	app js.Value,
+	page *application.MeWeatherCitiesPage,
+	scr *screen,
+	alive *bool,
+	redraw func(),
+) {
+	// debounceTimer is reset on each keystroke; the goroutine fires only when
+	// the user pauses typing for 400 ms. WASM is single-threaded, so the plain
+	// pointer is safe — the JS event loop serialises all input events.
+	var debounceTimer *time.Timer
+	const debounceDuration = 400 * time.Millisecond
+
+	// Delegated click handler on the stable #app container.
+	scr.addRelease(dom.On(app, "click", func(ev js.Value) {
+		if !*alive {
+			return
+		}
+		target := ev.Get("target")
+		if target.IsNull() || target.IsUndefined() {
+			return
+		}
+
+		id := target.Get("id").String()
+		switch id {
+		case "weather-back":
+			js.Global().Get("_wasm").Call("renderMeSubscriptions")
+			return
+		case "weather-save-btn":
+			go func() {
+				fetchCtx, fetchCancel := context.WithTimeout(ctx, 15*time.Second)
+				defer fetchCancel()
+				if err := page.SaveSelected(fetchCtx); err != nil {
+					js.Global().Get("console").Call("warn", "weather save city:", err.Error())
+				}
+				redraw()
+			}()
+			return
+		case "weather-clear-btn":
+			page.ClearSearch()
+			redraw()
+			return
+		}
+
+		// Search result item click: walk up to the nearest .weather-search-item
+		// to handle clicks on text nodes inside the <li>.
+		item := target.Call("closest", ".weather-search-item")
+		if !item.IsNull() && !item.IsUndefined() {
+			ds := item.Get("dataset")
+			idxVal := ds.Get("index")
+			if !idxVal.IsUndefined() {
+				idx, err := strconv.Atoi(idxVal.String())
+				if err == nil {
+					page.SelectSearchResult(idx)
+					redraw()
+				}
+			}
+			return
+		}
+
+		// Delete button: walk up so clicks on child nodes inside the button resolve.
+		delBtn := target.Call("closest", ".weather-city-delete")
+		if delBtn.IsNull() || delBtn.IsUndefined() {
+			return
+		}
+		cityID := delBtn.Get("dataset").Get("id").String()
+		if cityID == "" {
+			return
+		}
+		go func() {
+			fetchCtx, fetchCancel := context.WithTimeout(ctx, 15*time.Second)
+			defer fetchCancel()
+			if err := page.DeleteCity(fetchCtx, cityID); err != nil {
+				js.Global().Get("console").Call("warn", "weather delete city:", err.Error())
+			}
+			redraw()
+		}()
+	}))
+
+	// Delegated input handler on the stable #app container: debounced geocoding
+	// search. The input value updates are visible immediately in the DOM because
+	// #weather-search is a real <input> element — no redraw needed for typing.
+	// The debounce timer fires a goroutine that calls SearchCities and redraws
+	// the results slot.
+	scr.addRelease(dom.On(app, "input", func(ev js.Value) {
+		if !*alive {
+			return
+		}
+		t := ev.Get("target")
+		if t.IsNull() || t.IsUndefined() {
+			return
+		}
+		if t.Get("id").String() != "weather-search" {
+			return
+		}
+		q := t.Get("value").String()
+		if debounceTimer != nil {
+			debounceTimer.Stop()
+		}
+		debounceTimer = time.AfterFunc(debounceDuration, func() {
+			if !*alive {
+				return
+			}
+			fetchCtx, fetchCancel := context.WithTimeout(ctx, 10*time.Second)
+			defer fetchCancel()
+			if err := page.SearchCities(fetchCtx, q); err != nil {
+				js.Global().Get("console").Call("warn", "weather search:", err.Error())
+			}
+			redraw()
+		})
 	}))
 }

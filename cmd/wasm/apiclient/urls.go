@@ -116,3 +116,22 @@ func meSubscriptionsRawURL() string {
 func meSubscriptionByIDURL(id string) string {
 	return "/api/me/subscriptions/" + url.PathEscape(id)
 }
+
+// meWeatherCitiesSearchURL returns the geocoding search endpoint for city-picker.
+// q is the search term; url.Values.Encode percent-encodes it safely.
+func meWeatherCitiesSearchURL(q string) string {
+	v := url.Values{}
+	v.Set("q", q)
+	return "/api/me/weather/cities/search?" + v.Encode()
+}
+
+// meWeatherCitiesURL returns the city-subscription list/create endpoint.
+func meWeatherCitiesURL() string {
+	return "/api/me/weather/cities"
+}
+
+// meWeatherCityByIDURL returns the single-city endpoint for DELETE.
+// id is percent-escaped for safe round-trips.
+func meWeatherCityByIDURL(id string) string {
+	return "/api/me/weather/cities/" + url.PathEscape(id)
+}

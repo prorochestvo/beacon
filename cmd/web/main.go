@@ -27,10 +27,12 @@ import (
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
 	"github.com/seilbekskindirov/beacon/internal/application/inspector"
 	"github.com/seilbekskindirov/beacon/internal/application/service"
+	"github.com/seilbekskindirov/beacon/internal/dto"
 	"github.com/seilbekskindirov/beacon/internal/gateway"
 	"github.com/seilbekskindirov/beacon/internal/gateway/middleware"
 	"github.com/seilbekskindirov/beacon/internal/infrastructure/sqlitedb"
 	integration "github.com/seilbekskindirov/beacon/internal/infrastructure/telegrambot"
+	weatherinfra "github.com/seilbekskindirov/beacon/internal/infrastructure/weather"
 	"github.com/seilbekskindirov/beacon/internal/repository"
 	_ "modernc.org/sqlite"
 )
@@ -136,9 +138,14 @@ func main() {
 	} else {
 		log.Printf("telegram: authenticated as @%s (id=%d)", username, id)
 	}
-	healthAgent := inspector.NewAgent(0,
-		inspector.NewDBInspector(db),
-		inspector.NewTelegramInspector(tbot),
+	healthAgent := inspector.NewAgentWithAdvisory(0,
+		[]inspector.Inspector{
+			inspector.NewDBInspector(db),
+			inspector.NewTelegramInspector(tbot),
+		},
+		[]inspector.Inspector{
+			inspector.NewOpenMeteoInspector(),
+		},
 	)
 	log.Println("dependencies: initiated")
 
@@ -167,6 +174,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("repositories: %s", err.Error())
 	}
+	weatherCityRepo, err := repository.NewWeatherUserCityRepository(db)
+	if err != nil {
+		log.Fatalf("repositories: %s", err.Error())
+	}
 	log.Println("repositories: initiated")
 
 	restAPI, err := service.NewRateRestAPI(
@@ -191,7 +202,18 @@ func main() {
 	// HistoryValuesLoader (ObtainMeHistory); sourceRepo also satisfies
 	// PublicSourcesLoader (ObtainPublicChart).
 	chartSvc := appchart.NewService(subscriptionRepo, sourceRepo, rateValueRepo, rateValueRepo, sourceRepo, time.Now)
-	mux, err := gateway.NewGateway(restAPI, botToken, subscriptionRepo, sourceRepo, rateValueRepo, profileRepo, chartSvc, healthAgent, BuildVersion, serviceStart)
+
+	// Open-Meteo geocoder for city search. cmd/web always uses a direct connection
+	// (no proxy) — Telegram traffic already bypasses the proxy, and geocoding calls
+	// from the web handler are ephemeral lookups. The proxy URL is intentionally
+	// empty here; collector and doctor pass BEACON_PROXY_URL instead.
+	openMeteoClient, err := weatherinfra.NewOpenMeteo("")
+	if err != nil {
+		log.Fatalf("geocoder: open-meteo: %s", err.Error())
+	}
+	geoAdapter := &openMeteoGeoAdapter{client: openMeteoClient}
+
+	mux, err := gateway.NewGateway(restAPI, botToken, subscriptionRepo, sourceRepo, rateValueRepo, profileRepo, chartSvc, healthAgent, BuildVersion, serviceStart, weatherCityRepo, geoAdapter)
 	if err != nil {
 		log.Fatalf("services: mux api is failed, %s", err.Error())
 		return
@@ -296,6 +318,36 @@ func main() {
 
 //go:embed static
 var staticFS embed.FS
+
+// openMeteoGeoAdapter adapts *weatherinfra.OpenMeteo to the gateway's
+// weatherGeocoder interface, which expects []dto.WeatherCitySearchItem rather
+// than the infrastructure-layer []weatherinfra.GeoResult. The adapter lives in
+// cmd/web so that the gateway and handler layers do not import the infrastructure
+// package.
+type openMeteoGeoAdapter struct {
+	client *weatherinfra.OpenMeteo
+}
+
+// Geocode implements the gateway weatherGeocoder interface.
+func (a *openMeteoGeoAdapter) Geocode(ctx context.Context, name string, count int) ([]dto.WeatherCitySearchItem, error) {
+	results, err := a.client.Geocode(ctx, name, count)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]dto.WeatherCitySearchItem, 0, len(results))
+	for _, r := range results {
+		items = append(items, dto.WeatherCitySearchItem{
+			LocationID:  weatherinfra.LocationKey(r),
+			DisplayName: r.Name,
+			Latitude:    r.Latitude,
+			Longitude:   r.Longitude,
+			Timezone:    r.Timezone,
+			Country:     r.Country,
+			Admin1:      r.Admin1,
+		})
+	}
+	return items, nil
+}
 
 // flagPort, flagTimeout, etc. hold the raw flag values populated by flag.Parse in
 // main. They are package-level so initFlags can apply them to the exported globals,
