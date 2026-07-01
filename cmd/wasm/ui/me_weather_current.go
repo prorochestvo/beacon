@@ -79,7 +79,7 @@ func renderWeatherCurrentCard(item dto.WeatherCurrentItem) string {
 	if item.ConditionEmoji != "" || item.ConditionText != "" {
 		b.WriteString(fmt.Sprintf(
 			`<div class="weather-current-condition">%s %s</div>`,
-			item.ConditionEmoji,
+			dom.Escape(item.ConditionEmoji),
 			dom.Escape(item.ConditionText),
 		))
 	}

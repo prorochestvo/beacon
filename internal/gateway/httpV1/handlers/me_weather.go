@@ -221,6 +221,13 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 		notifyKind = domain.WeatherNotifyKind(body.NotifyKind)
 	}
 
+	// morning_summary ignores condition_value; normalize to empty so arbitrary
+	// free text is never stored for a kind that does not use it.
+	conditionValue := body.ConditionValue
+	if notifyKind == domain.WeatherNotifyMorningSummary {
+		conditionValue = ""
+	}
+
 	record := &domain.WeatherUserCity{
 		UserType:       domain.UserTypeTelegram,
 		UserID:         tgUserID,
@@ -233,15 +240,21 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 		Admin1:         body.Admin1,
 		NotifyKind:     notifyKind,
 		NotifyHour:     notifyHour,
-		ConditionValue: body.ConditionValue,
+		ConditionValue: conditionValue,
 		// GismeteoCityID stays nil — populated only by the curated map in the second increment.
 	}
 
 	// Validate the (kind, condition_value) pair. Validate() returns a plain error
-	// whose message is safe to surface directly to the user.
+	// whose message is safe to surface directly to the user. json.NewEncoder is used
+	// here instead of string concatenation so a condition_value containing a quote
+	// cannot corrupt the JSON.
 	if valErr := record.Validate(); valErr != nil {
 		pub := internal.NewPublicError(valErr.Error())
-		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		if encErr := json.NewEncoder(w).Encode(map[string]string{"error": pub.Details()}); encErr != nil {
+			h.logger.Print(errors.Join(fmt.Errorf("encode validation error response: %w", encErr), internal.NewTraceError()))
+		}
 		return
 	}
 
@@ -367,9 +380,6 @@ func (h *Handler) GetMeWeatherCurrent(w http.ResponseWriter, r *http.Request) {
 
 	// Dedup by location_id: each notify kind is its own row, but the endpoint
 	// returns one observation per physical city regardless of kind count.
-	type cityEntry struct {
-		city domain.WeatherUserCity
-	}
 	seen := make(map[string]struct{}, len(cities))
 	order := make([]domain.WeatherUserCity, 0, len(cities))
 	for _, c := range cities {

@@ -636,6 +636,61 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		assert.Equal(t, "", cityRepo.retained[0].ConditionValue)
 	})
 
+	t.Run("rain_alert with valid percent returns 201 and stores kind and value", func(t *testing.T) {
+		t.Parallel()
+		cityRepo := &mockWeatherCityRepo{}
+		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
+		h.validateInitData = alwaysValidateInitData(callerUserID)
+
+		b := validBody
+		b.NotifyKind = "rain_alert"
+		b.ConditionValue = "70"
+		req := httptest.NewRequest(http.MethodPost, "/api/me/weather/cities", bodyJSON(b))
+		rr := httptest.NewRecorder()
+		h.CreateMeWeatherCity(rr, req)
+
+		require.Equal(t, http.StatusCreated, rr.Code)
+		require.Len(t, cityRepo.retained, 1)
+		assert.Equal(t, domain.WeatherNotifyAlertRain, cityRepo.retained[0].NotifyKind)
+		assert.Equal(t, "70", cityRepo.retained[0].ConditionValue)
+	})
+
+	t.Run("rain_alert with percent above 100 returns 400 PublicError", func(t *testing.T) {
+		t.Parallel()
+		cityRepo := &mockWeatherCityRepo{}
+		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
+		h.validateInitData = alwaysValidateInitData(callerUserID)
+
+		b := validBody
+		b.NotifyKind = "rain_alert"
+		b.ConditionValue = "101"
+		req := httptest.NewRequest(http.MethodPost, "/api/me/weather/cities", bodyJSON(b))
+		rr := httptest.NewRecorder()
+		h.CreateMeWeatherCity(rr, req)
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		assert.Contains(t, rr.Body.String(), "probability percent")
+		assert.Contains(t, rr.Body.String(), `"error"`)
+	})
+
+	t.Run("rain_alert with percent at or below 0 returns 400 PublicError", func(t *testing.T) {
+		t.Parallel()
+		cityRepo := &mockWeatherCityRepo{}
+		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
+		h.validateInitData = alwaysValidateInitData(callerUserID)
+
+		b := validBody
+		b.NotifyKind = "rain_alert"
+		b.ConditionValue = "0"
+		req := httptest.NewRequest(http.MethodPost, "/api/me/weather/cities", bodyJSON(b))
+		rr := httptest.NewRecorder()
+		h.CreateMeWeatherCity(rr, req)
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		assert.Contains(t, rr.Body.String(), "probability percent")
+		assert.Contains(t, rr.Body.String(), `"error"`)
+	})
+
 	t.Run("unknown notify_kind returns 400 PublicError", func(t *testing.T) {
 		t.Parallel()
 		cityRepo := &mockWeatherCityRepo{}
@@ -988,13 +1043,13 @@ func TestHandler_GetMeWeatherCurrent(t *testing.T) {
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 		var resp struct {
 			Items []struct {
-				LocationID     string  `json:"location_id"`
-				DisplayName    string  `json:"display_name"`
-				HasData        bool    `json:"has_data"`
-				TempCurrent    float64 `json:"temp_current"`
-				ConditionText  string  `json:"condition_text"`
-				ConditionEmoji string  `json:"condition_emoji"`
-				CapturedAt     string  `json:"captured_at"`
+				LocationID     string   `json:"location_id"`
+				DisplayName    string   `json:"display_name"`
+				HasData        bool     `json:"has_data"`
+				TempCurrent    *float64 `json:"temp_current"`
+				ConditionText  string   `json:"condition_text"`
+				ConditionEmoji string   `json:"condition_emoji"`
+				CapturedAt     string   `json:"captured_at"`
 			} `json:"items"`
 		}
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
@@ -1003,7 +1058,8 @@ func TestHandler_GetMeWeatherCurrent(t *testing.T) {
 		assert.Equal(t, "1234", item.LocationID)
 		assert.Equal(t, "Almaty", item.DisplayName)
 		assert.True(t, item.HasData)
-		assert.InDelta(t, 25.5, item.TempCurrent, 0.001)
+		require.NotNil(t, item.TempCurrent)
+		assert.InDelta(t, 25.5, *item.TempCurrent, 0.001)
 		assert.Equal(t, "Clear sky", item.ConditionText)
 		assert.NotEmpty(t, item.CapturedAt)
 	})

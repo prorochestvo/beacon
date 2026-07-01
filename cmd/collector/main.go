@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"path"
 	"syscall"
+	"time"
 
 	"github.com/prorochestvo/dsninjector"
 	"github.com/seilbekskindirov/beacon/internal"
@@ -150,6 +151,14 @@ func main() {
 	if err = errors.Join(errs...); err != nil {
 		log.Printf("execution: completed with errors: %s", err)
 	}
+
+	// Vacuum stale weather observations to prevent unbounded table growth.
+	// Each collector tick stores new hourly_json rows; without pruning, the table
+	// accumulates indefinitely. Non-fatal: a vacuum failure does not abort the run.
+	if vacuumErr := weatherObsRepo.RemoveWeatherObservationsOlderThan(context.Background(), 48*time.Hour); vacuumErr != nil {
+		log.Printf("execution: weather obs vacuum: %v", vacuumErr)
+	}
+
 	if ctx.Err() != nil {
 		log.Printf("execution: stopped by signal: %s", ctx.Err())
 	}

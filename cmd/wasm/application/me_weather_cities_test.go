@@ -625,6 +625,27 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 		require.Error(t, err)
 		assert.True(t, page.State().AuthFailure)
 	})
+
+	t.Run("thunderstorm empty-value save succeeds without error", func(t *testing.T) {
+		t.Parallel()
+		f := &weatherFakeFetcher{
+			getJSON: map[string][]byte{
+				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+			},
+		}
+		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
+		require.NoError(t, page.LoadCities(t.Context()))
+
+		page.OpenAlertForm("loc1")
+		page.SetAlertFormKind("alert_thunderstorm")
+		// ConditionValue is intentionally not set — empty is canonical for thunderstorm.
+
+		require.NoError(t, page.SavePendingAlert(t.Context()))
+
+		st := page.State()
+		assert.Empty(t, st.AlertFormLocationID, "form must be closed on success")
+		assert.Nil(t, st.AlertSaveError)
+	})
 }
 
 func TestMeWeatherCitiesPage_ClearSearch(t *testing.T) {

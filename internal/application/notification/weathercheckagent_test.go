@@ -719,6 +719,50 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		require.Empty(t, eventRepo.retained, "no event when hourly data is absent")
 		require.Empty(t, cityRepo.advanced, "last_notified_at must not advance when condition not met")
 	})
+
+	t.Run("evaluator error on bad condition_value skips bad city, good city still fires", func(t *testing.T) {
+		t.Parallel()
+		tempMax := 40.0 // above 35 threshold for good city
+		badCity := domain.WeatherUserCity{
+			ID: "bad-c", UserType: domain.UserTypeTelegram, UserID: "u-bad",
+			LocationID: "loc-bad", DisplayName: "BadCity", Timezone: "UTC",
+			NotifyKind: domain.WeatherNotifyAlertHeat, ConditionValue: "notanumber",
+			LastNotifiedAt: time.Time{},
+		}
+		goodCity := domain.WeatherUserCity{
+			ID: "good-c", UserType: domain.UserTypeTelegram, UserID: "u-good",
+			LocationID: "loc-good", DisplayName: "GoodCity", Timezone: "UTC",
+			NotifyKind: domain.WeatherNotifyAlertHeat, ConditionValue: "35",
+			LastNotifiedAt: time.Time{},
+		}
+		sharedObs := &domain.WeatherObservation{
+			Provider: domain.ProviderOpenMeteo,
+			TempMax:  &tempMax,
+		}
+		cityRepo := &mockWeatherCheckCityRepo{
+			citiesByKind: map[domain.WeatherNotifyKind][]domain.WeatherUserCity{
+				domain.WeatherNotifyAlertHeat: {badCity, goodCity},
+			},
+		}
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: sharedObs,
+		}}
+		eventRepo := &mockCheckEventRepository{}
+
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		err := a.Run(t.Context())
+		require.Error(t, err, "evaluator error for bad city must surface in the returned error")
+		assert.Contains(t, err.Error(), "evaluate", "error must reference the evaluate step")
+		require.Len(t, eventRepo.retained, 1, "good city must still queue an event")
+		assert.Equal(t, "u-good", eventRepo.retained[0].UserID, "queued event must be for the good city's user")
+		// bad city must not be advanced
+		for _, id := range cityRepo.advanced {
+			assert.NotEqual(t, "bad-c", id, "bad city must not be advanced after evaluator failure")
+		}
+		// good city must be advanced
+		require.Len(t, cityRepo.advanced, 1)
+		assert.Equal(t, "good-c", cityRepo.advanced[0])
+	})
 }
 
 // mockWeatherCheckCityRepo simulates ObtainDueWeatherUserCities and AdvanceLastNotifiedAt.

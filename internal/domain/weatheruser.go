@@ -81,15 +81,19 @@ type WeatherUserCity struct {
 // Returns a non-nil error with a human-readable message on mismatch so the
 // caller can surface it as a user-facing validation failure.
 // morning_summary ignores ConditionValue; thunderstorm accepts any value (empty
-// is canonical); heat and frost require a parseable float64; rain requires a
-// parseable float64 in [0, 100].
+// is canonical); heat and frost require a parseable float64 in [-100, 100] °C;
+// rain requires a parseable float64 in (0, 100].
 func (c *WeatherUserCity) Validate() error {
 	switch c.NotifyKind {
 	case WeatherNotifyMorningSummary:
 		return nil
 	case WeatherNotifyAlertHeat, WeatherNotifyAlertFrost:
-		if _, err := strconv.ParseFloat(c.ConditionValue, 64); err != nil {
+		v, err := strconv.ParseFloat(c.ConditionValue, 64)
+		if err != nil {
 			return fmt.Errorf("condition_value must be a valid number for %s", string(c.NotifyKind))
+		}
+		if v < -100 || v > 100 {
+			return fmt.Errorf("condition_value for %s must be a temperature in °C in [-100, 100]", string(c.NotifyKind))
 		}
 		return nil
 	case WeatherNotifyAlertThunderstorm:
@@ -99,12 +103,12 @@ func (c *WeatherUserCity) Validate() error {
 		if err != nil {
 			return fmt.Errorf("condition_value must be a valid number for %s", string(c.NotifyKind))
 		}
-		if v < 0 || v > 100 {
-			return fmt.Errorf("condition_value for %s must be a probability percent in [0, 100]", string(c.NotifyKind))
+		if v <= 0 || v > 100 {
+			return fmt.Errorf("condition_value for %s must be a probability percent in (0, 100]", string(c.NotifyKind))
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown notify_kind: %q", string(c.NotifyKind))
+		return fmt.Errorf("unknown notify_kind: %s", string(c.NotifyKind))
 	}
 }
 
@@ -131,13 +135,16 @@ func (c *WeatherUserCity) AlertThreshold() (float64, error) {
 //   - alert_frost: obs.TempMin  ≤ threshold (forecast daily low,  °C, Open-Meteo)
 //   - alert_thunderstorm: obs.WeatherCode ≥ 95 (WMO thunderstorm band; "today is
 //     forecast stormy," not instantaneous — the daily-dominant code is used)
-//   - rain_alert: dispatches to EvaluateRain with time.Now().UTC() as the window
-//     anchor. Use EvaluateRain directly in tests to supply a deterministic now.
+//   - rain_alert: dispatches to EvaluateRain with now as the window anchor.
+//
+// now is used only for the rain_alert case to define the look-ahead window; it is
+// ignored for all other kinds. Pass time.Now().UTC() in production; pass a fixed
+// time in tests for deterministic rain evaluation.
 //
 // A nil required field means the condition cannot be evaluated: fired=false, err=nil.
 // Anti-spam (cooldown) is the caller's responsibility, not this pure evaluator.
 // morning_summary and unknown kinds return an error; they are not alert kinds.
-func (c *WeatherUserCity) EvaluateAlert(obs WeatherObservation) (fired bool, reason string, err error) {
+func (c *WeatherUserCity) EvaluateAlert(obs WeatherObservation, now time.Time) (fired bool, reason string, err error) {
 	switch c.NotifyKind {
 	case WeatherNotifyAlertHeat:
 		t, err := c.AlertThreshold()
@@ -164,7 +171,7 @@ func (c *WeatherUserCity) EvaluateAlert(obs WeatherObservation) (fired bool, rea
 		text, _ := WMOWeatherCode(*obs.WeatherCode)
 		return true, text, nil
 	case WeatherNotifyAlertRain:
-		return c.EvaluateRain(obs, time.Now().UTC())
+		return c.EvaluateRain(obs, now)
 	default:
 		return false, "", fmt.Errorf("weather city %s: not an alert kind: %q", c.ID, c.NotifyKind)
 	}
@@ -208,7 +215,7 @@ func (c *WeatherUserCity) EvaluateRain(obs WeatherObservation, now time.Time) (b
 	if float64(maxProb) < threshold {
 		return false, "", nil
 	}
-	return true, fmt.Sprintf("Rain likely (%d%%) within 6h", maxProb), nil
+	return true, fmt.Sprintf("Rain likely (%d%%) within %dh", maxProb, int(weatherRainWindow.Hours())), nil
 }
 
 // formatAlertTemp formats a temperature as "+31.6°C" or "−5.2°C" using the

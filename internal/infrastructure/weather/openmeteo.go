@@ -218,7 +218,7 @@ func decodeOpenMeteoForecast(body []byte, lat, lng float64) (*domain.WeatherObse
 		} `json:"daily"`
 		Hourly struct {
 			Time                     []string  `json:"time"`
-			PrecipitationProbability []int     `json:"precipitation_probability"`
+			PrecipitationProbability []*int    `json:"precipitation_probability"`
 			Temperature2m            []float64 `json:"temperature_2m"`
 		} `json:"hourly"`
 	}
@@ -330,8 +330,8 @@ func decodeOpenMeteoForecast(body []byte, lat, lng float64) (*domain.WeatherObse
 				continue
 			}
 			pt := domain.WeatherHourlyPoint{Time: t.UTC()}
-			if i < len(resp.Hourly.PrecipitationProbability) {
-				v := resp.Hourly.PrecipitationProbability[i]
+			if i < len(resp.Hourly.PrecipitationProbability) && resp.Hourly.PrecipitationProbability[i] != nil {
+				v := *resp.Hourly.PrecipitationProbability[i]
 				pt.PrecipProb = &v
 			}
 			if i < len(resp.Hourly.Temperature2m) {
