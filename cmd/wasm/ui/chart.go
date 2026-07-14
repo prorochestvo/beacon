@@ -185,13 +185,13 @@ func renderCollapsedDelta(row dto.MeChartPairRow) string {
 	}
 	return fmt.Sprintf(
 		`<div class="sparkline-row-delta" style="color:%s">Δ %s</div>`,
-		dom.Escape(deltaColor), deltaStr,
+		dom.Escape(deltaColor), dom.Escape(deltaStr),
 	)
 }
 
 // renderValueLine builds the value + delta text line for a pair row.
-// Two-series rows use compact single-char prefixes B/A colored in role colors.
-// Single-series rows use full BID/ASK prefix.
+// Two-series rows use compact single-char prefixes B/A/L colored in role colors.
+// Single-series rows use full BID/ASK/LAST prefix.
 func renderValueLine(series []dto.MeChartSeries) string {
 	if len(series) == 0 {
 		return ""
@@ -219,19 +219,31 @@ func renderValueLine(series []dto.MeChartSeries) string {
 	return b.String()
 }
 
-// seriesPrefixAndColor returns the display prefix ("B"/"A" for two-series rows,
-// "BID"/"ASK" for single-series rows) and the role color for the prefix glyph.
+// seriesPrefixAndColor returns the display prefix and the role color for
+// the prefix glyph. In compact mode (two-series rows) single-char prefixes
+// are returned. In full mode (single-series rows) the full kind label is used.
+//
+// kind is the JSON string value from MeChartSeries.Kind ("BID", "ASK", "LAST").
+// It is compared literally — do not import domain here, the WASM renderer
+// works with already-decoded JSON strings.
 func seriesPrefixAndColor(kind string, compact bool) (prefix, color string) {
-	if kind == "BID" {
+	switch kind {
+	case "BID":
 		if compact {
 			return "B", ratepair.ColorBid
 		}
 		return "BID", ratepair.ColorBid
+	case "LAST":
+		if compact {
+			return "L", ratepair.ColorLast
+		}
+		return "LAST", ratepair.ColorLast
+	default: // ASK
+		if compact {
+			return "A", ratepair.ColorAsk
+		}
+		return "ASK", ratepair.ColorAsk
 	}
-	if compact {
-		return "A", ratepair.ColorAsk
-	}
-	return "ASK", ratepair.ColorAsk
 }
 
 // renderChartArea returns the SVG (or no-data badge) for the pair's chart area.

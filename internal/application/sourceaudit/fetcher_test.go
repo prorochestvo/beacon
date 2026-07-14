@@ -2,6 +2,7 @@ package sourceaudit
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -40,5 +41,51 @@ func TestNewHTTPFetcher(t *testing.T) {
 		_, err := NewHTTPFetcher(30*time.Second, "://bad-url")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "parse proxy URL")
+	})
+}
+
+func TestHTTPFetcher_Fetch(t *testing.T) {
+	t.Parallel()
+
+	t.Run("non-nil headers override default User-Agent", func(t *testing.T) {
+		t.Parallel()
+
+		var receivedUA string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedUA = r.Header.Get("User-Agent")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		}))
+		t.Cleanup(srv.Close)
+
+		f, err := NewHTTPFetcher(5*time.Second, "")
+		require.NoError(t, err)
+
+		res, err := f.Fetch(t.Context(), srv.URL, map[string]string{"User-Agent": "CustomAudit/1.0"})
+		require.NoError(t, err)
+		require.NotNil(t, res)
+		assert.Equal(t, "CustomAudit/1.0", receivedUA,
+			"non-nil headers must override the default User-Agent")
+	})
+
+	t.Run("nil headers use default Beacon User-Agent", func(t *testing.T) {
+		t.Parallel()
+
+		var receivedUA string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedUA = r.Header.Get("User-Agent")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		}))
+		t.Cleanup(srv.Close)
+
+		f, err := NewHTTPFetcher(5*time.Second, "")
+		require.NoError(t, err)
+
+		res, err := f.Fetch(t.Context(), srv.URL, nil)
+		require.NoError(t, err)
+		require.NotNil(t, res)
+		assert.Equal(t, DefaultUserAgent, receivedUA,
+			"nil headers must result in the default Beacon/1.0 User-Agent")
 	})
 }

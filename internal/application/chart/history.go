@@ -40,21 +40,27 @@ type MeHistoryResult struct {
 // MeHistoryRowResult is one grouped rate-collection event for a single
 // (title, timestamp) tuple. BID and ASK from sibling sources sharing the
 // same provider title at the same scrape moment are collapsed into one row.
+// LAST (equity) sources surface in their own Last slot, never in Bid.
 type MeHistoryRowResult struct {
 	// SourceTitle is the human-readable provider title that acts as the grouping key.
 	SourceTitle string
 	// Timestamp is when the collector scraped this value.
 	Timestamp time.Time
-	// Bid is the BID price; nil when the provider only scraped ASK at this moment.
+	// Bid is the BID price; nil when the provider only scraped ASK/LAST at this moment.
 	Bid *float64
-	// Ask is the ASK price; nil when the provider only scraped BID at this moment.
+	// Ask is the ASK price; nil when the provider only scraped BID/LAST at this moment.
 	Ask *float64
+	// Last is the last-traded price for equity (LAST-kind) sources; nil for BID/ASK-only providers.
+	Last *float64
 	// BidDeltaPct is the percent change from the previous BID in this
 	// (title, direction) chain within the page. Nil for the first row.
 	BidDeltaPct *float64
 	// AskDeltaPct is the percent change from the previous ASK in this
 	// (title, direction) chain within the page. Nil for the first row.
 	AskDeltaPct *float64
+	// LastDeltaPct is the percent change from the previous LAST observation in
+	// this (title, direction) chain within the page. Nil for the first row.
+	LastDeltaPct *float64
 }
 
 // ObtainMeHistory returns paginated rate-collection events for the calling
@@ -203,17 +209,35 @@ func (s *Service) ObtainMeHistory(ctx context.Context, userID, pair, sourceTitle
 		// Assign price to the correct direction slot.
 		kind := kindBySource[rv.SourceName]
 		price := rv.Price
-		if kind == domain.RateSourceKindBID {
+		switch kind {
+		case domain.RateSourceKindBID:
 			// Invariant 1: one BID source per (title, base, quote); if violated,
-			// last-write-in-page-order wins — see warn-log below.
+			// last-write-in-page-order wins.
 			if g.Bid != nil {
 				log.Printf("warn: history title collision user=%s pair=%s title=%q ts=%s kind=BID: silent overwrite (Invariant 1 violated)",
 					userID, pair, gk.sourceTitle, gk.timestamp.Format(time.RFC3339))
 			}
 			g.Bid = &price
-		} else {
+		case domain.RateSourceKindLAST:
+			// Equity last-traded price gets its own slot, distinct from Bid.
+			// Invariant 1: one LAST source per (title, base, quote); if violated,
+			// last-write-in-page-order wins.
+			if g.Last != nil {
+				log.Printf("warn: history title collision user=%s pair=%s title=%q ts=%s kind=LAST: silent overwrite (Invariant 1 violated)",
+					userID, pair, gk.sourceTitle, gk.timestamp.Format(time.RFC3339))
+			}
+			g.Last = &price
+		default: // handles ASK and, defensively, any unrecognised kind → Ask slot
+			if kind != domain.RateSourceKindASK {
+				// An unrecognised kind reaching this branch means a new
+				// RateSourceKind was added to the domain without a
+				// corresponding case here — route to Ask as a safe fallback
+				// but surface the skew so it is visible in logs.
+				log.Printf("warn: history unrecognised kind user=%s pair=%s title=%q ts=%s kind=%q: routing to Ask slot (data-model skew)",
+					userID, pair, gk.sourceTitle, gk.timestamp.Format(time.RFC3339), kind)
+			}
 			// Invariant 1: one ASK source per (title, base, quote); if violated,
-			// last-write-in-page-order wins — see warn-log below.
+			// last-write-in-page-order wins.
 			if g.Ask != nil {
 				log.Printf("warn: history title collision user=%s pair=%s title=%q ts=%s kind=ASK: silent overwrite (Invariant 1 violated)",
 					userID, pair, gk.sourceTitle, gk.timestamp.Format(time.RFC3339))
@@ -235,8 +259,9 @@ func (s *Service) ObtainMeHistory(ctx context.Context, userID, pair, sourceTitle
 	// page has nil delta even if the full history has a predecessor. Cross-page
 	// anchoring is deferred.
 	type directionState struct {
-		lastBid *float64
-		lastAsk *float64
+		lastBid  *float64
+		lastAsk  *float64
+		lastLast *float64
 	}
 
 	// Build per-title ordered indices (largest index = oldest in newest-first list).
@@ -268,6 +293,14 @@ func (s *Service) ObtainMeHistory(ctx context.Context, userID, pair, sourceTitle
 				}
 				v := *row.Ask
 				st.lastAsk = &v
+			}
+			if row.Last != nil {
+				if st.lastLast != nil && *st.lastLast != 0 {
+					d := (*row.Last - *st.lastLast) / *st.lastLast * 100
+					row.LastDeltaPct = &d
+				}
+				v := *row.Last
+				st.lastLast = &v
 			}
 		}
 	}

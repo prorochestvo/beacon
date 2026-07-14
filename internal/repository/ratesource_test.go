@@ -170,6 +170,60 @@ func TestSourceRepository_RetainSource(t *testing.T) {
 		require.True(t, result.Active)
 	})
 
+	t.Run("persists Options.Headers round-trip", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("non-empty Headers read back equal", func(t *testing.T) {
+			t.Parallel()
+
+			src := &domain.RateSource{
+				Name:          "opts-headers-" + t.Name(),
+				Title:         "Options Headers Source",
+				URL:           "https://example.com/opts-headers",
+				Interval:      "5m",
+				BaseCurrency:  "AAPL",
+				QuoteCurrency: "USD",
+				Kind:          domain.RateSourceKindLAST,
+				Active:        true,
+				Options: domain.RateSourceOptions{
+					Headers: map[string]string{"User-Agent": "Bot/1.0"},
+				},
+				Rules: []domain.RateSourceRule{},
+			}
+			require.NoError(t, r.RetainRateSource(t.Context(), src))
+
+			result, err := r.ObtainRateSourceByName(t.Context(), src.Name)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, map[string]string{"User-Agent": "Bot/1.0"}, result.Options.Headers,
+				"Options.Headers must survive a round-trip through the database")
+		})
+
+		t.Run("empty options reads back nil Headers", func(t *testing.T) {
+			t.Parallel()
+
+			src := &domain.RateSource{
+				Name:          "opts-headers-empty-" + t.Name(),
+				Title:         "Options Headers Empty",
+				URL:           "https://example.com/opts-headers-empty",
+				Interval:      "5m",
+				BaseCurrency:  "USD",
+				QuoteCurrency: "KZT",
+				Kind:          domain.RateSourceKindBID,
+				Active:        true,
+				Options:       domain.RateSourceOptions{}, // no Headers
+				Rules:         []domain.RateSourceRule{},
+			}
+			require.NoError(t, r.RetainRateSource(t.Context(), src))
+
+			result, err := r.ObtainRateSourceByName(t.Context(), src.Name)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Nil(t, result.Options.Headers,
+				"Options.Headers must be nil when no headers were stored (omitempty)")
+		})
+	})
+
 	t.Run("persists fetcher_kind round-trip", func(t *testing.T) {
 		t.Parallel()
 
@@ -469,6 +523,29 @@ func TestSourceRepository_ObtainSourceByName(t *testing.T) {
 		require.NoError(t, err)
 		require.Nil(t, result)
 	})
+
+	t.Run("LAST kind", func(t *testing.T) {
+		t.Parallel()
+
+		src := &domain.RateSource{
+			Name:          "src-last-single",
+			Title:         "LAST Single Lookup",
+			URL:           "https://example.com/last-single",
+			Interval:      "6h",
+			BaseCurrency:  "AAPL",
+			QuoteCurrency: "USD",
+			Kind:          domain.RateSourceKindLAST,
+			Active:        true,
+			Rules:         []domain.RateSourceRule{},
+		}
+		require.NoError(t, r.RetainRateSource(t.Context(), src))
+
+		result, err := r.ObtainRateSourceByName(t.Context(), src.Name)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, domain.RateSourceKindLAST, result.Kind,
+			"LAST kind must survive ObtainRateSourceByName round-trip without error")
+	})
 }
 
 func TestSourceRepository_ObtainAllSources(t *testing.T) {
@@ -502,6 +579,64 @@ func TestSourceRepository_ObtainAllSources(t *testing.T) {
 		result, err := seededRepo.ObtainAllRateSources(t.Context())
 		require.NoError(t, err)
 		require.NotEmpty(t, result)
+	})
+
+	t.Run("returns LAST-kind source without unknown-kind error", func(t *testing.T) {
+		t.Parallel()
+
+		lastRepo, err := NewRateSourceRepository(stubSQLiteDB(t))
+		require.NoError(t, err)
+
+		src := &domain.RateSource{
+			Name:          "last-kind-roundtrip",
+			Title:         "LAST Kind Round-trip",
+			URL:           "https://example.com/last",
+			Interval:      "6h",
+			BaseCurrency:  "AAPL",
+			QuoteCurrency: "USD",
+			Kind:          domain.RateSourceKindLAST,
+			Active:        true,
+			Rules:         []domain.RateSourceRule{},
+		}
+		require.NoError(t, lastRepo.RetainRateSource(t.Context(), src))
+
+		result, err := lastRepo.ObtainAllRateSources(t.Context())
+		require.NoError(t, err)
+
+		var found bool
+		for _, s := range result {
+			if s.Name == src.Name {
+				require.Equal(t, domain.RateSourceKindLAST, s.Kind)
+				found = true
+			}
+		}
+		require.True(t, found, "LAST-kind source must appear in ObtainAllRateSources result")
+	})
+
+	t.Run("unknown kind XYZ is rejected by list query", func(t *testing.T) {
+		t.Parallel()
+
+		// Use a dedicated DB so the XYZ row does not contaminate other subtests.
+		xyzRepo, err := NewRateSourceRepository(stubSQLiteDB(t))
+		require.NoError(t, err)
+
+		// RetainRateSource does not validate kind, so the XYZ row persists fine.
+		src := &domain.RateSource{
+			Name:          "xyz-kind-rejection",
+			Title:         "XYZ Kind Rejection",
+			URL:           "https://example.com/xyz",
+			Interval:      "6h",
+			BaseCurrency:  "XYZ",
+			QuoteCurrency: "USD",
+			Kind:          "XYZ",
+			Active:        true,
+			Rules:         []domain.RateSourceRule{},
+		}
+		require.NoError(t, xyzRepo.RetainRateSource(t.Context(), src))
+
+		_, err = xyzRepo.ObtainAllRateSources(t.Context())
+		require.Error(t, err)
+		require.ErrorContains(t, err, "unknown kind")
 	})
 }
 
@@ -551,6 +686,30 @@ func TestSourceRepository_ObtainRateSourcesByNames(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, got, 1)
 		require.Contains(t, got, "bulk-solo")
+	})
+
+	t.Run("LAST-kind source is returned without error", func(t *testing.T) {
+		t.Parallel()
+
+		r, err := NewRateSourceRepository(stubSQLiteDB(t))
+		require.NoError(t, err)
+		require.NoError(t, r.RetainRateSource(t.Context(), &domain.RateSource{
+			Name:          "bulk-last",
+			Title:         "LAST Kind Bulk",
+			URL:           "https://example.com/last-bulk",
+			Interval:      "6h",
+			BaseCurrency:  "AAPL",
+			QuoteCurrency: "USD",
+			Kind:          domain.RateSourceKindLAST,
+			Active:        true,
+			Rules:         []domain.RateSourceRule{},
+		}))
+
+		got, err := r.ObtainRateSourcesByNames(t.Context(), []string{"bulk-last"})
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.Equal(t, domain.RateSourceKindLAST, got["bulk-last"].Kind,
+			"LAST kind must survive ObtainRateSourcesByNames round-trip without error")
 	})
 }
 

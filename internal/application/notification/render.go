@@ -19,7 +19,9 @@ type SubscriptionSnapshot struct {
 // BuildSubscriptionDigest renders caller subscriptions into one or more Telegram
 // HTML message parts using the scheduled notifier's aligned-table format.
 // Cross-source dedup on (BaseCurrency, QuoteCurrency, Kind) matches
-// RateCheckAgent.Run: BID keeps MAX price, ASK keeps MIN, ties go to first-seen.
+// RateCheckAgent.Run: BID keeps MAX price, ASK keeps MIN, LAST keeps MAX
+// (deterministic tiebreak; revisit to "most recent" when a second feed for one
+// ticker is added), ties go to first-seen.
 // The header is the plain "FX rates" title — no hashtag — since the digest is
 // on-demand, not a trigger fire.
 //
@@ -72,8 +74,8 @@ func foldIntoBuckets(buckets map[string]*dedupBucket, snap SubscriptionSnapshot)
 		return
 	}
 
-	// Extremum selection: BID keeps MAX, ASK keeps MIN. Price, delta, and
-	// SourceName are replaced together (coherence invariant).
+	// Extremum selection: BID keeps MAX, ASK keeps MIN, LAST keeps MAX.
+	// Price, delta, and SourceName are replaced together (coherence invariant).
 	switch snap.Source.Kind {
 	case domain.RateSourceKindBID:
 		if snap.CurrentPrice > b.a.CurrentPrice {
@@ -83,6 +85,16 @@ func foldIntoBuckets(buckets map[string]*dedupBucket, snap SubscriptionSnapshot)
 		}
 	case domain.RateSourceKindASK:
 		if snap.CurrentPrice < b.a.CurrentPrice {
+			b.a.CurrentPrice = snap.CurrentPrice
+			b.a.Delta = delta
+			b.a.SourceName = html.EscapeString(snap.Source.Name)
+		}
+	case domain.RateSourceKindLAST:
+		// Multiple feeds of the same last price converge; keep MAX as a
+		// deterministic tiebreak. MVP has no same-ticker collision (AAPL only
+		// from Yahoo, CCBN only from KASE → distinct keys); revisit to
+		// "most recent observation" when a second feed for one ticker is added.
+		if snap.CurrentPrice > b.a.CurrentPrice {
 			b.a.CurrentPrice = snap.CurrentPrice
 			b.a.Delta = delta
 			b.a.SourceName = html.EscapeString(snap.Source.Name)

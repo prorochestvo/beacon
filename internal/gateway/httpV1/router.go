@@ -9,9 +9,22 @@ import (
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
 	"github.com/seilbekskindirov/beacon/internal/application/service"
 	"github.com/seilbekskindirov/beacon/internal/domain"
+	"github.com/seilbekskindirov/beacon/internal/dto"
 	v1 "github.com/seilbekskindirov/beacon/internal/gateway/httpV1/handlers"
 	"github.com/seilbekskindirov/beacon/internal/gateway/httpV1/routes"
 )
+
+// WeatherGatewayDeps groups the weather-specific dependencies threaded into the
+// router so the constructor signature does not grow one positional parameter per
+// weather feature. Fields are added here as new weather endpoints need them.
+type WeatherGatewayDeps struct {
+	// CityRepo is the weather city subscription repository.
+	CityRepo meWeatherCityRepo
+	// Geocoder is the geocoding provider for the city-search endpoint.
+	Geocoder weatherGeocoder
+	// ObsRepo is the weather observation repository for the on-demand current-weather endpoint.
+	ObsRepo meWeatherObsRepo
+}
 
 // NewRouter registers all v1 HTTP routes on mux and returns it.
 func NewRouter(
@@ -26,11 +39,14 @@ func NewRouter(
 	healthAgent healthCheckAgent,
 	serverVersion string,
 	serverStart time.Time,
+	weather WeatherGatewayDeps,
 ) (*http.ServeMux, error) {
 	h, err := v1.NewHandler(srvRateRestApi, botToken, subRepo, sourceRepo, rateValueRepo, profileRepo, chartSvc, healthAgent, serverVersion, serverStart)
 	if err != nil {
 		return nil, err
 	}
+	h.WithWeatherDeps(weather.CityRepo, weather.Geocoder)
+	h.WithWeatherObsRepo(weather.ObsRepo)
 
 	// MeSubscriptionsRaw must be registered before MeSubscriptions so Go 1.22+
 	// ServeMux longest-path matching selects the more specific route.
@@ -63,6 +79,14 @@ func NewRouter(
 	// ServeMux longest-prefix matching selects the correct handler.
 	mux.HandleFunc("GET "+routes.NotificationsFailed, h.ListFailedNotifications)
 	mux.HandleFunc("GET "+routes.Notifications, h.ListNotifications)
+
+	// MeWeatherCitiesSearch must be registered before MeWeatherCities so that
+	// Go 1.22+ ServeMux longest-path matching selects the correct handler.
+	mux.HandleFunc("GET "+routes.MeWeatherCurrent, h.GetMeWeatherCurrent)
+	mux.HandleFunc("GET "+routes.MeWeatherCitiesSearch, h.SearchWeatherCities)
+	mux.HandleFunc("GET "+routes.MeWeatherCities, h.ListMeWeatherCities)
+	mux.HandleFunc("POST "+routes.MeWeatherCities, h.CreateMeWeatherCity)
+	mux.HandleFunc("DELETE "+routes.MeWeatherCityByID, h.DeleteMeWeatherCity)
 
 	// /ping is the liveness probe; /healthz is kept as a backward-compatible alias.
 	mux.HandleFunc("GET "+routes.Ping, h.Ping)
@@ -103,4 +127,25 @@ type meRateValueRepo interface {
 // meProfileRepo is a thin interface for user-profile upserts (timezone).
 type meProfileRepo interface {
 	UpsertRateUserProfile(ctx context.Context, record *domain.RateUserProfile) error
+}
+
+// meWeatherCityRepo threads the weather city repository through the router layer.
+type meWeatherCityRepo interface {
+	RetainWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
+	ObtainWeatherUserCitiesByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.WeatherUserCity, error)
+	ObtainWeatherUserCityByID(ctx context.Context, id string) (*domain.WeatherUserCity, error)
+	RemoveWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
+}
+
+// weatherGeocoder threads the geocoding provider through the router layer.
+// The return type matches the handler's interface exactly ([]dto.WeatherCitySearchItem),
+// so the adapter lives in cmd/web and not in this package.
+type weatherGeocoder interface {
+	Geocode(ctx context.Context, name string, count int) ([]dto.WeatherCitySearchItem, error)
+}
+
+// meWeatherObsRepo threads the weather observation repository through the router
+// layer for the on-demand current-weather endpoint.
+type meWeatherObsRepo interface {
+	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
 }

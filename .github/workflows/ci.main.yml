@@ -26,8 +26,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: make lint
-      - run: make test
+      # Tee each fail-prone step into a shared trace so the Telegram failure
+      # notification can paste the real reason inline (see Notify failure).
+      - name: Lint
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
+          make lint
+      - name: Test
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
+          make test
       # production-shape build: CGO off, linux/amd64, the same artifacts
       # release.yml ships. Catches "tests pass but prod build breaks" (build
       # tags, race-only files, missing wasm assets).
@@ -35,6 +43,7 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: |
+          exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
           mkdir -p ./cmd/web/static
           cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" ./cmd/web/static/wasm_exec.js
           GOOS=js GOARCH=wasm go build -o ./cmd/web/static/app.wasm ./cmd/wasm
@@ -42,3 +51,37 @@ jobs:
           GOOS=linux GOARCH=amd64 go build -o ./build/collector ./cmd/collector
           GOOS=linux GOARCH=amd64 go build -o ./build/notifier ./cmd/notifier
           GOOS=linux GOARCH=amd64 go build -o ./build/migrator ./cmd/migrator
+
+      # Failure-only alert: main is the protected branch, so a red run is worth
+      # surfacing to the shared chat. No success notification — green main is the
+      # norm and would be noise. ACTION=ci so the status line reads "ci failed",
+      # not "deploy failed" (this workflow does not deploy).
+      - name: Notify failure
+        if: failure()
+        env:
+          ACTION_EMITER_TBOT_TOKEN: ${{ secrets.ACTION_EMITER_TBOT_TOKEN }}
+          TELEGRAM_ROOT_CHAT_ID: ${{ vars.TELEGRAM_ROOT_CHAT_ID }}
+          APP_LABEL: ""
+          ACTION: "ci"
+        run: |
+          [ -n "$ACTION_EMITER_TBOT_TOKEN" ] && [ -n "$TELEGRAM_ROOT_CHAT_ID" ] || exit 0
+          PROJECT_TAG=$(echo "${GITHUB_REPOSITORY##*/}" | tr 'a-z-' 'A-Z_' | tr -cd 'A-Z0-9_')
+          WF_REF="${GITHUB_WORKFLOW_REF%@*}"; WF_FILE="${WF_REF##*/}"
+          LABEL="${APP_LABEL:+$APP_LABEL }"
+          ACTION="${ACTION:-deploy}"
+          reason=""
+          if [ -f "$RUNNER_TEMP/deploy_trace.log" ]; then
+            reason=$(grep -iE 'error|FAIL|panic|cannot|undefined|denied|forbidden|expected|no such' \
+              "$RUNNER_TEMP/deploy_trace.log" | tail -n 3 | cut -c1-300)
+          fi
+          text=$(printf '#%s %s%s <b>failed</b>\n<b>%s</b> <i>(%s)</i>\nref:  %s (%s)\nrun:  <a href="%s/%s/actions/runs/%s">#%s</a>' \
+            "$PROJECT_TAG" "$LABEL" "$ACTION" "$GITHUB_REPOSITORY" "$WF_FILE" "$GITHUB_REF_NAME" "${GITHUB_SHA:0:7}" \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ID")
+          if [ -n "$reason" ]; then
+            esc=$(printf '%s' "$reason" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+            text=$(printf '%s\n<pre>%s</pre>' "$text" "$esc")
+          fi
+          curl -s -X POST "https://api.telegram.org/bot${ACTION_EMITER_TBOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_ROOT_CHAT_ID}" \
+            --data-urlencode "text=${text}" \
+            -d parse_mode=HTML -d disable_web_page_preview=true >/dev/null || true

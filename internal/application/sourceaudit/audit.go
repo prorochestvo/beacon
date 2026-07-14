@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -53,30 +54,63 @@ type Auditor struct {
 	Fetcher Fetcher
 }
 
-// Run audits all sources sequentially, deduplicating fetches by URL.
+// Run audits all sources sequentially, deduplicating fetches by (URL, headers).
+// Two sources sharing a URL with empty/nil headers reuse the same fetch body;
+// sources with differing per-source headers each receive their own request.
 // The output slice is parallel to sources.
 func (a *Auditor) Run(ctx context.Context, sources []SeededSource) ([]ProbeResult, error) {
 	cache := make(map[string]*fetchEntry)
 
-	urlOrder := make([]string, 0)
-	seen := make(map[string]bool)
+	type fetchWork struct {
+		url     string
+		headers map[string]string
+	}
+	workByKey := make(map[string]fetchWork, len(sources))
+	keyOrder := make([]string, 0, len(sources))
+
 	for _, s := range sources {
-		if !seen[s.URL] {
-			seen[s.URL] = true
-			urlOrder = append(urlOrder, s.URL)
+		k := fetchCacheKey(s.URL, s.Headers)
+		if _, exists := workByKey[k]; !exists {
+			workByKey[k] = fetchWork{url: s.URL, headers: s.Headers}
+			keyOrder = append(keyOrder, k)
 		}
 	}
 
-	for _, u := range urlOrder {
-		res, err := a.Fetcher.Fetch(ctx, u)
-		cache[u] = &fetchEntry{result: res, err: err}
+	for _, k := range keyOrder {
+		w := workByKey[k]
+		res, err := a.Fetcher.Fetch(ctx, w.url, w.headers)
+		cache[k] = &fetchEntry{result: res, err: err}
 	}
 
 	results := make([]ProbeResult, len(sources))
 	for i, src := range sources {
-		results[i] = a.probeSource(src, cache[src.URL])
+		results[i] = a.probeSource(src, cache[fetchCacheKey(src.URL, src.Headers)])
 	}
 	return results, nil
+}
+
+// fetchCacheKey returns a stable dedup key for (rawURL, headers). Sources sharing
+// the same URL and empty/nil headers reuse the same fetch (the existing "shared
+// URL fetched once" optimization). Sources that differ in their per-source headers
+// each receive an independent fetch.
+func fetchCacheKey(rawURL string, headers map[string]string) string {
+	if len(headers) == 0 {
+		return rawURL
+	}
+	keys := make([]string, 0, len(headers))
+	for k := range headers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString(rawURL)
+	for _, k := range keys {
+		b.WriteByte('\x00') // NUL is not valid in URLs; safe separator
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(headers[k])
+	}
+	return b.String()
 }
 
 func (a *Auditor) probeSource(src SeededSource, fetch *fetchEntry) ProbeResult {

@@ -88,6 +88,68 @@ func TestBuildSubscriptionDigest(t *testing.T) {
 		assert.NotContains(t, parts[0], "488")
 	})
 
+	t.Run("LAST cross-source dedup keeps MAX price with coherent delta and source name", func(t *testing.T) {
+		t.Parallel()
+
+		lastSource := func(name string) domain.RateSource {
+			return domain.RateSource{
+				Name:          name,
+				BaseCurrency:  "AAPL",
+				QuoteCurrency: "USD",
+				Kind:          domain.RateSourceKindLAST,
+			}
+		}
+
+		highSnap := SubscriptionSnapshot{
+			Subscription: domain.RateUserSubscription{LatestNotifiedRate: 280},
+			Source:       lastSource("S_HIGH"),
+			CurrentPrice: 290,
+		}
+		lowSnap := SubscriptionSnapshot{
+			Subscription: domain.RateUserSubscription{LatestNotifiedRate: 280},
+			Source:       lastSource("S_LOW"),
+			CurrentPrice: 285,
+		}
+
+		parts, err := BuildSubscriptionDigest(fixedDigestNow, nil, []SubscriptionSnapshot{highSnap, lowSnap})
+		require.NoError(t, err)
+		require.Len(t, parts, 1)
+
+		// LAST-MAX: 290 wins over 285.
+		assert.Contains(t, parts[0], "290")
+		assert.NotContains(t, parts[0], "285")
+		// Pair label must be AAPL/USD (base/quote), not USD/AAPL.
+		assert.Contains(t, parts[0], "AAPL/USD")
+		assert.NotContains(t, parts[0], "USD/AAPL")
+		// Delta corresponds to the winner (S_HIGH): 290 - 280 = +10.00; loser delta would be +5.00.
+		assert.Contains(t, parts[0], "+10.00",
+			"delta must come from the winning (MAX) source S_HIGH, not the loser")
+		assert.NotContains(t, parts[0], "+5.00",
+			"loser S_LOW delta must not appear in the rendered message")
+	})
+
+	t.Run("LAST subscription renders correct base/quote label", func(t *testing.T) {
+		t.Parallel()
+
+		snap := SubscriptionSnapshot{
+			Subscription: domain.RateUserSubscription{LatestNotifiedRate: 270},
+			Source: domain.RateSource{
+				Name:          "YAHOO_AAPL",
+				BaseCurrency:  "AAPL",
+				QuoteCurrency: "USD",
+				Kind:          domain.RateSourceKindLAST,
+			},
+			CurrentPrice: 282.34,
+		}
+
+		parts, err := BuildSubscriptionDigest(fixedDigestNow, nil, []SubscriptionSnapshot{snap})
+		require.NoError(t, err)
+		require.Len(t, parts, 1)
+
+		assert.Contains(t, parts[0], "AAPL/USD")
+		assert.Contains(t, parts[0], "282.34")
+	})
+
 	t.Run("ASK cross-source dedup keeps MIN price", func(t *testing.T) {
 		t.Parallel()
 

@@ -653,6 +653,77 @@ func TestRateCheckAgent_Run(t *testing.T) {
 		require.NotContains(t, msg, "+10.00", "loser's delta must not appear")
 	})
 
+	t.Run("LAST-kind source fires delta subscription and advances LatestNotifiedRate", func(t *testing.T) {
+		t.Parallel()
+
+		// AAPL/USD at 300; first fire (LatestNotifiedRate=0) → IsDue=true.
+		const newPrice = 300.0
+		subRepo := &mockCheckSubscriptionRepository{
+			subs: []domain.RateUserSubscription{{
+				UserType:           domain.UserTypeTelegram,
+				UserID:             "777",
+				ConditionType:      domain.ConditionTypeDelta,
+				ConditionValue:     "0",
+				LatestNotifiedRate: 0,
+			}},
+		}
+		eventRepo := &mockCheckEventRepository{}
+		a := &RateCheckAgent{
+			rateSourceRepository: &mockCheckSourceRepository{
+				sources: []domain.RateSource{{
+					Name:          "US_YAHOO_LAST_AAPL_USD",
+					Title:         "Yahoo Finance",
+					BaseCurrency:  "AAPL",
+					QuoteCurrency: "USD",
+					Kind:          domain.RateSourceKindLAST,
+				}},
+			},
+			rateValueRepository:            &mockCheckValueRepository{values: []domain.RateValue{{Price: newPrice}}},
+			rateUserSubscriptionRepository: subRepo,
+			rateUserEventRepository:        eventRepo,
+		}
+
+		require.NoError(t, a.Run(t.Context()))
+
+		// Exactly one event queued, message contains the pair label.
+		require.Len(t, eventRepo.retained, 1)
+		require.Contains(t, eventRepo.retained[0].Message, "AAPL/USD",
+			"LAST-kind pair label must appear in notification message")
+
+		// Subscription LatestNotifiedRate must advance to the current price.
+		require.Len(t, subRepo.retained, 1)
+		require.Equal(t, newPrice, subRepo.retained[0].LatestNotifiedRate,
+			"LatestNotifiedRate must advance to current price after LAST fire")
+
+		// Second Run at the same price — delta=0, threshold=0, LatestNotifiedRate==price → no fire.
+		subRepo2 := &mockCheckSubscriptionRepository{
+			subs: []domain.RateUserSubscription{{
+				UserType:           domain.UserTypeTelegram,
+				UserID:             "777",
+				ConditionType:      domain.ConditionTypeDelta,
+				ConditionValue:     "0",
+				LatestNotifiedRate: newPrice,
+			}},
+		}
+		eventRepo2 := &mockCheckEventRepository{}
+		a2 := &RateCheckAgent{
+			rateSourceRepository: &mockCheckSourceRepository{
+				sources: []domain.RateSource{{
+					Name:          "US_YAHOO_LAST_AAPL_USD",
+					Title:         "Yahoo Finance",
+					BaseCurrency:  "AAPL",
+					QuoteCurrency: "USD",
+					Kind:          domain.RateSourceKindLAST,
+				}},
+			},
+			rateValueRepository:            &mockCheckValueRepository{values: []domain.RateValue{{Price: newPrice}}},
+			rateUserSubscriptionRepository: subRepo2,
+			rateUserEventRepository:        eventRepo2,
+		}
+		require.NoError(t, a2.Run(t.Context()))
+		require.Empty(t, eventRepo2.retained, "same price must not re-fire LAST subscription")
+	})
+
 	t.Run("BID-MAX tie — first-seen wins", func(t *testing.T) {
 		t.Parallel()
 

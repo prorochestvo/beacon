@@ -231,9 +231,9 @@ func renderEditFormView(state application.MeSubscriptionsEditState) string {
 	return b.String()
 }
 
-// filterSubscriptionItems returns items whose source title, condition type,
-// or condition value contains query (case-insensitive). Empty query passes
-// every item through.
+// filterSubscriptionItems returns items whose source title, pair, condition
+// type, or condition value contains query (case-insensitive). Empty query
+// passes every item through.
 func filterSubscriptionItems(items []dto.MeSubscriptionEditRow, query string) []dto.MeSubscriptionEditRow {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
@@ -241,7 +241,7 @@ func filterSubscriptionItems(items []dto.MeSubscriptionEditRow, query string) []
 	}
 	out := make([]dto.MeSubscriptionEditRow, 0, len(items))
 	for _, it := range items {
-		haystack := strings.ToLower(it.SourceTitle + " " + it.ConditionType + " " + it.ConditionValue)
+		haystack := strings.ToLower(it.SourceTitle + " " + it.BaseCurrency + "/" + it.QuoteCurrency + " " + it.ConditionType + " " + it.ConditionValue)
 		if strings.Contains(haystack, q) {
 			out = append(out, it)
 		}
@@ -660,15 +660,31 @@ func paginateSources(items []dto.SourceResponse, page, size int) ([]dto.SourceRe
 	return items[start:end], totalPages
 }
 
-// renderEditListItem renders a single subscription row in the editor list.
+// renderEditListItem renders a single subscription row in the editor list as
+// two stacked lines: the provider title on top, the pair and condition below.
+// The pair label disambiguates rows sharing one provider title (all Yahoo
+// sources are titled "Yahoo Finance"; only the pair tells them apart). The
+// pair span is omitted when the currencies are unknown (source row missing),
+// so the list never shows a bare "/" — the CSS ::after separator disappears
+// with it.
 func renderEditListItem(item dto.MeSubscriptionEditRow) string {
+	pair := ""
+	if item.BaseCurrency != "" && item.QuoteCurrency != "" {
+		pair = fmt.Sprintf(
+			`<span class="me-edit-item-pair">%s</span>`,
+			dom.Escape(item.BaseCurrency+"/"+item.QuoteCurrency),
+		)
+	}
 	return fmt.Sprintf(
 		`<li class="me-edit-item">`+
+			`<div class="me-edit-item-main">`+
 			`<span class="me-edit-item-source">%s</span>`+
-			`<span class="me-edit-item-cond">%s: %s</span>`+
+			`<div class="me-edit-item-detail">%s<span class="me-edit-item-cond">%s: %s</span></div>`+
+			`</div>`+
 			`<button class="me-edit-delete" type="button" data-id="%s" aria-label="Delete subscription">✕</button>`+
 			`</li>`,
 		dom.Escape(item.SourceTitle),
+		pair,
 		dom.Escape(item.ConditionType),
 		dom.Escape(item.ConditionValue),
 		dom.Escape(item.ID),

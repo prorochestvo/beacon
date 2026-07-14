@@ -359,6 +359,12 @@ func (s *Service) buildPairRows(ctx context.Context, allKeys []domain.SourcePair
 				g.labelBase = strings.ToUpper(p.Base)
 				g.labelQuote = strings.ToUpper(p.Quote)
 			}
+		case domain.RateSourceKindLAST:
+			g.last = &sr
+			// LAST is always expressed in the natural base/quote direction;
+			// it is never inverted, unlike BID which may derive from ASK storage.
+			g.labelBase = strings.ToUpper(p.Base)
+			g.labelQuote = strings.ToUpper(p.Quote)
 		}
 	}
 
@@ -379,16 +385,19 @@ func (s *Service) buildPairRows(ctx context.Context, allKeys []domain.SourcePair
 	return rows, nil
 }
 
-// pairGroup accumulates BID and ASK series for one canonical currency pair
+// pairGroup accumulates BID, ASK, and LAST series for one canonical currency pair
 // while iterating over the unique-pair list.
 type pairGroup struct {
-	// labelBase and labelQuote form the BID-natural display label (BASE/QUOTE).
-	// Derived from the BID subscription when present; otherwise from the ASK
-	// subscription with base and quote swapped.
+	// labelBase and labelQuote form the display label (BASE/QUOTE).
+	// For BID/ASK sources, derived from the BID subscription when present;
+	// otherwise from the ASK subscription. For LAST sources, set directly.
 	labelBase  string
 	labelQuote string
 	bid        *SeriesRow
 	ask        *SeriesRow
+	// last holds the LAST-kind series (equity sources). At most one LAST
+	// series exists per canonical pair per the migration invariant.
+	last *SeriesRow
 }
 
 // buildPairRow assembles a PairRow from a pairGroup. BID series is placed
@@ -408,6 +417,9 @@ func buildPairRow(g *pairGroup) PairRow {
 	}
 	if g.ask != nil {
 		row.Series = append(row.Series, *g.ask)
+	}
+	if g.last != nil {
+		row.Series = append(row.Series, *g.last)
 	}
 
 	if g.bid != nil && g.ask != nil && g.bid.Latest != 0 && g.ask.Latest != 0 {
@@ -436,8 +448,11 @@ func buildPairRow(g *pairGroup) PairRow {
 // len(Points)>0; zero otherwise (sentinel: display the requested period).
 func buildSeriesRow(p ratepair.Pair, vals []domain.RateValue, since, now time.Time) SeriesRow {
 	color := ratepair.ColorBid
-	if p.Kind == domain.RateSourceKindASK {
+	switch p.Kind {
+	case domain.RateSourceKindASK:
 		color = ratepair.ColorAsk
+	case domain.RateSourceKindLAST:
+		color = ratepair.ColorLast
 	}
 
 	sr := SeriesRow{

@@ -40,6 +40,14 @@ type RateSourceOptions struct {
 	Reserve string `json:"reserve,omitempty"`
 	// WaitSelector is a CSS selector the chromedp fetcher waits for before extracting content.
 	WaitSelector string `json:"wait_selector,omitempty"`
+	// Headers are extra HTTP request headers applied by the plain fetcher, overriding
+	// defaults (e.g. a browser User-Agent for sources that reject the default). Ignored
+	// by the chromedp fetcher. Empty for most sources.
+	// WARNING: values are stored in plaintext in the database and in git-tracked migration
+	// files. Do not store secrets (API keys, bearer tokens) here. For auth-gated sources
+	// inject credentials at runtime via BEACON_* env vars / dsninjector and substitute
+	// them in the collection layer.
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // Method identifies the extraction algorithm applied to raw page content.
@@ -56,12 +64,15 @@ const (
 	MethodStoreToRate Method = "store_as_rate"
 )
 
-// RateSourceKind distinguishes bid and ask prices for a rate source.
+// RateSourceKind distinguishes bid, ask, and last-traded prices for a rate source.
 type RateSourceKind string
 
 const (
 	// RateSourceKindBID indicates a bid (buy) price source.
-	RateSourceKindBID = "BID"
+	RateSourceKindBID RateSourceKind = "BID"
 	// RateSourceKindASK indicates an ask (sell) price source.
-	RateSourceKindASK = "ASK"
+	RateSourceKindASK RateSourceKind = "ASK"
+	// RateSourceKindLAST indicates a single last-traded price (e.g. an equity
+	// close/last-deal price) with no bid/ask direction.
+	RateSourceKindLAST RateSourceKind = "LAST"
 )

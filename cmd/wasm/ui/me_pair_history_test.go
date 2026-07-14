@@ -358,6 +358,45 @@ func TestRenderPairHistory(t *testing.T) {
 		assert.NotContains(t, html, `data-source="AT&T Bank"`, "raw ampersand must not appear in data-source attribute")
 		assert.Contains(t, html, `data-source="AT&amp;T Bank"`, "ampersand must be escaped in data-source attribute")
 	})
+
+	t.Run("LAST entry renders LAST line and omits BID and ASK", func(t *testing.T) {
+		t.Parallel()
+		ts := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+		last := 230.50
+		row := dto.MeHistoryRow{SourceTitle: "Yahoo Finance", Timestamp: ts, Last: &last}
+		state := historyState(1, 20, 1, []dto.MeHistoryRow{row}, false, nil)
+		html := ui.RenderPairHistory(state)
+
+		assert.Contains(t, html, "me-pair-history-last")
+		assert.Contains(t, html, "LAST")
+		assert.Contains(t, html, "230.5")
+		assert.NotContains(t, html, "me-pair-history-bid")
+		assert.NotContains(t, html, "me-pair-history-ask")
+	})
+
+	t.Run("LAST entry with delta renders percent change", func(t *testing.T) {
+		t.Parallel()
+		ts := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+		last := 230.50
+		delta := 0.42
+		row := dto.MeHistoryRow{SourceTitle: "Yahoo Finance", Timestamp: ts, Last: &last, LastDeltaPct: &delta}
+		state := historyState(1, 20, 1, []dto.MeHistoryRow{row}, false, nil)
+		html := ui.RenderPairHistory(state)
+
+		assert.Contains(t, html, "LAST")
+		assert.Contains(t, html, "+0.42%")
+	})
+
+	t.Run("nil Last field omits the LAST line", func(t *testing.T) {
+		t.Parallel()
+		ts := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+		items := []dto.MeHistoryRow{bidRow("Kaspi", ts, 487.5, nil)}
+		state := historyState(1, 20, 1, items, false, nil)
+		html := ui.RenderPairHistory(state)
+
+		assert.NotContains(t, html, "me-pair-history-last")
+		assert.NotContains(t, html, "LAST")
+	})
 }
 
 // buttonTag extracts the full opening tag (from < to >) that contains the

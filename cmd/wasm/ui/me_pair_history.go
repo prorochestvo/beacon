@@ -70,6 +70,19 @@ func RenderPairHistory(state application.MeSubscriptionsState) string {
 }
 
 // renderHistoryEntry returns the HTML fragment for one history row.
+//
+// Layout example for a BID/ASK provider:
+//
+//	<div class="me-pair-history-entry">
+//	  <div class="me-pair-history-head"><time>...</time> · <span>SourceTitle</span></div>
+//	  <div class="me-pair-history-bid">BID 487.21 <span class="delta">+0.12%</span></div>
+//	  <div class="me-pair-history-ask">ASK 489.05 <span class="delta">-0.05%</span></div>
+//	</div>
+//
+// For equity (LAST-kind) sources, the BID and ASK lines are absent and the LAST
+// line appears instead:
+//
+//	<div class="me-pair-history-last">LAST 230.50 <span class="delta">+0.42%</span></div>
 func renderHistoryEntry(row dto.MeHistoryRow) string {
 	var b strings.Builder
 	b.WriteString(`<div class="me-pair-history-entry">`)
@@ -90,6 +103,13 @@ func renderHistoryEntry(row dto.MeHistoryRow) string {
 			`<div class="me-pair-history-ask">ASK %s %s</div>`,
 			dom.Escape(strconv.FormatFloat(*row.Ask, 'f', -1, 64)),
 			renderHistoryDelta(row.AskDeltaPct),
+		)
+	}
+	if row.Last != nil {
+		fmt.Fprintf(&b,
+			`<div class="me-pair-history-last">LAST %s %s</div>`,
+			dom.Escape(strconv.FormatFloat(*row.Last, 'f', -1, 64)),
+			renderHistoryDelta(row.LastDeltaPct),
 		)
 	}
 	b.WriteString(`</div>`)

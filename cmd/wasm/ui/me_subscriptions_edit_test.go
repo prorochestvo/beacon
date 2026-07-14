@@ -415,6 +415,53 @@ func TestRenderMeSubscriptionsEdit(t *testing.T) {
 		assert.NotContains(t, html, "QazPost")
 	})
 
+	t.Run("list view row shows the currency pair", func(t *testing.T) {
+		t.Parallel()
+
+		state := application.MeSubscriptionsEditState{
+			ActiveView: application.EditViewList,
+			Items: []dto.MeSubscriptionEditRow{
+				{ID: "i1", SourceTitle: "Yahoo Finance", BaseCurrency: "MSFT", QuoteCurrency: "USD", ConditionType: "daily", ConditionValue: "03:00:00"},
+			},
+			ListPage: 1,
+		}
+		html := ui.RenderMeSubscriptionsEdit(state)
+		assert.Contains(t, html, `<span class="me-edit-item-pair">MSFT/USD</span>`)
+		assert.Contains(t, html, `<div class="me-edit-item-detail"><span class="me-edit-item-pair">MSFT/USD</span><span class="me-edit-item-cond">daily: 03:00:00</span></div>`,
+			"pair and condition must share the second line under the title")
+	})
+
+	t.Run("list view row omits the pair span when currencies are unknown", func(t *testing.T) {
+		t.Parallel()
+
+		state := application.MeSubscriptionsEditState{
+			ActiveView: application.EditViewList,
+			Items: []dto.MeSubscriptionEditRow{
+				{ID: "i1", SourceTitle: "Orphaned", ConditionType: "delta", ConditionValue: "5"},
+			},
+			ListPage: 1,
+		}
+		html := ui.RenderMeSubscriptionsEdit(state)
+		assert.NotContains(t, html, "me-edit-item-pair")
+	})
+
+	t.Run("list view search filter matches the currency pair", func(t *testing.T) {
+		t.Parallel()
+
+		state := application.MeSubscriptionsEditState{
+			ActiveView: application.EditViewList,
+			Items: []dto.MeSubscriptionEditRow{
+				{ID: "i1", SourceTitle: "Yahoo Finance", BaseCurrency: "MSFT", QuoteCurrency: "USD", ConditionType: "daily", ConditionValue: "03:00:00"},
+				{ID: "i2", SourceTitle: "Yahoo Finance", BaseCurrency: "BTC", QuoteCurrency: "USD", ConditionType: "delta", ConditionValue: "15"},
+			},
+			ListQuery: "btc",
+			ListPage:  1,
+		}
+		html := ui.RenderMeSubscriptionsEdit(state)
+		assert.Contains(t, html, "BTC/USD")
+		assert.NotContains(t, html, "MSFT/USD")
+	})
+
 	t.Run("list view shows + Add new subscription button", func(t *testing.T) {
 		t.Parallel()
 
@@ -438,5 +485,38 @@ func TestRenderMeSubscriptionsEdit(t *testing.T) {
 		assert.Contains(t, html, `id="me-edit-save"`)
 		// Form view does not render the list section.
 		assert.NotContains(t, html, "Your subscriptions")
+	})
+
+	t.Run("equity LAST source shows AAPL/USD in pair picker and no direction radio", func(t *testing.T) {
+		// A single LAST source for AAPL/USD must appear once in the pair list
+		// and must never emit a me-edit-direction radio group.
+		// The direction radio is gated on len(PairDirections)>=2, and a single-
+		// direction equity source yields exactly one PairDirection with empty Label.
+		t.Parallel()
+
+		aaplSrc := dto.SourceResponse{
+			Name:          "US_YAHOO_LAST_AAPL_USD",
+			Title:         "Yahoo Finance",
+			BaseCurrency:  "AAPL",
+			QuoteCurrency: "USD",
+			Active:        true,
+		}
+		state := application.MeSubscriptionsEditState{
+			Sources:               []dto.SourceResponse{aaplSrc},
+			SelectedProviderTitle: "Yahoo Finance",
+			PairPickerOpen:        true,
+			// Mirrors what resolvePairDirections returns for a single LAST source:
+			// one entry with an empty Label. Exercises the len(PairDirections) >= 2
+			// guard with data present rather than relying on a nil slice.
+			PairDirections: []application.PairDirection{{Label: "", SourceName: "US_YAHOO_LAST_AAPL_USD"}},
+		}
+		html := ui.RenderMeSubscriptionsEdit(state)
+
+		// Pair AAPL/USD must appear in the pair list.
+		assert.Contains(t, html, "AAPL/USD",
+			"equity pair must appear in the pair picker")
+		// No direction radio must render.
+		assert.NotContains(t, html, `name="me-edit-direction"`,
+			"single-direction LAST source must not emit a direction radio group")
 	})
 }

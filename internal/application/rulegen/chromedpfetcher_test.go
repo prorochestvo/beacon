@@ -79,7 +79,7 @@ func TestChromedpFetcher_Fetch(t *testing.T) {
 			NetworkIdleMillis: 500,
 		})
 
-		body, err := f.Fetch(t.Context(), srv.URL)
+		body, err := f.Fetch(t.Context(), srv.URL, nil)
 		require.NoError(t, err)
 		assert.Contains(t, string(body), "hello-static")
 	})
@@ -103,7 +103,7 @@ func TestChromedpFetcher_Fetch(t *testing.T) {
 			NetworkIdleMillis: 800,
 		})
 
-		body, err := f.Fetch(t.Context(), srv.URL)
+		body, err := f.Fetch(t.Context(), srv.URL, nil)
 		require.NoError(t, err)
 		// The JS-injected span must appear in the captured outer HTML.
 		assert.Contains(t, string(body), `id="x"`)
@@ -130,7 +130,7 @@ func TestChromedpFetcher_Fetch(t *testing.T) {
 			NetworkIdleMillis: 100,
 		})
 
-		_, err := f.Fetch(context.Background(), srv.URL)
+		_, err := f.Fetch(context.Background(), srv.URL, nil)
 		require.Error(t, err)
 
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -159,7 +159,7 @@ func TestChromedpFetcher_Fetch(t *testing.T) {
 		})
 
 		// Port 1 on loopback is effectively always closed.
-		_, err := f.Fetch(t.Context(), "http://127.0.0.1:1/")
+		_, err := f.Fetch(t.Context(), "http://127.0.0.1:1/", nil)
 		require.Error(t, err)
 	})
 
@@ -196,7 +196,7 @@ setTimeout(function() {
 			WaitSelector:      "#rate-loaded",
 		})
 
-		body, err := f.Fetch(t.Context(), srv.URL)
+		body, err := f.Fetch(t.Context(), srv.URL, nil)
 		require.NoError(t, err)
 		assert.Contains(t, string(body), `id="rate-loaded"`,
 			"WaitSelector must block until the injected element is visible")

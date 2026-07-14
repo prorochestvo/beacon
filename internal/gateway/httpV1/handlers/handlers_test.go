@@ -128,6 +128,44 @@ func TestHealthCheck(t *testing.T) {
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.Empty(t, body.Server.Uptime)
 	})
+
+	t.Run("advisory open-meteo failure yields HTTP 200 with component error", func(t *testing.T) {
+		t.Parallel()
+		// The aggregator returns healthy=true when only advisory inspectors fail;
+		// the handler must map that to HTTP 200 even though a component has an error.
+		agent := &mockHealthAgent{
+			healthy: true,
+			report:  map[string]string{"sqlite": "ok", "telegram": "ok", "open-meteo": "geocoding unreachable"},
+		}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil, agent, "v1.0.0", time.Now())
+		require.NoError(t, err)
+		rr := httptest.NewRecorder()
+		h.HealthCheck(rr, httptest.NewRequest(http.MethodGet, "/health/check", nil))
+		require.Equal(t, http.StatusOK, rr.Code, "advisory failure must not flip HTTP status to 503")
+		var body dto.HealthCheckResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+		require.True(t, body.Status)
+		require.Equal(t, "geocoding unreachable", body.Services["open-meteo"])
+	})
+
+	t.Run("critical sqlite failure yields HTTP 503", func(t *testing.T) {
+		t.Parallel()
+		// A critical dependency failure makes the aggregator return healthy=false;
+		// the handler must map that to HTTP 503.
+		agent := &mockHealthAgent{
+			healthy: false,
+			report:  map[string]string{"sqlite": "connection refused", "telegram": "ok", "open-meteo": "ok"},
+		}
+		h, err := NewHandler(&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{}, &mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil, agent, "v1.0.0", time.Now())
+		require.NoError(t, err)
+		rr := httptest.NewRecorder()
+		h.HealthCheck(rr, httptest.NewRequest(http.MethodGet, "/health/check", nil))
+		require.Equal(t, http.StatusServiceUnavailable, rr.Code, "critical sqlite failure must return 503")
+		var body dto.HealthCheckResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+		require.False(t, body.Status)
+		require.Equal(t, "connection refused", body.Services["sqlite"])
+	})
 }
 
 func TestListSources(t *testing.T) {
@@ -2292,6 +2330,67 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		assert.Equal(t, "Kaspi", svc.received.sourceTitle)
+	})
+
+	t.Run("equity row Last and LastDeltaPct reach JSON and Bid Ask are nil", func(t *testing.T) {
+		t.Parallel()
+		v := 221.50
+		d := 1.25
+		svc := &mockMeChartService{history: &appchart.MeHistoryResult{
+			Pair:  "AAPL/USD",
+			Total: 1,
+			Items: []appchart.MeHistoryRowResult{
+				{SourceTitle: "Yahoo Finance", Timestamp: time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC), Last: &v, LastDeltaPct: &d},
+			},
+		}}
+		h := newH(t, svc)
+		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=AAPL/USD", nil)
+		req.Header.Set("X-Telegram-Init-Data", "valid")
+		rr := httptest.NewRecorder()
+		h.GetMeRatesHistory(rr, req)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		bodyBytes := rr.Body.Bytes()
+		var resp dto.MeHistoryResponse
+		require.NoError(t, json.Unmarshal(bodyBytes, &resp))
+		require.Len(t, resp.Items, 1)
+		require.NotNil(t, resp.Items[0].Last, "Last must be set for equity row")
+		assert.Equal(t, 221.50, *resp.Items[0].Last)
+		require.NotNil(t, resp.Items[0].LastDeltaPct, "LastDeltaPct must be set for equity row")
+		assert.Equal(t, 1.25, *resp.Items[0].LastDeltaPct)
+		assert.Nil(t, resp.Items[0].Bid, "Bid must be nil for equity row")
+		assert.Nil(t, resp.Items[0].Ask, "Ask must be nil for equity row")
+	})
+
+	t.Run("FX BID row JSON omits last and last_delta_pct keys", func(t *testing.T) {
+		t.Parallel()
+		bid := 490.0
+		delta := 0.5
+		svc := &mockMeChartService{history: &appchart.MeHistoryResult{
+			Pair:  "USD/KZT",
+			Total: 1,
+			Items: []appchart.MeHistoryRowResult{
+				{SourceTitle: "Test", Timestamp: time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC), Bid: &bid, BidDeltaPct: &delta},
+			},
+		}}
+		h := newH(t, svc)
+		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
+		req.Header.Set("X-Telegram-Init-Data", "valid")
+		rr := httptest.NewRecorder()
+		h.GetMeRatesHistory(rr, req)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		bodyBytes := rr.Body.Bytes()
+		// Decode into raw map to assert key absence (omitempty).
+		var raw struct {
+			Items []map[string]any `json:"items"`
+		}
+		require.NoError(t, json.Unmarshal(bodyBytes, &raw))
+		require.Len(t, raw.Items, 1)
+		_, hasLast := raw.Items[0]["last"]
+		_, hasLastDelta := raw.Items[0]["last_delta_pct"]
+		assert.False(t, hasLast, "last key must be absent for FX BID row (omitempty)")
+		assert.False(t, hasLastDelta, "last_delta_pct key must be absent for FX BID row (omitempty)")
 	})
 }
 

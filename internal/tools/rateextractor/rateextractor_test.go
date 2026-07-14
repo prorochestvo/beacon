@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -513,6 +514,132 @@ func TestRateExtractor_Run(t *testing.T) {
 		require.Len(t, rateRepo.retained, 1)
 		require.InDelta(t, 1234.56, rateRepo.retained[0].Price, 0.001)
 	})
+	t.Run("options headers override default User-Agent", func(t *testing.T) {
+		t.Parallel()
+
+		var receivedUA string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedUA = r.Header.Get("User-Agent")
+			_, _ = fmt.Fprint(w, `42.00`)
+		}))
+		defer srv.Close()
+
+		rateRepo := &mockRateValueRepository{}
+		source := &domain.RateSource{
+			Name: "ua_override_src",
+			URL:  srv.URL,
+			Options: domain.RateSourceOptions{
+				Headers: map[string]string{
+					"User-Agent": "CustomBot/2.0",
+				},
+			},
+			Rules: []domain.RateSourceRule{{Method: domain.MethodStoreToRate}},
+		}
+
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		require.NoError(t, err)
+		require.NoError(t, ext.Run(t.Context(), source))
+
+		require.Equal(t, "CustomBot/2.0", receivedUA, "per-source User-Agent must override the Beacon/1.0 default")
+	})
+
+	t.Run("default User-Agent sent when Options.Headers is nil", func(t *testing.T) {
+		t.Parallel()
+
+		var receivedUA string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedUA = r.Header.Get("User-Agent")
+			_, _ = fmt.Fprint(w, `42.00`)
+		}))
+		defer srv.Close()
+
+		rateRepo := &mockRateValueRepository{}
+		source := &domain.RateSource{
+			Name:  "default_ua_src",
+			URL:   srv.URL,
+			Rules: []domain.RateSourceRule{{Method: domain.MethodStoreToRate}},
+		}
+
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		require.NoError(t, err)
+		require.NoError(t, ext.Run(t.Context(), source))
+
+		require.Contains(t, receivedUA, "Beacon/1.0", "default UA must start with Beacon/1.0 when no override")
+	})
+
+	t.Run("KASE last-deal comma-decimal format parses correctly", func(t *testing.T) {
+		t.Parallel()
+
+		// Real KASE HTML fixture from live validation — see testdata/kase_ccbn_last_deal.html.
+		// The Angular SSR _ngcontent attributes prove the regex is robust to attribute prefixes.
+		// Comma decimal and space thousands-separator (4 630,00) validate end-of-pipeline normalisation.
+		kaseFixture, err := os.ReadFile("testdata/kase_ccbn_last_deal.html")
+		require.NoError(t, err, "testdata/kase_ccbn_last_deal.html must exist")
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write(kaseFixture)
+		}))
+		defer srv.Close()
+
+		rateRepo := &mockRateValueRepository{}
+		source := &domain.RateSource{
+			Name:          "KZ_KASE_LAST_CCBN_KZT",
+			URL:           srv.URL,
+			BaseCurrency:  "CCBN",
+			QuoteCurrency: "KZT",
+			Rules: []domain.RateSourceRule{
+				{
+					Method:  domain.MethodRegex,
+					Pattern: `class="last-deal"[^>]*><div[^>]*class="value"[^>]*>\s*([0-9][0-9 ,.]*)`,
+				},
+			},
+		}
+
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		require.NoError(t, err)
+		require.NoError(t, ext.Run(t.Context(), source))
+
+		require.Len(t, rateRepo.retained, 1)
+		require.InDelta(t, 4630.00, rateRepo.retained[0].Price, 0.001,
+			"comma decimal and space thousands-separator must normalize to 4630.00")
+		require.Equal(t, "CCBN", rateRepo.retained[0].BaseCurrency)
+		require.Equal(t, "KZT", rateRepo.retained[0].QuoteCurrency)
+	})
+
+	t.Run("Yahoo v8 JSON regularMarketPrice extracted via json path", func(t *testing.T) {
+		t.Parallel()
+
+		// Real Yahoo Finance v8 JSON fixture from live validation — see testdata/yahoo_v8_aapl.json.
+		// Uses the seed rule's json_path to validate the extraction path end-to-end.
+		yahooFixture, err := os.ReadFile("testdata/yahoo_v8_aapl.json")
+		require.NoError(t, err, "testdata/yahoo_v8_aapl.json must exist")
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write(yahooFixture)
+		}))
+		defer srv.Close()
+
+		rateRepo := &mockRateValueRepository{}
+		source := &domain.RateSource{
+			Name:          "US_YAHOO_LAST_AAPL_USD",
+			URL:           srv.URL,
+			BaseCurrency:  "AAPL",
+			QuoteCurrency: "USD",
+			Rules: []domain.RateSourceRule{
+				{Method: domain.MethodJSONPath, Pattern: "chart.result[0].meta.regularMarketPrice"},
+			},
+		}
+
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		require.NoError(t, err)
+		require.NoError(t, ext.Run(t.Context(), source))
+
+		require.Len(t, rateRepo.retained, 1)
+		require.InDelta(t, 282.0, rateRepo.retained[0].Price, 0.001)
+		require.Equal(t, "AAPL", rateRepo.retained[0].BaseCurrency)
+		require.Equal(t, "USD", rateRepo.retained[0].QuoteCurrency)
+	})
+
 	t.Run("retain rate value fails", func(t *testing.T) {
 		t.Parallel()
 
@@ -662,7 +789,7 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		body, err := ext.fetchHtmlPage(t.Context(), srv.URL)
+		body, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil)
 		require.NoError(t, err)
 		require.Equal(t, []byte(responseBody), body)
 	})
@@ -685,11 +812,11 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		body1, err := ext.fetchHtmlPage(t.Context(), srv.URL)
+		body1, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil)
 		require.NoError(t, err)
 		require.Equal(t, []byte(responseBody), body1)
 
-		body2, err := ext.fetchHtmlPage(t.Context(), srv.URL)
+		body2, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil)
 		require.NoError(t, err)
 		require.Equal(t, []byte(responseBody), body2)
 
@@ -705,9 +832,33 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		_, err = ext.fetchHtmlPage(t.Context(), "://bad")
+		_, err = ext.fetchHtmlPage(t.Context(), "://bad", nil)
 		require.Error(t, err)
 	})
+	t.Run("non-nil headers forwarded to server", func(t *testing.T) {
+		t.Parallel()
+
+		var receivedUA string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedUA = r.Header.Get("User-Agent")
+			_, _ = fmt.Fprint(w, "<html>ok</html>")
+		}))
+		defer srv.Close()
+
+		ext, err := NewRateExtractorWithHTTPClient(
+			&mockRateValueRepository{},
+			&http.Client{Timeout: 5 * time.Second},
+			logger,
+		)
+		require.NoError(t, err)
+
+		body, err := ext.fetchHtmlPage(t.Context(), srv.URL, map[string]string{"User-Agent": "TestAgent/3.0"})
+		require.NoError(t, err)
+		require.NotNil(t, body)
+		require.Equal(t, "TestAgent/3.0", receivedUA,
+			"non-nil headers must override the default User-Agent on the outgoing request")
+	})
+
 	t.Run("cache is failed but process is not interrupted", func(t *testing.T) {
 		t.Parallel()
 
@@ -732,7 +883,7 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 		cacheKey := fmt.Sprintf("GET:%s", srv.URL)
 		require.NoError(t, ext.cache.Push(cacheKey, []byte{}))
 
-		body, err := ext.fetchHtmlPage(t.Context(), srv.URL)
+		body, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil)
 		require.NoError(t, err)
 		require.NotNil(t, body)
 		require.Equal(t, []byte(responseBody), body)

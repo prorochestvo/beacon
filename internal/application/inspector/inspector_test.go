@@ -3,6 +3,8 @@ package inspector
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -175,5 +177,260 @@ func TestTelegramInspector(t *testing.T) {
 		insp := NewTelegramInspector(&stubPinger{err: want})
 		err := insp.CheckUP(context.Background())
 		require.ErrorIs(t, err, want)
+	})
+}
+
+func TestAgent_CheckUp_Advisory(t *testing.T) {
+	t.Parallel()
+
+	t.Run("advisory failure reported but healthy stays true when critical pass", func(t *testing.T) {
+		t.Parallel()
+		agent := NewAgentWithAdvisory(inspectorTimeout,
+			[]Inspector{&stubInspector{name: "sqlite", err: nil}},
+			[]Inspector{&stubInspector{name: "open-meteo", err: errors.New("open-meteo down")}},
+		)
+		healthy, report := agent.CheckUp(context.Background())
+
+		assert.True(t, healthy, "advisory failure must not flip healthy")
+		assert.Equal(t, "ok", report["sqlite"])
+		assert.Equal(t, "open-meteo down", report["open-meteo"], "advisory error must appear in report")
+	})
+
+	t.Run("critical failure still sets healthy false even when advisory passes", func(t *testing.T) {
+		t.Parallel()
+		agent := NewAgentWithAdvisory(inspectorTimeout,
+			[]Inspector{&stubInspector{name: "sqlite", err: errors.New("db dead")}},
+			[]Inspector{&stubInspector{name: "open-meteo", err: nil}},
+		)
+		healthy, report := agent.CheckUp(context.Background())
+
+		assert.False(t, healthy)
+		assert.Equal(t, "db dead", report["sqlite"])
+		assert.Equal(t, "ok", report["open-meteo"])
+	})
+
+	t.Run("both critical and advisory failing sets healthy false", func(t *testing.T) {
+		t.Parallel()
+		agent := NewAgentWithAdvisory(inspectorTimeout,
+			[]Inspector{&stubInspector{name: "sqlite", err: errors.New("db dead")}},
+			[]Inspector{&stubInspector{name: "open-meteo", err: errors.New("weather down")}},
+		)
+		healthy, report := agent.CheckUp(context.Background())
+
+		assert.False(t, healthy)
+		assert.Equal(t, "db dead", report["sqlite"])
+		assert.Equal(t, "weather down", report["open-meteo"])
+	})
+
+	t.Run("all advisory passing returns healthy", func(t *testing.T) {
+		t.Parallel()
+		agent := NewAgentWithAdvisory(inspectorTimeout,
+			[]Inspector{},
+			[]Inspector{&stubInspector{name: "open-meteo", err: nil}},
+		)
+		healthy, report := agent.CheckUp(context.Background())
+
+		assert.True(t, healthy)
+		assert.Equal(t, "ok", report["open-meteo"])
+	})
+
+	t.Run("zero timeout falls back to default for NewAgentWithAdvisory", func(t *testing.T) {
+		t.Parallel()
+		agent := NewAgentWithAdvisory(0, nil, nil)
+		assert.Equal(t, inspectorTimeout, agent.timeout)
+	})
+}
+
+func TestOpenMeteoInspector(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Name returns open-meteo", func(t *testing.T) {
+		t.Parallel()
+		insp := NewOpenMeteoInspector()
+		assert.Equal(t, "open-meteo", insp.Name())
+	})
+
+	t.Run("CheckUP returns nil on 2xx with valid JSON", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"results":[{"id":2950159,"name":"Berlin"}]}`))
+		}))
+		defer srv.Close()
+		insp := newOpenMeteoInspectorForTest(srv.Client(), srv.URL)
+		require.NoError(t, insp.CheckUP(context.Background()))
+	})
+
+	t.Run("CheckUP returns error on non-2xx", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, `{"error":true}`, http.StatusServiceUnavailable)
+		}))
+		defer srv.Close()
+		insp := newOpenMeteoInspectorForTest(srv.Client(), srv.URL)
+		err := insp.CheckUP(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "503")
+	})
+
+	t.Run("CheckUP returns error on malformed JSON", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`not json at all`))
+		}))
+		defer srv.Close()
+		insp := newOpenMeteoInspectorForTest(srv.Client(), srv.URL)
+		err := insp.CheckUP(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "parse JSON")
+	})
+
+	t.Run("advisory failure is non-gating in agent", func(t *testing.T) {
+		t.Parallel()
+		// Simulate Open-Meteo being down: the advisory inspector fails.
+		agent := NewAgentWithAdvisory(inspectorTimeout,
+			[]Inspector{&stubInspector{name: "sqlite", err: nil}},
+			[]Inspector{&stubInspector{name: "open-meteo", err: errors.New("simulated outage")}},
+		)
+		healthy, report := agent.CheckUp(context.Background())
+
+		assert.True(t, healthy, "Open-Meteo outage must not set healthy=false")
+		assert.Equal(t, "simulated outage", report["open-meteo"])
+		assert.Equal(t, "ok", report["sqlite"])
+	})
+}
+
+func TestGismeteoInspector_CheckUP(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Name returns gismeteo", func(t *testing.T) {
+		t.Parallel()
+		insp := NewGismeteoInspector()
+		assert.Equal(t, "gismeteo", insp.Name())
+	})
+
+	t.Run("CheckUP returns nil on 200", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+		insp := newGismeteoInspectorForTest(srv.Client(), srv.URL)
+		require.NoError(t, insp.CheckUP(context.Background()))
+	})
+
+	t.Run("CheckUP returns nil on 301 redirect (reachable)", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			// Serve 301 with no Location header. Without a custom CheckRedirect the
+			// default client would try to follow the redirect and fail because there is
+			// no Location target to redirect to. ErrUseLastResponse stops the client
+			// at the 301 so CheckUP receives the status directly and evaluates it.
+			w.WriteHeader(http.StatusMovedPermanently)
+		}))
+		defer srv.Close()
+		client := &http.Client{
+			Timeout: gismeteoProbeTimeout,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+		insp := newGismeteoInspectorForTest(client, srv.URL)
+		require.NoError(t, insp.CheckUP(context.Background()))
+	})
+
+	t.Run("CheckUP returns nil on 403 (reachable, bot-fence)", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+		}))
+		defer srv.Close()
+		insp := newGismeteoInspectorForTest(srv.Client(), srv.URL)
+		require.NoError(t, insp.CheckUP(context.Background()))
+	})
+
+	t.Run("CheckUP returns error on 500", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+		insp := newGismeteoInspectorForTest(srv.Client(), srv.URL)
+		err := insp.CheckUP(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "500")
+	})
+
+	t.Run("CheckUP returns error on 503", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		}))
+		defer srv.Close()
+		insp := newGismeteoInspectorForTest(srv.Client(), srv.URL)
+		err := insp.CheckUP(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "503")
+	})
+
+	t.Run("CheckUP returns error on transport failure", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		srv.Close() // close before the request so the transport fails
+		insp := newGismeteoInspectorForTest(srv.Client(), srv.URL)
+		err := insp.CheckUP(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "gismeteo health")
+	})
+
+	t.Run("request carries the configured User-Agent", func(t *testing.T) {
+		t.Parallel()
+		var gotUA string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotUA = r.Header.Get("User-Agent")
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+		insp := newGismeteoInspectorForTest(srv.Client(), srv.URL)
+		require.NoError(t, insp.CheckUP(context.Background()))
+		assert.Equal(t, gismeteoInspectorUA, gotUA, "User-Agent must match gismeteoInspectorUA")
+	})
+
+	t.Run("advisory gismeteo failure does not flip aggregate healthy", func(t *testing.T) {
+		t.Parallel()
+		agent := NewAgentWithAdvisory(inspectorTimeout,
+			[]Inspector{&stubInspector{name: "sqlite", err: nil}},
+			[]Inspector{&stubInspector{name: "gismeteo", err: errors.New("gismeteo down")}},
+		)
+		healthy, report := agent.CheckUp(context.Background())
+
+		assert.True(t, healthy, "advisory gismeteo failure must not set healthy=false")
+		assert.Equal(t, "gismeteo down", report["gismeteo"])
+		assert.Equal(t, "ok", report["sqlite"])
+	})
+
+	t.Run("NewGismeteoInspectorWithURL probes the configured base URL", func(t *testing.T) {
+		t.Parallel()
+		var hit bool
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			hit = true
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		insp := NewGismeteoInspectorWithURL(srv.URL)
+		require.NoError(t, insp.CheckUP(context.Background()))
+		assert.True(t, hit, "probe must hit the configured base URL")
+	})
+
+	t.Run("NewGismeteoInspectorWithURL empty base URL falls back to default probe URL", func(t *testing.T) {
+		t.Parallel()
+		insp := NewGismeteoInspectorWithURL("")
+		assert.Equal(t, gismeteoProbeURL, insp.probeURL,
+			"an empty base_url must keep the compiled-in default probe URL")
 	})
 }

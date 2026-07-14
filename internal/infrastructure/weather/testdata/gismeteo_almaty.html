@@ -1,0 +1,340 @@
+<!doctype html>
+<html>
+<head><title>GISMETEO: Погода в Алматы сегодня</title></head>
+<body>
+<!--
+  Representative slice of www.gismeteo.kz/weather-almaty-5205/ captured 2026-06-30.
+  Three tabs are preserved so the anchored temp regexes are genuinely exercised:
+    tab 1 — "сейчас"  (not active, no day-chart structure)
+    tab 2 — "сегодня" (is-active, today's forecast: TempMax=26, TempMin=19)
+    tab 3 — "завтра"  (not active, tomorrow: TempMax=25, TempMin=18)
+  The anchored regexes must pick today's values, not tomorrow's.
+  Dynamic tokens (nonces, CSRF) stripped; timestamps left (not matched by any regex).
+  Precipitation widget: 0.3 + 0.05 + 0.05 + 0.1 = 0.50 mm.
+-->
+
+    <div class="weathertabs" data-nosnippet>
+
+
+                <a class="weathertab"
+                   href="/weather-almaty-5205/now/"
+                   data-tooltip="пасмурно"
+                >
+
+                <div class="weathertab-wrap">
+                    <div class="tab-content">
+                        <div class="date">
+                            Сейчас
+                        </div>
+
+                            <time-value
+                                class="day"
+                                timestamp="1782791636"
+                                format="H:mm"
+                                reactive
+                                timer
+                            ></time-value>
+
+                        <div class="tab-temp tab-charts">
+
+                                <div class="weather">
+                                    <div class="weather-value"
+                                         style="background-color: rgba(200, 215, 0, 0.25)"
+                                    >
+                                        <temperature-value
+                                            value="20"
+                                            from-unit="c"
+                                            reactive
+                                        ></temperature-value>
+                                    </div>
+
+
+                                        <div class="weather-feel"
+                                             style="background-color: rgba(200, 215, 0, 0.7)"
+                                        >
+                                            По ощущению
+                                            &nbsp;<temperature-value
+                                                value="20"
+                                                from-unit="c"
+                                                reactive
+                                            ></temperature-value>
+                                        </div>
+
+                                </div>
+
+                        </div>
+                    </div>
+                    <div class="tab-image">
+                        <div class="tab-icon">
+
+
+    <div class="weather-icon-group">
+
+            <svg class="top-layer" viewBox="0 0 55 38">
+                <use href="#d_c3"></use>
+            </svg>
+
+
+
+
+    </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                </a>
+
+
+
+                <div class="weathertab is-active"
+                     data-tooltip="облачно, небольшой дождь"
+                >
+
+                <div class="weathertab-wrap">
+                    <div class="tab-content">
+                        <div class="date date-2">
+                            вт, 30 июня
+                        </div>
+
+                            <div class="day">
+
+                                    Сегодня
+
+                            </div>
+
+                        <div class="tab-temp tab-charts">
+
+                                <div class="chart" style="height: 47px"><div class='values' style="height: 47px"><div class='value' style='top: 16px;width: 50%;'><temperature-value value="19" from-unit="c" reactive></temperature-value></div><div class='value' style='top: 0px;width: 50%;'><temperature-value value="26" from-unit="c" reactive></temperature-value></div></div><svg class='svg-temperature' viewBox='0 0 120 47' preserveAspectRatio='none' width='100%' height='47px'><defs><linearGradient id='fill-1-uniqv38j' x1='0%' x2='0%' y1='100%' y2='0%'><stop offset='0' stop-color='rgba(193, 219, 0, 1)'></stop><stop offset='1' stop-color='rgba(240, 178, 0, 1)'></stop></linearGradient></defs><g transform='translate(0, 30)' id='gPath-uniqv38j'><path data-chart-index='1' d='M0,16L60,16L60,17L0,17' stroke='none' fill='rgba(193, 219, 0, 1)'></path><path data-chart-index='1' d='M60,17L60,0L61,0L61,17' stroke='none' fill='url(#fill-1-uniqv38j)'></path><path data-chart-index='2' d='M60,0L120,0L120,1L60,1' stroke='none' fill='rgba(240, 178, 0, 1)'></path></g><g transform='translate(0, 0)' id='gFillPath-uniqv38k'><path data-chart-index='1' d='M0,16L60,16L60,46L0,46' stroke='none' fill='rgba(193, 219, 0, 0.25)'></path><path data-chart-index='2' d='M60,0L120,0L120,30L60,30' stroke='none' fill='rgba(240, 178, 0, 0.25)'></path></g></svg></div>
+
+                        </div>
+                    </div>
+                    <div class="tab-image">
+                        <div class="tab-icon">
+
+
+    <div class="weather-icon-group">
+
+            <svg class="top-layer" viewBox="0 0 55 38">
+                <use href="#d_c2"></use>
+            </svg>
+
+
+            <svg class="bottom-layer" viewBox="0 0 55 8">
+                <use href="#r1"></use>
+            </svg>
+
+
+
+    </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                </div>
+
+
+
+                <a class="weathertab"
+                   href="/weather-almaty-5205/tomorrow/"
+                   data-tooltip="пасмурно, дождь"
+                >
+
+                <div class="weathertab-wrap">
+                    <div class="tab-content">
+                        <div class="date date-3">
+                            ср, 1 июля
+                        </div>
+
+                            <div class="day">
+
+                                    Завтра
+
+                            </div>
+
+                        <div class="tab-temp tab-charts">
+
+                                <div class="chart" style="height: 47px"><div class='values' style="height: 47px"><div class='value' style='top: 16px;width: 50%;'><temperature-value value="18" from-unit="c" reactive></temperature-value></div><div class='value' style='top: 0px;width: 50%;'><temperature-value value="25" from-unit="c" reactive></temperature-value></div></div><svg class='svg-temperature' viewBox='0 0 120 47' preserveAspectRatio='none' width='100%' height='47px'><defs><linearGradient id='fill-1-uniqv38l' x1='0%' x2='0%' y1='100%' y2='0%'><stop offset='0' stop-color='rgba(185, 223, 0, 1)'></stop><stop offset='1' stop-color='rgba(235, 188, 0, 1)'></stop></linearGradient></defs><g transform='translate(0, 30)' id='gPath-uniqv38l'><path data-chart-index='1' d='M0,16L60,16L60,17L0,17' stroke='none' fill='rgba(185, 223, 0, 1)'></path><path data-chart-index='1' d='M60,17L60,0L61,0L61,17' stroke='none' fill='url(#fill-1-uniqv38l)'></path><path data-chart-index='2' d='M60,0L120,0L120,1L60,1' stroke='none' fill='rgba(235, 188, 0, 1)'></path></g><g transform='translate(0, 0)' id='gFillPath-uniqv38m'><path data-chart-index='1' d='M0,16L60,16L60,46L0,46' stroke='none' fill='rgba(185, 223, 0, 0.25)'></path><path data-chart-index='2' d='M60,0L120,0L120,30L60,30' stroke='none' fill='rgba(235, 188, 0, 0.25)'></path></g></svg></div>
+
+                        </div>
+                    </div>
+                    <div class="tab-image">
+                        <div class="tab-icon">
+
+
+    <div class="weather-icon-group">
+
+            <svg class="top-layer" viewBox="0 0 55 38">
+                <use href="#d_c3"></use>
+            </svg>
+
+
+            <svg class="bottom-layer" viewBox="0 0 55 17">
+                <use href="#r2"></use>
+            </svg>
+
+
+
+    </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                </a>
+
+
+    </div>
+
+
+                        <div class="widget-row widget-row-precipitation-bars row-with-caption" data-row="precipitation-bars">
+
+    <p class="widget-row-caption has-info link-hover"
+       style="grid-column-end: 8"
+       data-key="precipitation-bars"
+
+       tabindex="0"
+       role="button"
+       aria-haspopup="true"
+
+
+    >
+
+            <svg width="16" height="16" viewBox="0 0 18 18">
+                <use href="#info"></use>
+            </svg>
+
+
+
+
+        <span>
+            Осадки в жидком эквиваленте, <precipitation-value reactive show-units></precipitation-value>
+        </span>
+    </p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            <div class="row-item">
+                <div class="item-unit">0</div>
+            </div>
+
+
+
+            <div class="row-item">
+                <div class="item-unit">0</div>
+            </div>
+
+
+
+            <div class="row-item">
+                <div class="item-unit">0</div>
+            </div>
+
+
+
+            <div class="row-item">
+                <div class="item-unit">0</div>
+            </div>
+
+
+
+
+
+
+
+
+            <div class="row-item">
+                <precipitation-value class="item-unit unit-blue" value="0.3" from-unit="mm" reactive></precipitation-value>
+                <div class="item-bar" style="height: 10px">
+                    <svg viewBox="0 0 62 10" preserveAspectRatio="none">
+                        <g class="wave-group">
+                            <path d="M0 1.00407C0 1.00407 6.81587 1.93207 15.5 2.00407C25.9097 2.09055 36.0901 -0.0677715 46.5 0.00407442C55.2635 0.0660744 62 1.00407 62 1.00407V3.00007H0V1.00407 Z" />
+                            <rect x="0" y="3" width="62" height="7" />
+                        </g>
+
+
+                    </svg>
+                </div>
+            </div>
+
+
+
+
+
+
+
+
+            <div class="row-item">
+                <precipitation-value class="item-unit unit-blue" value="0.05" from-unit="mm" reactive></precipitation-value>
+                <div class="item-bar" style="height: 4px">
+                    <svg viewBox="0 0 62 4" preserveAspectRatio="none">
+                        <g class="wave-group">
+                            <path d="M0 1.00407C0 1.00407 6.81587 1.93207 15.5 2.00407C25.9097 2.09055 36.0901 -0.0677715 46.5 0.00407442C55.2635 0.0660744 62 1.00407 62 1.00407V3.00007H0V1.00407 Z" />
+                            <rect x="0" y="3" width="62" height="1" />
+                        </g>
+
+
+                    </svg>
+                </div>
+            </div>
+
+
+
+
+
+
+
+
+            <div class="row-item">
+                <precipitation-value class="item-unit unit-blue" value="0.05" from-unit="mm" reactive></precipitation-value>
+                <div class="item-bar" style="height: 4px">
+                    <svg viewBox="0 0 62 4" preserveAspectRatio="none">
+                        <g class="wave-group">
+                            <path d="M0 1.00407C0 1.00407 6.81587 1.93207 15.5 2.00407C25.9097 2.09055 36.0901 -0.0677715 46.5 0.00407442C55.2635 0.0660744 62 1.00407 62 1.00407V3.00007H0V1.00407 Z" />
+                            <rect x="0" y="3" width="62" height="1" />
+                        </g>
+
+
+                    </svg>
+                </div>
+            </div>
+
+
+
+
+
+
+
+
+            <div class="row-item">
+                <precipitation-value class="item-unit unit-blue" value="0.1" from-unit="mm" reactive></precipitation-value>
+                <div class="item-bar" style="height: 5px">
+                    <svg viewBox="0 0 62 5" preserveAspectRatio="none">
+                        <g class="wave-group">
+                            <path d="M0 1.00407C0 1.00407 6.81587 1.93207 15.5 2.00407C25.9097 2.09055 36.0901 -0.0677715 46.5 0.00407442C55.2635 0.0660744 62 1.00407 62 1.00407V3.00007H0V1.00407 Z" />
+                            <rect x="0" y="3" width="62" height="2" />
+                        </g>
+
+
+                    </svg>
+                </div>
+            </div>
+
+
+</div>
+
+</body>
+</html>

@@ -54,9 +54,13 @@ type ChromedpFetcher struct {
 // enforced via context.WithTimeout independently of any chromedp internal
 // per-action timeout.
 //
+// headers is accepted for interface compliance but ignored: chromedp manages
+// its own request headers internally and there is no per-source header injection
+// for the headless path.
+//
 // Both the browser context and the allocator context are cancelled before
 // return so the Chromium subprocess is reaped even on error paths.
-func (f *ChromedpFetcher) Fetch(ctx context.Context, url string) ([]byte, error) {
+func (f *ChromedpFetcher) Fetch(ctx context.Context, url string, _ map[string]string) ([]byte, error) {
 	ctx, cancelCtx := context.WithTimeout(ctx, f.timeout)
 	defer cancelCtx()
 

@@ -31,8 +31,9 @@ var ErrAttemptsExhausted = errors.New("rulegen: all attempts exhausted")
 // Fetcher performs HTTP GETs and returns the raw response body. rulegen defines
 // its own narrow interface rather than importing sourceaudit.Fetcher to avoid a
 // cross-application dependency.
+// headers are per-source overrides forwarded from RateSourceOptions.Headers; nil is safe.
 type Fetcher interface {
-	Fetch(ctx context.Context, url string) ([]byte, error)
+	Fetch(ctx context.Context, url string, headers map[string]string) ([]byte, error)
 }
 
 // Result holds the outcome of a successful Generate call.
@@ -166,7 +167,7 @@ func (g *Generator) Generate(ctx context.Context, sourceName string, forceFallba
 		return nil, fmt.Errorf("rulegen: source %q: %w", sourceName, err)
 	}
 
-	rawBody, err := activeFetcher.Fetch(ctx, src.URL)
+	rawBody, err := activeFetcher.Fetch(ctx, src.URL, src.Options.Headers)
 	if err != nil {
 		return nil, fmt.Errorf("rulegen: fetch %s: %w", src.URL, err)
 	}

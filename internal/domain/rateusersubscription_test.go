@@ -113,6 +113,34 @@ func TestRateUserSubscription_IsDeltaSatisfied(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, ok)
 	})
+	t.Run("zero threshold unchanged price does not re-fire", func(t *testing.T) {
+		t.Parallel()
+		// threshold=0 means "any change"; delta=0 (price unchanged) must not fire
+		rus := &RateUserSubscription{
+			ConditionType:      ConditionTypeDelta,
+			ConditionValue:     "0",
+			LatestNotifiedRate: 300.0,
+		}
+		ok, err := rus.IsDeltaSatisfied(0)
+		require.NoError(t, err)
+		require.False(t, ok)
+	})
+	t.Run("zero threshold any nonzero delta fires in either direction", func(t *testing.T) {
+		t.Parallel()
+		// threshold=0 means "any change"; the branch uses math.Abs(delta), so it must
+		// fire on both a rise and a fall, not just a positive delta.
+		rus := &RateUserSubscription{
+			ConditionType:      ConditionTypeDelta,
+			ConditionValue:     "0",
+			LatestNotifiedRate: 300.0,
+		}
+		up, err := rus.IsDeltaSatisfied(0.01)
+		require.NoError(t, err)
+		require.True(t, up, "positive delta must fire with zero threshold")
+		down, err := rus.IsDeltaSatisfied(-0.01)
+		require.NoError(t, err)
+		require.True(t, down, "negative delta must fire with zero threshold (symmetry via math.Abs)")
+	})
 	t.Run("delta above threshold", func(t *testing.T) {
 		t.Parallel()
 		rus := &RateUserSubscription{ConditionType: ConditionTypeDelta, ConditionValue: "5"}

@@ -33,15 +33,23 @@ const meManageGearSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24
 	`<path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.01 7.01 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 2h-4c-.25 0-.46.18-.49.42l-.36 2.54a7.01 7.01 0 0 0-1.62.94l-2.39-.96a.48.48 0 0 0-.59.22L2.63 8.48a.48.48 0 0 0 .12.61l2.03 1.58A7.2 7.2 0 0 0 4.71 12c0 .32.03.63.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.36 1.04.67 1.62.94l.36 2.54c.05.24.26.42.49.42h4c.25 0 .46-.18.49-.42l.36-2.54a7.01 7.01 0 0 0 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 0 1 8.4 12 3.6 3.6 0 0 1 12 8.4a3.6 3.6 0 0 1 3.6 3.6 3.6 3.6 0 0 1-3.6 3.6z"/>` +
 	`</svg>`
 
+// meWeatherCloudSVG is the inline SVG cloud icon for the weather-cities
+// button. Viewbox 24×24 px; rendered at 20×20 px via CSS.
+const meWeatherCloudSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">` +
+	`<path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/>` +
+	`</svg>`
+
 // RenderMeSubscriptions returns the full HTML for the Mini App subscriptions
 // screen. Default top-to-bottom layout:
 //  1. #me-sparkline-chart — sparkline-list chart (skeleton / empty / rendered).
 //  2. #me-pair-modal-slot — pair detail overlay (empty unless OpenPair is set).
 //
-// The manage-subscriptions gear button is absolutely positioned top-right of
-// #app via CSS, so it floats over the chart-card header and adds nothing to the
-// vertical flow. It is NOT rendered on the guest screen or when AuthFailure is
-// set; AuthFailure short-circuits the whole screen to the auth-failure message.
+// The manage-subscriptions gear and weather-cities cloud buttons are absolutely
+// positioned top-right of #app via CSS, so they float over the chart-card
+// header and add nothing to the vertical flow. Neither is rendered on the guest
+// screen or when AuthFailure is set (the weather screens sit behind /api/me/*
+// auth); AuthFailure short-circuits the whole screen to the auth-failure
+// message.
 //
 // Every user-influenced field is passed through dom.Escape before interpolation.
 func RenderMeSubscriptions(state application.MeSubscriptionsState) string {
@@ -50,6 +58,9 @@ func RenderMeSubscriptions(state application.MeSubscriptionsState) string {
 	}
 
 	var b strings.Builder
+	b.WriteString(`<button id="me-weather" class="me-weather-cloud" type="button" aria-label="Weather">`)
+	b.WriteString(meWeatherCloudSVG)
+	b.WriteString(`</button>`)
 	b.WriteString(`<button id="me-manage" class="me-manage-gear" type="button" aria-label="Manage subscriptions">`)
 	b.WriteString(meManageGearSVG)
 	b.WriteString(`</button>`)

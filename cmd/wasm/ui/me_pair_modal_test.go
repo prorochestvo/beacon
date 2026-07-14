@@ -285,6 +285,45 @@ func TestRenderPairModal(t *testing.T) {
 		assert.NotContains(t, strings.ToLower(html), "<script")
 	})
 
+	t.Run("LAST single-series modal renders LAST prefix in ColorLast", func(t *testing.T) {
+		t.Parallel()
+		pts := []dto.MeChartPoint{
+			mkPoint("2026-05-23T00:00:00Z", 220.0),
+			mkPoint("2026-05-27T00:00:00Z", 230.5),
+		}
+		last := mkSeries("LAST", ratepair.ColorLast, 4.77, false, pts)
+		row := mkRow("AAPL/USD", "equity", nil, []dto.MeChartSeries{last})
+		state := pairModalState("AAPL/USD", []dto.MeChartPairRow{row}, nil)
+		html := ui.RenderPairModal(state)
+
+		// The value line must carry "LAST" prefix in ColorLast.
+		assert.Contains(t, html, "sparkline-value-line")
+		assert.Contains(t, html, "LAST")
+		assert.Contains(t, html, ratepair.ColorLast,
+			"LAST series must render in ColorLast in the modal value line")
+		// Must not show BID or ASK.
+		assert.NotContains(t, html, ">BID<")
+		assert.NotContains(t, html, ">ASK<")
+	})
+
+	t.Run("LAST compact prefix via RenderValueLine is L not B or A", func(t *testing.T) {
+		t.Parallel()
+		// The modal always calls renderValueLine with one series at a time (non-compact),
+		// so the compact=true path is tested by calling RenderValueLine directly with
+		// two series. The compact prefix for LAST must be "L", not "B" or "A".
+		pts := []dto.MeChartPoint{
+			mkPoint("2026-05-23T00:00:00Z", 220.0),
+			mkPoint("2026-05-27T00:00:00Z", 230.0),
+		}
+		last1 := mkSeries("LAST", ratepair.ColorLast, 4.5, false, pts)
+		last2 := mkSeries("LAST", ratepair.ColorLast, 4.5, false, pts)
+		html := ui.RenderValueLine([]dto.MeChartSeries{last1, last2})
+
+		assert.Contains(t, html, ">L<")
+		assert.NotContains(t, html, ">B<")
+		assert.NotContains(t, html, ">A<")
+	})
+
 	t.Run("flat union (max==min) renders without panic", func(t *testing.T) {
 		t.Parallel()
 		pts := []dto.MeChartPoint{

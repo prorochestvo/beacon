@@ -13,16 +13,18 @@ import (
 var _ Fetcher = (*fakeFetcher)(nil)
 
 type fakeFetcher struct {
-	responses  map[string]*FetchResult
-	errors     map[string]error
-	callCounts map[string]int
+	responses   map[string]*FetchResult
+	errors      map[string]error
+	callCounts  map[string]int
+	lastHeaders map[string]map[string]string // last headers seen per URL
 }
 
 func newFakeFetcher() *fakeFetcher {
 	return &fakeFetcher{
-		responses:  make(map[string]*FetchResult),
-		errors:     make(map[string]error),
-		callCounts: make(map[string]int),
+		responses:   make(map[string]*FetchResult),
+		errors:      make(map[string]error),
+		callCounts:  make(map[string]int),
+		lastHeaders: make(map[string]map[string]string),
 	}
 }
 
@@ -34,8 +36,9 @@ func (f *fakeFetcher) addError(url string, err error) {
 	f.errors[url] = err
 }
 
-func (f *fakeFetcher) Fetch(_ context.Context, url string) (*FetchResult, error) {
+func (f *fakeFetcher) Fetch(_ context.Context, url string, headers map[string]string) (*FetchResult, error) {
 	f.callCounts[url]++
+	f.lastHeaders[url] = headers
 	if err, ok := f.errors[url]; ok {
 		return nil, err
 	}
@@ -277,5 +280,78 @@ func TestAuditor_Run(t *testing.T) {
 		require.Len(t, results, 1)
 		assert.Equal(t, StatusOK, results[0].Status)
 		assert.Equal(t, "70534.67", results[0].Value)
+	})
+
+	t.Run("per-source headers are forwarded to the fetcher", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeFetcher()
+		f.addResponse("https://api.example.com/", []byte(`<v>123.45</v>`), "text/html")
+
+		src := SeededSource{
+			Name:    "SRC_HEADERS",
+			URL:     "https://api.example.com/",
+			Side:    "BID",
+			Headers: map[string]string{"User-Agent": "CustomBot/2.0"},
+			Rules:   []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: `<v>([\d.]+)</v>`}},
+			Active:  true,
+		}
+
+		a := &Auditor{Fetcher: f}
+		results, err := a.Run(t.Context(), []SeededSource{src})
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		assert.Equal(t, StatusOK, results[0].Status)
+		// The fetcher must have received the per-source header override.
+		assert.Equal(t, "CustomBot/2.0", f.lastHeaders["https://api.example.com/"]["User-Agent"])
+	})
+
+	t.Run("two sources sharing URL but different headers are fetched separately", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeFetcher()
+		f.addResponse("https://shared.example.com/", []byte(`<v>200.00</v>`), "text/html")
+
+		src1 := SeededSource{
+			Name:    "SRC_A",
+			URL:     "https://shared.example.com/",
+			Side:    "BID",
+			Headers: map[string]string{"User-Agent": "BotA"},
+			Rules:   []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: `<v>([\d.]+)</v>`}},
+			Active:  true,
+		}
+		src2 := SeededSource{
+			Name:    "SRC_B",
+			URL:     "https://shared.example.com/",
+			Side:    "BID",
+			Headers: map[string]string{"User-Agent": "BotB"},
+			Rules:   []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: `<v>([\d.]+)</v>`}},
+			Active:  true,
+		}
+
+		a := &Auditor{Fetcher: f}
+		results, err := a.Run(t.Context(), []SeededSource{src1, src2})
+		require.NoError(t, err)
+		require.Len(t, results, 2)
+		// Different headers → different cache keys → two independent fetches.
+		assert.Equal(t, 2, f.callCounts["https://shared.example.com/"])
+	})
+
+	t.Run("two sources sharing URL with nil headers still dedup to one fetch", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeFetcher()
+		f.addResponse("https://shared2.example.com/", []byte(`bid=460.00 ask=470.00`), "text/html")
+
+		a := &Auditor{Fetcher: f}
+		sources := []SeededSource{
+			regexSource("SRC_BID2", "https://shared2.example.com/", `bid=([\d.]+)`),
+			regexSource("SRC_ASK2", "https://shared2.example.com/", `ask=([\d.]+)`),
+		}
+		results, err := a.Run(t.Context(), sources)
+		require.NoError(t, err)
+		require.Len(t, results, 2)
+		// Both have nil headers → same cache key → exactly one fetch.
+		assert.Equal(t, 1, f.callCounts["https://shared2.example.com/"], "nil-header sources sharing a URL must dedup to one fetch")
 	})
 }

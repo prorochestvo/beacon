@@ -667,6 +667,119 @@ func TestClient_MeSubscriptionUpdate(t *testing.T) {
 	})
 }
 
+func TestClient_MeWeatherCitiesSearch(t *testing.T) {
+	t.Parallel()
+
+	t.Run("happy path decodes search response", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{
+			jsonResponse: []byte(`{"items":[{"location_id":"1526384","display_name":"Алматы","latitude":43.25,"longitude":76.91,"timezone":"Asia/Almaty","country":"Казахстан","admin1":"Алматы"}]}`),
+		}
+		c := apiclient.New(f)
+		got, err := c.MeWeatherCitiesSearch(t.Context(), "tok", "Almaty")
+		require.NoError(t, err)
+		require.Len(t, got.Items, 1)
+		assert.Equal(t, "1526384", got.Items[0].LocationID)
+		assert.Equal(t, "Алматы", got.Items[0].DisplayName)
+		assert.Equal(t, "tok", f.lastHeaders["X-Telegram-Init-Data"])
+	})
+
+	t.Run("fetcher error propagates", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{jsonErr: errors.New("http 500")}
+		c := apiclient.New(f)
+		_, err := c.MeWeatherCitiesSearch(t.Context(), "tok", "Almaty")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "http 500")
+	})
+}
+
+func TestClient_MeWeatherCities(t *testing.T) {
+	t.Parallel()
+
+	t.Run("happy path decodes cities list", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{
+			jsonResponse: []byte(`{"items":[{"id":"c1","location_id":"1526384","display_name":"Алматы","latitude":43.25,"longitude":76.91,"timezone":"Asia/Almaty","country":"Казахстан","admin1":"Алматы","notify_hour":7}]}`),
+		}
+		c := apiclient.New(f)
+		got, err := c.MeWeatherCities(t.Context(), "tok")
+		require.NoError(t, err)
+		require.Len(t, got.Items, 1)
+		assert.Equal(t, "c1", got.Items[0].ID)
+		assert.Equal(t, 7, got.Items[0].NotifyHour)
+		assert.Equal(t, "tok", f.lastHeaders["X-Telegram-Init-Data"])
+	})
+
+	t.Run("fetcher error propagates", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{jsonErr: errors.New("http 401")}
+		c := apiclient.New(f)
+		_, err := c.MeWeatherCities(t.Context(), "bad")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "http 401")
+	})
+}
+
+func TestClient_MeWeatherCityCreate(t *testing.T) {
+	t.Parallel()
+
+	t.Run("happy path returns generated ID", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{
+			jsonResponse: []byte(`{"id":"generated-city-id"}`),
+		}
+		c := apiclient.New(f)
+		body := dto.WeatherCityCreateRequest{
+			LocationID:  "1526384",
+			DisplayName: "Алматы",
+			Latitude:    43.25,
+			Longitude:   76.91,
+			Timezone:    "Asia/Almaty",
+			Country:     "Казахстан",
+			Admin1:      "Алматы",
+		}
+		got, err := c.MeWeatherCityCreate(t.Context(), "tok", body)
+		require.NoError(t, err)
+		assert.Equal(t, "generated-city-id", got.ID)
+		assert.Equal(t, "tok", f.lastHeaders["X-Telegram-Init-Data"])
+		assert.Equal(t, "POST", f.lastMethod)
+	})
+
+	t.Run("fetcher error propagates", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{jsonErr: errors.New("http 500")}
+		c := apiclient.New(f)
+		_, err := c.MeWeatherCityCreate(t.Context(), "tok", dto.WeatherCityCreateRequest{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "http 500")
+	})
+}
+
+func TestClient_MeWeatherCityDelete(t *testing.T) {
+	t.Parallel()
+
+	t.Run("happy path returns nil on 204", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{}
+		c := apiclient.New(f)
+		err := c.MeWeatherCityDelete(t.Context(), "tok", "city-abc")
+		require.NoError(t, err)
+		assert.Equal(t, "tok", f.lastHeaders["X-Telegram-Init-Data"])
+		assert.Contains(t, f.lastURL, "city-abc")
+		assert.Equal(t, "DELETE", f.lastMethod)
+	})
+
+	t.Run("fetcher error propagates", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{noContentErr: errors.New("http 404")}
+		c := apiclient.New(f)
+		err := c.MeWeatherCityDelete(t.Context(), "tok", "nonexistent")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "http 404")
+	})
+}
+
 func TestClient_MeSubscriptionDelete(t *testing.T) {
 	t.Parallel()
 

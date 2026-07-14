@@ -209,6 +209,15 @@ snapshot of every present database to `/opt/beacon/backups/beacon.<YYYYMMDD>.sql
 to Google Drive with `rclone`, and prunes both stores. An absent database is
 skipped, not an error.
 
+On any failure — a broken snapshot or a Google Drive `rclone` error — it logs the
+reason, sends **one** `#BEACON backup FAILED` message to the admin chat, and exits
+non-zero. A clean run instead sends a `#BEACON backup OK` summary — new snapshot size,
+retained inventory, and any pruned files — silenced by `NOTIFY_ON_SUCCESS=0`. Drive
+failures are isolated: the local snapshot and local retention prune always run even when
+the mirror is down, so a cloud outage never compromises on-host backups. Alert creds come
+from `BEACON_TELEGRAMBOT_DSN` in the service env file by default (no extra config); verify
+the wiring on the host without leaking the token via `sqlite_dump.sh selftest`.
+
 | Retention | Default | Override (in `.env`) |
 |-----------|---------|----------------------|
 | Local host | 7 days  | `LOCAL_RETENTION_DAYS`  |
@@ -217,7 +226,8 @@ skipped, not an error.
 `make init` ships the script to `/opt/beacon/backups/sqlite_dump.sh`
 and installs `configs/sqlite_dump.env.example` as `/opt/beacon/backups/.env` **only
 if it does not already exist** (your edited `.env` is never overwritten). Optional
-overrides — `GDRIVE_REMOTE`, the two retentions — load from that adjacent `.env`;
+overrides — `GDRIVE_REMOTE`, the two retentions, the `ALERT_TELEGRAM_*` alert creds,
+and `MAIN_ENV` — load from that adjacent `.env`;
 rclone needs no config override there, it auto-discovers `~/.config/rclone/rclone.conf`
 of the user the cron runs as.
 

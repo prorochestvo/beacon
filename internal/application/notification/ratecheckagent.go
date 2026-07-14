@@ -88,9 +88,11 @@ type rateUserProfileRepository interface {
 //
 // Cross-source dedup: subscriptions on the same (base, quote, kind) key for the same
 // user produce a single table row regardless of which source they come from. The
-// displayed price is the extremum across sources (BID→MAX, ASK→MIN) and the delta
-// always comes from the same source as the winning price. Every fired subscription is
-// still retained individually so its LatestNotifiedRate advances and it does not re-fire.
+// displayed price is the extremum across sources (BID→MAX, ASK→MIN, LAST→MAX) and the
+// delta always comes from the same source as the winning price. LAST→MAX is a
+// deterministic tiebreak; revisit to "most recent observation" when a second feed for
+// one ticker is added. Every fired subscription is still retained individually so its
+// LatestNotifiedRate advances and it does not re-fire.
 func (a *RateCheckAgent) Run(ctx context.Context) error {
 	sources, err := a.rateSourceRepository.ObtainAllRateSources(ctx)
 	if err != nil {

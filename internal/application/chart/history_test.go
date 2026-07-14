@@ -313,6 +313,87 @@ func TestService_ObtainMeHistory(t *testing.T) {
 		assert.Equal(t, 489.0, *res.Items[0].Ask)
 	})
 
+	t.Run("LAST-kind price lands in Last slot, Bid and Ask remain nil", func(t *testing.T) {
+		t.Parallel()
+		// AAPL/USD LAST source — equity last-traded price goes to its own Last slot,
+		// not the Bid slot. Phase-2 fix: plan 020, Task 4.
+		aaplLastSrc := domain.RateSource{
+			Name:          "aapl-last",
+			Title:         "Yahoo Finance",
+			BaseCurrency:  "AAPL",
+			QuoteCurrency: "USD",
+			Kind:          domain.RateSourceKindLAST,
+			Active:        true,
+		}
+		subs := []domain.RateUserSubscription{subFor("aapl-last")}
+		sources := map[string]domain.RateSource{"aapl-last": aaplLastSrc}
+		histRows := []domain.RateValue{
+			{SourceName: "aapl-last", BaseCurrency: "AAPL", QuoteCurrency: "USD", Price: 300.0, Timestamp: base},
+		}
+		svc := newServiceWithHistory(subs, sources, histRows, 1, nil)
+
+		res, err := svc.ObtainMeHistory(t.Context(), "user1", "AAPL/USD", "", 1, 20)
+		require.NoError(t, err)
+		require.Len(t, res.Items, 1)
+		// LAST routes to the dedicated Last slot; Bid and Ask must remain nil.
+		require.NotNil(t, res.Items[0].Last,
+			"LAST-kind price must appear in the Last slot")
+		assert.Equal(t, 300.0, *res.Items[0].Last)
+		assert.Nil(t, res.Items[0].Bid,
+			"Bid must remain nil for a LAST-kind source")
+		assert.Nil(t, res.Items[0].Ask,
+			"Ask must remain nil for a LAST-kind source")
+	})
+
+	t.Run("LAST delta is nil for first observation and computed for subsequent rows", func(t *testing.T) {
+		t.Parallel()
+		aaplLastSrc := domain.RateSource{
+			Name:          "aapl-last",
+			Title:         "Yahoo Finance",
+			BaseCurrency:  "AAPL",
+			QuoteCurrency: "USD",
+			Kind:          domain.RateSourceKindLAST,
+			Active:        true,
+		}
+		subs := []domain.RateUserSubscription{subFor("aapl-last")}
+		sources := map[string]domain.RateSource{"aapl-last": aaplLastSrc}
+		// Three rows newest-first: 230, 225, 220.
+		// Processed oldest-first (220→225→230):
+		//   items[2] (220): nil delta (first in chain).
+		//   items[1] (225): (225-220)/220*100 ≈ +2.273%.
+		//   items[0] (230): (230-225)/225*100 ≈ +2.222%.
+		histRows := []domain.RateValue{
+			{SourceName: "aapl-last", BaseCurrency: "AAPL", QuoteCurrency: "USD", Price: 230.0, Timestamp: base},
+			{SourceName: "aapl-last", BaseCurrency: "AAPL", QuoteCurrency: "USD", Price: 225.0, Timestamp: base.Add(-time.Minute)},
+			{SourceName: "aapl-last", BaseCurrency: "AAPL", QuoteCurrency: "USD", Price: 220.0, Timestamp: base.Add(-2 * time.Minute)},
+		}
+		svc := newServiceWithHistory(subs, sources, histRows, 3, nil)
+
+		res, err := svc.ObtainMeHistory(t.Context(), "user1", "AAPL/USD", "", 1, 20)
+		require.NoError(t, err)
+		require.Len(t, res.Items, 3)
+
+		// items[0] = 230 (newest): delta vs 225.
+		require.NotNil(t, res.Items[0].Last)
+		require.NotNil(t, res.Items[0].LastDeltaPct)
+		assert.InDelta(t, (230.0-225.0)/225.0*100, *res.Items[0].LastDeltaPct, 0.001)
+
+		// items[1] = 225: delta vs 220.
+		require.NotNil(t, res.Items[1].Last)
+		require.NotNil(t, res.Items[1].LastDeltaPct)
+		assert.InDelta(t, (225.0-220.0)/220.0*100, *res.Items[1].LastDeltaPct, 0.001)
+
+		// items[2] = 220 (oldest in page): nil delta (first in chain).
+		require.NotNil(t, res.Items[2].Last)
+		assert.Nil(t, res.Items[2].LastDeltaPct, "oldest LAST row must have nil LastDeltaPct")
+
+		// Bid and Ask must be nil for all rows.
+		for i, item := range res.Items {
+			assert.Nil(t, item.Bid, "Bid must be nil for LAST row %d", i)
+			assert.Nil(t, item.Ask, "Ask must be nil for LAST row %d", i)
+		}
+	})
+
 	t.Run("Total counts distinct (title, timestamp) tuples not raw rows", func(t *testing.T) {
 		t.Parallel()
 		// Two timestamps × (BID + ASK) = 4 raw rate_values rows for the same provider.

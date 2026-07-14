@@ -19,6 +19,8 @@ func TestNew(t *testing.T) {
 		identity.KindRateUserEvent,
 		identity.KindRateUserSubscription,
 		identity.KindExecutionHistory,
+		identity.KindWeatherUserCity,
+		identity.KindWeatherObservation,
 	}
 
 	t.Run("prefix matches kind", func(t *testing.T) {

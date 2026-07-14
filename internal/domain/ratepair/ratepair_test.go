@@ -46,6 +46,45 @@ func TestCategoryOf(t *testing.T) {
 		assert.Equal(t, ratepair.CategoryFiat, ratepair.CategoryOf("RANDOMCURRENCY"))
 		assert.Equal(t, ratepair.CategoryFiat, ratepair.CategoryOf("GOLDISH")) // has GOLD prefix but not exact
 	})
+
+	// equity subtests — DUPLICATION NOTE: these tickers are also seeded in
+	// migrations/202606.009.rate_sources.seed_stocks.sql. If this subtest fails
+	// after adding a new ticker, update equitySymbols in ratepair.go too.
+	t.Run("equity base returns CategoryEquity", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, ratepair.CategoryEquity, ratepair.CategoryOf("AAPL"))
+		assert.Equal(t, ratepair.CategoryEquity, ratepair.CategoryOf("CCBN"))
+	})
+
+	t.Run("equity classification is case-insensitive", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, ratepair.CategoryEquity, ratepair.CategoryOf("aapl"))
+		assert.Equal(t, ratepair.CategoryEquity, ratepair.CategoryOf("Aapl"))
+		assert.Equal(t, ratepair.CategoryEquity, ratepair.CategoryOf("ccbn"))
+	})
+
+	t.Run("known equity symbols AAPL and CCBN match seeded migration tickers", func(t *testing.T) {
+		t.Parallel()
+		// This test pins the set so drift from migration 009 is visible in review.
+		// A ticker in the migration but not here classifies as fiat (wrong category).
+		assert.True(t, ratepair.IsEquitySymbol("AAPL"), "AAPL must be in equitySymbols")
+		assert.True(t, ratepair.IsEquitySymbol("CCBN"), "CCBN must be in equitySymbols")
+	})
+
+	t.Run("expanded Yahoo watchlist tickers match seeded migration 202607.018", func(t *testing.T) {
+		t.Parallel()
+		// This test pins the full set so drift from migration 202607.018 is
+		// visible in review. A ticker in the migration but not in equitySymbols
+		// classifies as fiat (wrong category).
+		tickers := []string{
+			"MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "NFLX", "AMD",
+			"PLTR", "COIN", "AVGO", "SPY", "QQQ", "BTC", "ETH", "SOL", "XRP", "DOGE",
+		}
+		for _, ticker := range tickers {
+			assert.Equal(t, ratepair.CategoryEquity, ratepair.CategoryOf(ticker), "CategoryOf(%q) must be CategoryEquity", ticker)
+			assert.True(t, ratepair.IsEquitySymbol(ticker), "%q must be in equitySymbols", ticker)
+		}
+	})
 }
 
 func TestDedupe(t *testing.T) {
@@ -129,9 +168,21 @@ func TestColorBidAsk(t *testing.T) {
 			"ColorAsk must not change silently; update this test intentionally if the design changes")
 	})
 
+	t.Run("ColorLast is pinned to the agreed amber hex", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "#D98E04", ratepair.ColorLast,
+			"ColorLast must not change silently; update this test intentionally if the design changes")
+	})
+
 	t.Run("ColorBid and ColorAsk are distinct", func(t *testing.T) {
 		t.Parallel()
 		assert.NotEqual(t, ratepair.ColorBid, ratepair.ColorAsk)
+	})
+
+	t.Run("ColorLast is distinct from ColorBid and ColorAsk", func(t *testing.T) {
+		t.Parallel()
+		assert.NotEqual(t, ratepair.ColorLast, ratepair.ColorBid)
+		assert.NotEqual(t, ratepair.ColorLast, ratepair.ColorAsk)
 	})
 }
 
@@ -188,5 +239,44 @@ func TestLess(t *testing.T) {
 		b := ratepair.Pair{Base: "USD", Quote: "KZT", Kind: domain.RateSourceKindBID}
 		assert.False(t, ratepair.Less(a, b))
 		assert.False(t, ratepair.Less(b, a))
+	})
+
+	t.Run("equity sorts after both fiat and metal", func(t *testing.T) {
+		t.Parallel()
+		fiat := ratepair.Pair{Base: "USD", Quote: "KZT", Kind: domain.RateSourceKindBID}
+		metal := ratepair.Pair{Base: "GOLD", Quote: "KZT", Kind: domain.RateSourceKindBID}
+		equity := ratepair.Pair{Base: "AAPL", Quote: "USD", Kind: domain.RateSourceKindLAST}
+
+		assert.True(t, ratepair.Less(fiat, equity), "fiat must sort before equity")
+		assert.False(t, ratepair.Less(equity, fiat), "equity must not sort before fiat")
+		assert.True(t, ratepair.Less(metal, equity), "metal must sort before equity")
+		assert.False(t, ratepair.Less(equity, metal), "equity must not sort before metal")
+	})
+
+	t.Run("fiat metal equity three-way sort produces expected order", func(t *testing.T) {
+		t.Parallel()
+		fiat := ratepair.Pair{Base: "USD", Quote: "KZT"}
+		metal := ratepair.Pair{Base: "GOLD", Quote: "KZT"}
+		equity := ratepair.Pair{Base: "AAPL", Quote: "USD"}
+
+		pairs := []ratepair.Pair{equity, metal, fiat}
+		sort.Slice(pairs, func(i, j int) bool { return ratepair.Less(pairs[i], pairs[j]) })
+
+		assert.Equal(t, "USD", pairs[0].Base, "fiat first")
+		assert.Equal(t, "GOLD", pairs[1].Base, "metal second")
+		assert.Equal(t, "AAPL", pairs[2].Base, "equity last")
+	})
+
+	t.Run("categoryOrder is complete — fiat < metal < equity", func(t *testing.T) {
+		t.Parallel()
+		// Pins the strict ordering of all three Category constants. If a new
+		// constant were added to categoryOrder without an entry, its rank would
+		// default to 0 (fiat) and at least one assertion here would fail.
+		fiat := ratepair.Pair{Base: "USD", Quote: "KZT"}
+		metal := ratepair.Pair{Base: "GOLD", Quote: "KZT"}
+		equity := ratepair.Pair{Base: "AAPL", Quote: "USD"}
+		assert.True(t, ratepair.Less(fiat, metal), "CategoryFiat(0) must rank below CategoryMetal(1)")
+		assert.True(t, ratepair.Less(metal, equity), "CategoryMetal(1) must rank below CategoryEquity(2)")
+		assert.True(t, ratepair.Less(fiat, equity), "CategoryFiat(0) must rank below CategoryEquity(2)")
 	})
 }

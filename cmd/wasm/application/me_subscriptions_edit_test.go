@@ -425,6 +425,30 @@ func TestMeSubscriptionsEditPage_ChoosePair(t *testing.T) {
 		assert.Equal(t, "BUY", st.PairDirections[0].Label)
 		assert.Equal(t, "SELL", st.PairDirections[1].Label)
 	})
+
+	t.Run("equity LAST source yields one PairDirection with empty Label (no radio renders)", func(t *testing.T) {
+		// An equity ticker has exactly one LAST source per (Title, Base, Quote).
+		// resolvePairDirections must return a single entry with an empty Label so
+		// renderDirectionRadios is never called (it guards on len(PairDirections)>=2).
+		// If a future provider exposes both LAST and BID/ASK for the same ticker,
+		// the radio would fire and affix-stripping would derive the label — out of
+		// scope here because no such data exists.
+		t.Parallel()
+
+		page := loaded(t, []dto.SourceResponse{
+			{Name: "US_YAHOO_LAST_AAPL_USD", Title: "Yahoo Finance", BaseCurrency: "AAPL", QuoteCurrency: "USD", Active: true},
+		})
+		page.ChooseProvider("Yahoo Finance")
+		page.ChoosePair("US_YAHOO_LAST_AAPL_USD")
+
+		st := page.State()
+		require.Len(t, st.PairDirections, 1,
+			"single LAST source must yield exactly one PairDirection")
+		assert.Equal(t, "", st.PairDirections[0].Label,
+			"single-direction pair must have empty Label so no direction radio renders")
+		assert.Equal(t, "US_YAHOO_LAST_AAPL_USD", st.Draft.SourceName,
+			"single-direction auto-selects the source name")
+	})
 }
 
 func TestMeSubscriptionsEditPage_SetDraftDirection(t *testing.T) {

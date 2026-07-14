@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seilbekskindirov/beacon/internal/domain"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/twinj/uuid"
 )
@@ -504,6 +505,40 @@ func TestRateUserEventRepository_SourceNameRoundTrip(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.Equal(t, "", result.SourceName)
+	})
+
+	// Plan 018 Task 6 acceptance criterion: a weather event with an empty SourceName
+	// (WeatherCheckAgent queues events without source attribution) must round-trip
+	// through RetainRateUserEvent and appear in ObtainUnprocessedRateUserEvents.
+	// This proves that reusing the FX notification queue for weather notifications is
+	// correct — empty SourceName → NULL in the DB, returned as "" on read.
+	t.Run("weather event with empty source name appears in unprocessed queue", func(t *testing.T) {
+		t.Parallel()
+		r, err := NewRateUserEventRepository(stubSQLiteDB(t))
+		require.NoError(t, err)
+
+		ev := &domain.RateUserEvent{
+			UserType: domain.UserTypeTelegram,
+			UserID:   "weather-user-1",
+			Message:  "<b>Test City</b>\nMon 30 Jun, 07:00 +05\n\n☀️ Clear sky",
+			// SourceName intentionally empty → stored as NULL by sourceNameForDB
+		}
+		require.NoError(t, r.RetainRateUserEvent(t.Context(), ev))
+		require.NotEmpty(t, ev.ID)
+
+		unprocessed, err := r.ObtainUnprocessedRateUserEvents(t.Context())
+		require.NoError(t, err)
+
+		var found bool
+		for _, e := range unprocessed {
+			if e.ID == ev.ID {
+				assert.Equal(t, "", e.SourceName, "weather event must have empty SourceName after round-trip")
+				assert.Equal(t, ev.Message, e.Message)
+				assert.Equal(t, domain.UserTypeTelegram, e.UserType)
+				found = true
+			}
+		}
+		require.True(t, found, "weather event must appear in the unprocessed queue")
 	})
 }
 

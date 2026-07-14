@@ -80,6 +80,27 @@ const (
 	// IANA timezone). Auth via Telegram WebApp initData HMAC, same as MeSubscriptions.
 	MeProfile = "/api/me/profile"
 
+	// MeWeatherCurrent returns the latest stored Open-Meteo observation for each
+	// of the caller's subscribed cities (one item per distinct location_id).
+	// HasData is false for a city whose first collection has not yet completed.
+	// Auth via Telegram WebApp initData HMAC (X-Telegram-Init-Data header only).
+	MeWeatherCurrent = "/api/me/weather/current"
+
+	// MeWeatherCitiesSearch returns geocoding matches for the ?q= query string.
+	// Must be registered before MeWeatherCities to win longest-path matching.
+	// Auth via Telegram WebApp initData HMAC (X-Telegram-Init-Data header only).
+	MeWeatherCitiesSearch = "/api/me/weather/cities/search"
+
+	// MeWeatherCities is the collection endpoint for the caller's saved city
+	// weather subscriptions (GET list, POST create). Auth via Telegram WebApp
+	// initData HMAC (X-Telegram-Init-Data header only).
+	MeWeatherCities = "/api/me/weather/cities"
+
+	// MeWeatherCityByID is the single-city endpoint (DELETE). Cross-user access
+	// returns 404 (same body as a genuine miss) to avoid existence disclosure.
+	// Auth via Telegram WebApp initData HMAC (X-Telegram-Init-Data header only).
+	MeWeatherCityByID = "/api/me/weather/cities/{id}"
+
 	// Ping is the liveness probe. Touches no dependency; always returns 200. Registered
 	// at /ping. /healthz is kept as a backward-compatible alias.
 	Ping = "/ping"

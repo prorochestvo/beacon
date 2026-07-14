@@ -71,6 +71,12 @@ type Handler struct {
 	serverVersion   string
 	serverStart     time.Time
 
+	// Weather city endpoints — nil when not wired; handlers return 503 in that case.
+	meWeatherCityRepo meWeatherCityRepository
+	weatherGeocoder   weatherGeocoder
+	// meWeatherObsRepo is required by GetMeWeatherCurrent; nil until WithWeatherObsRepo is called.
+	meWeatherObsRepo meWeatherObsRepository
+
 	// validateInitData is the Telegram WebApp initData verifier. A field so tests
 	// can inject a fake without real bot tokens.
 	validateInitData func(initData, botToken string, maxAge time.Duration, now time.Time) (int64, error)
@@ -1191,12 +1197,14 @@ func (h *Handler) GetMeRatesHistory(w http.ResponseWriter, r *http.Request) {
 	items := make([]dto.MeHistoryRow, 0, len(result.Items))
 	for _, row := range result.Items {
 		items = append(items, dto.MeHistoryRow{
-			SourceTitle: row.SourceTitle,
-			Timestamp:   row.Timestamp,
-			Bid:         row.Bid,
-			Ask:         row.Ask,
-			BidDeltaPct: row.BidDeltaPct,
-			AskDeltaPct: row.AskDeltaPct,
+			SourceTitle:  row.SourceTitle,
+			Timestamp:    row.Timestamp,
+			Bid:          row.Bid,
+			Ask:          row.Ask,
+			Last:         row.Last,
+			BidDeltaPct:  row.BidDeltaPct,
+			AskDeltaPct:  row.AskDeltaPct,
+			LastDeltaPct: row.LastDeltaPct,
 		})
 	}
 

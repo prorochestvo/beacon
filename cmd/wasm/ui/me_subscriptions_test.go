@@ -106,7 +106,15 @@ func TestRenderMeSubscriptions(t *testing.T) {
 		assert.Contains(t, html, `class="me-manage-gear"`)
 	})
 
-	t.Run("401 auth failure shows error message and hides chart, modal slot, and gear", func(t *testing.T) {
+	t.Run("weather button is present on authenticated screen", func(t *testing.T) {
+		t.Parallel()
+		state := meSubsState(nil)
+		html := ui.RenderMeSubscriptions(state)
+		assert.Contains(t, html, `id="me-weather"`)
+		assert.Contains(t, html, `class="me-weather-cloud"`)
+	})
+
+	t.Run("401 auth failure shows error message and hides chart, modal slot, and buttons", func(t *testing.T) {
 		t.Parallel()
 		state := meSubsState(nil)
 		state.AuthFailure = true
@@ -114,9 +122,10 @@ func TestRenderMeSubscriptions(t *testing.T) {
 
 		assert.Contains(t, html, "must be opened from the bot")
 		assert.Contains(t, html, `class="error-msg"`)
-		// Auth failure must not render chart, modal slot, or the manage-gear button.
+		// Auth failure must not render chart, modal slot, or the floating buttons.
 		assert.NotContains(t, html, `id="me-sparkline-chart"`)
 		assert.NotContains(t, html, `id="me-pair-modal-slot"`)
 		assert.NotContains(t, html, `id="me-manage"`)
+		assert.NotContains(t, html, `id="me-weather"`)
 	})
 }

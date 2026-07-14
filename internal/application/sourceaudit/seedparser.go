@@ -27,7 +27,11 @@ type SeededSource struct {
 	Side     string
 	Active   bool
 	Rules    []domain.RateSourceRule
-	Origin   string
+	// Headers are extra HTTP request headers extracted from the options JSON
+	// column. Nil for most sources; non-nil when a source needs a custom
+	// User-Agent or other header override.
+	Headers map[string]string
+	Origin  string
 }
 
 // ParseSeedFiles reads all files in fsys matching glob (lexicographic order) and
@@ -278,10 +282,21 @@ func seededSourceFromColumns(colMap map[string]string, base string, lineNum int)
 		return SeededSource{}, fmt.Errorf("%s:%d: column active: unexpected value %d (must be 0 or 1)", base, lineNum, activeInt)
 	}
 
-	// options is optional for SeededSource; parse to validate but do not surface.
-	if _, hasOptions := colMap["options"]; hasOptions {
-		if _, err = sqlUnquote(colMap["options"]); err != nil {
-			return SeededSource{}, fmt.Errorf("%s:%d: column options: %w", base, lineNum, err)
+	// options is optional; parse to validate JSON and extract Headers when present.
+	var headers map[string]string
+	if optRaw, hasOptions := colMap["options"]; hasOptions {
+		optJSON, optErr := sqlUnquote(optRaw)
+		if optErr != nil {
+			return SeededSource{}, fmt.Errorf("%s:%d: column options: %w", base, lineNum, optErr)
+		}
+		if optJSON != "" {
+			var opts struct {
+				Headers map[string]string `json:"headers"`
+			}
+			if optErr = json.Unmarshal([]byte(optJSON), &opts); optErr != nil {
+				return SeededSource{}, fmt.Errorf("%s:%d: column options: decode JSON: %w", base, lineNum, optErr)
+			}
+			headers = opts.Headers
 		}
 	}
 
@@ -304,6 +319,7 @@ func seededSourceFromColumns(colMap map[string]string, base string, lineNum int)
 		Side:     side,
 		Active:   active,
 		Rules:    rules,
+		Headers:  headers,
 	}, nil
 }
 

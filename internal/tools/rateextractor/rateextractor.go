@@ -21,6 +21,10 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/tools/threadsafe"
 )
 
+// maxResponseBytes caps the body read from any rate-source URL to guard against
+// OOM from unexpectedly large responses; rate-source pages are KBs (KASE ~540 KB).
+const maxResponseBytes = 10 << 20 // 10 MB
+
 // MinPlausibleRateValue rejects zero and negative extractions.
 const MinPlausibleRateValue = 0.0
 
@@ -125,8 +129,10 @@ func (extractor *RateExtractor) Name() string {
 // Run fetches source.URL, applies all extraction rules in sequence, and persists
 // the resulting rate value. Returns an error if any rule fails or the parsed value
 // is outside [MinPlausibleRateValue, MaxPlausibleRateValue].
+// Per-source headers from source.Options.Headers override the default User-Agent
+// when provided; see fetchHtmlPage for the cache-key limitation.
 func (extractor *RateExtractor) Run(ctx context.Context, source *domain.RateSource) error {
-	payload, err := extractor.fetchHtmlPage(ctx, source.URL)
+	payload, err := extractor.fetchHtmlPage(ctx, source.URL, source.Options.Headers)
 	if err != nil || payload == nil {
 		if err == nil {
 			err = errors.New("page is nil")
@@ -157,7 +163,15 @@ func (extractor *RateExtractor) recordFailedURL(url string, err error) {
 	extractor.failedURLs[url] = err
 }
 
-func (extractor *RateExtractor) fetchHtmlPage(ctx context.Context, rawURL string) ([]byte, error) {
+// fetchHtmlPage fetches rawURL and returns its body. The response is cached in
+// memory by URL for 30 minutes; a failed URL is tombstoned for the process lifetime.
+//
+// headers are applied after the default User-Agent, so a non-nil entry overrides
+// it. Two sources sharing the same URL but needing different headers would share
+// the same cache slot and return the first-fetched response — that is a known
+// limitation; all current sources have unique URLs, so the collision is not
+// reachable in production.
+func (extractor *RateExtractor) fetchHtmlPage(ctx context.Context, rawURL string, headers map[string]string) ([]byte, error) {
 	if cached, ok := extractor.loadFailedURL(rawURL); ok {
 		_, _ = fmt.Fprintf(extractor.logger,
 			"rate_extractor: short-circuit url=%s prior_error=%v\n", rawURL, cached)
@@ -169,6 +183,8 @@ func (extractor *RateExtractor) fetchHtmlPage(ctx context.Context, rawURL string
 	ctx, cancel := context.WithTimeout(ctx, extractor.httpClient.Timeout)
 	defer cancel()
 
+	// Cache key is URL-only; per-source headers are not part of the key, the same limitation
+	// as failedURLs. Safe today because every source has a unique URL.
 	cacheKey := fmt.Sprintf("GET:%s", rawURL)
 	if page, err := extractor.cache.Fetch(cacheKey); err == nil {
 		if b, ok := page.([]byte); ok && len(b) > 0 {
@@ -185,6 +201,10 @@ func (extractor *RateExtractor) fetchHtmlPage(ctx context.Context, rawURL string
 	}
 
 	req.Header.Set("User-Agent", "Beacon/1.0 (+https://github.com/seilbekskindirov/beacon)")
+	// Per-source headers override defaults; applied after so source wins.
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 
 	_, _ = fmt.Fprintf(extractor.logger, "rate_extractor: fetching url %s\n", rawURL)
 
@@ -204,7 +224,7 @@ func (extractor *RateExtractor) fetchHtmlPage(ctx context.Context, rawURL string
 		return nil, err
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		err = fmt.Errorf("read response body: %w", err)
 		err = errors.Join(err, internal.NewTraceError())

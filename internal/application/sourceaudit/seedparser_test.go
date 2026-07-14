@@ -216,6 +216,38 @@ INSERT OR IGNORE INTO other_table VALUES(1,2,3);
 		assert.Equal(t, "USD", sources[0].Base)
 	})
 
+	t.Run("options with headers field populates SeededSource.Headers", func(t *testing.T) {
+		t.Parallel()
+
+		line := `INSERT OR IGNORE INTO rate_sources (name, title, base_currency, quote_currency, url, interval, kind, active, options, rules, rule_metadata, fetcher_kind) VALUES('US_YAHOO_LAST_AAPL_USD','Yahoo Finance','AAPL','USD','https://query1.finance.yahoo.com/v8/finance/chart/AAPL','6h','LAST',1,'{"headers":{"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}}','[{"method":"json","pattern":"chart.result[0].meta.regularMarketPrice"}]','{}','plain');`
+		fsys := fstest.MapFS{
+			"headers.seed.sql": {Data: []byte(line)},
+		}
+
+		sources, err := ParseSeedFiles(fsys, "headers.seed.sql")
+		require.NoError(t, err)
+		require.Len(t, sources, 1)
+
+		s := sources[0]
+		assert.Equal(t, "US_YAHOO_LAST_AAPL_USD", s.Name)
+		require.NotNil(t, s.Headers)
+		assert.Equal(t, "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", s.Headers["User-Agent"])
+	})
+
+	t.Run("options with empty JSON object produces nil Headers", func(t *testing.T) {
+		t.Parallel()
+
+		line := `INSERT OR IGNORE INTO rate_sources VALUES('SRC','V','USD','KZT','https://x.com/','6h','BID',1,'{}','[{"method":"regex","pattern":"([0-9]+)"}]');`
+		fsys := fstest.MapFS{
+			"empty_opts.seed.sql": {Data: []byte(line)},
+		}
+
+		sources, err := ParseSeedFiles(fsys, "empty_opts.seed.sql")
+		require.NoError(t, err)
+		require.Len(t, sources, 1)
+		assert.Nil(t, sources[0].Headers, "empty options should produce nil Headers")
+	})
+
 	t.Run("active=1 maps to true active=0 to false", func(t *testing.T) {
 		t.Parallel()
 

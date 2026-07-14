@@ -23,7 +23,7 @@ type stubFetcher struct {
 	errs      map[string]error
 }
 
-func (s *stubFetcher) Fetch(_ context.Context, url string) (*sourceaudit.FetchResult, error) {
+func (s *stubFetcher) Fetch(_ context.Context, url string, _ map[string]string) (*sourceaudit.FetchResult, error) {
 	if err, ok := s.errs[url]; ok {
 		return nil, err
 	}

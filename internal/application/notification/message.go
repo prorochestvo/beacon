@@ -47,7 +47,7 @@ type alert struct {
 	SourceName    string
 	BaseCurrency  string                // e.g. "USD"
 	QuoteCurrency string                // e.g. "KZT"
-	CurrencyKind  domain.RateSourceKind // BID or ASK
+	CurrencyKind  domain.RateSourceKind // BID, ASK, or LAST
 	CurrentPrice  float64               // newest price, e.g. 470.46
 	Delta         float64               // signed delta: positive = up, negative = down
 	Triggers      []alertTrigger        // ordered: delta, interval, daily, cron
@@ -79,12 +79,14 @@ func buildAlertMessage(now time.Time, loc *time.Location, alerts ...alert) ([]st
 	return splitIntoParts(now, loc, rows, alerts), nil
 }
 
-// pairLabel returns the display pair string for a row (BID → base/quote, ASK → quote/base).
+// pairLabel returns the display pair string for a row.
+// BID and LAST use the natural base/quote direction (e.g. AAPL/USD, USD/KZT).
+// ASK inverts to quote/base (e.g. KZT/USD).
 // Each currency code is HTML-escaped so odd source codes cannot inject HTML into the <pre> block.
 func pairLabel(a alert) string {
 	base := html.EscapeString(a.BaseCurrency)
 	quote := html.EscapeString(a.QuoteCurrency)
-	if a.CurrencyKind == domain.RateSourceKindBID {
+	if a.CurrencyKind == domain.RateSourceKindBID || a.CurrencyKind == domain.RateSourceKindLAST {
 		return fmt.Sprintf("%s/%s", base, quote)
 	}
 	return fmt.Sprintf("%s/%s", quote, base)

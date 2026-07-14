@@ -438,7 +438,9 @@ func rateSourceQueryContext(tx *sql.Tx, ctx context.Context, condition string, a
 			return nil, err
 		}
 
-		if item.Kind != domain.RateSourceKindASK && item.Kind != domain.RateSourceKindBID {
+		if item.Kind != domain.RateSourceKindASK &&
+			item.Kind != domain.RateSourceKindBID &&
+			item.Kind != domain.RateSourceKindLAST {
 			err = fmt.Errorf("unknown kind %s", item.Kind)
 			err = errors.Join(err, internal.NewTraceError())
 			return nil, err

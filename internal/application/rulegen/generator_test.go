@@ -66,7 +66,7 @@ type mockFetcher struct {
 	err  error
 }
 
-func (m *mockFetcher) Fetch(_ context.Context, _ string) ([]byte, error) {
+func (m *mockFetcher) Fetch(_ context.Context, _ string, _ map[string]string) ([]byte, error) {
 	return m.body, m.err
 }
 
@@ -538,7 +538,7 @@ type panicFetcher struct{}
 
 var _ Fetcher = (*panicFetcher)(nil)
 
-func (p *panicFetcher) Fetch(_ context.Context, url string) ([]byte, error) {
+func (p *panicFetcher) Fetch(_ context.Context, url string, _ map[string]string) ([]byte, error) {
 	panic("panicFetcher.Fetch called unexpectedly for URL: " + url)
 }
 

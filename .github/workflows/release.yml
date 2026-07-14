@@ -165,13 +165,15 @@ jobs:
           ACTION_EMITER_TBOT_TOKEN: ${{ secrets.ACTION_EMITER_TBOT_TOKEN }}
           TELEGRAM_ROOT_CHAT_ID: ${{ vars.TELEGRAM_ROOT_CHAT_ID }}
           APP_LABEL: ""
+          ACTION: ""
         run: |
           [ -n "$ACTION_EMITER_TBOT_TOKEN" ] && [ -n "$TELEGRAM_ROOT_CHAT_ID" ] || exit 0
           PROJECT_TAG=$(echo "${GITHUB_REPOSITORY##*/}" | tr 'a-z-' 'A-Z_' | tr -cd 'A-Z0-9_')
           WF_REF="${GITHUB_WORKFLOW_REF%@*}"; WF_FILE="${WF_REF##*/}"
           LABEL="${APP_LABEL:+$APP_LABEL }"
-          text=$(printf '#%s %sdeploy OK (%s)\n<b>%s</b>\nref:  %s (%s)\nrun:  <a href="%s/%s/actions/runs/%s">#%s</a>' \
-            "$PROJECT_TAG" "$LABEL" "$WF_FILE" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "${GITHUB_SHA:0:7}" \
+          ACTION="${ACTION:-deploy}"
+          text=$(printf '#%s %s%s <b>passed</b>\n<b>%s</b> <i>(%s)</i>\nref:  %s (%s)\nrun:  <a href="%s/%s/actions/runs/%s">#%s</a>' \
+            "$PROJECT_TAG" "$LABEL" "$ACTION" "$GITHUB_REPOSITORY" "$WF_FILE" "$GITHUB_REF_NAME" "${GITHUB_SHA:0:7}" \
             "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ID")
           curl -s -X POST "https://api.telegram.org/bot${ACTION_EMITER_TBOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_ROOT_CHAT_ID}" \
@@ -184,18 +186,20 @@ jobs:
           ACTION_EMITER_TBOT_TOKEN: ${{ secrets.ACTION_EMITER_TBOT_TOKEN }}
           TELEGRAM_ROOT_CHAT_ID: ${{ vars.TELEGRAM_ROOT_CHAT_ID }}
           APP_LABEL: ""
+          ACTION: ""
         run: |
           [ -n "$ACTION_EMITER_TBOT_TOKEN" ] && [ -n "$TELEGRAM_ROOT_CHAT_ID" ] || exit 0
           PROJECT_TAG=$(echo "${GITHUB_REPOSITORY##*/}" | tr 'a-z-' 'A-Z_' | tr -cd 'A-Z0-9_')
           WF_REF="${GITHUB_WORKFLOW_REF%@*}"; WF_FILE="${WF_REF##*/}"
           LABEL="${APP_LABEL:+$APP_LABEL }"
+          ACTION="${ACTION:-deploy}"
           reason=""
           if [ -f "$RUNNER_TEMP/deploy_trace.log" ]; then
             reason=$(grep -iE 'error|sudo:|denied|mismatch|not active|not found|refused|timed out|no route|rolling back|health check' \
               "$RUNNER_TEMP/deploy_trace.log" | tail -n 3 | cut -c1-300)
           fi
-          text=$(printf '#%s %sdeploy FAILED (%s)\n<b>%s</b>\nref:  %s (%s)\nrun:  <a href="%s/%s/actions/runs/%s">#%s</a>' \
-            "$PROJECT_TAG" "$LABEL" "$WF_FILE" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "${GITHUB_SHA:0:7}" \
+          text=$(printf '#%s %s%s <b>failed</b>\n<b>%s</b> <i>(%s)</i>\nref:  %s (%s)\nrun:  <a href="%s/%s/actions/runs/%s">#%s</a>' \
+            "$PROJECT_TAG" "$LABEL" "$ACTION" "$GITHUB_REPOSITORY" "$WF_FILE" "$GITHUB_REF_NAME" "${GITHUB_SHA:0:7}" \
             "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ID")
           if [ -n "$reason" ]; then
             esc=$(printf '%s' "$reason" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')

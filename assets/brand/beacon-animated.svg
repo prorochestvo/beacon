@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="106 145 300 300" width="300" height="300" role="img" aria-label="Beacon candlesticks loading">
+  <defs>
+    <radialGradient id="g6s" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset=".55" stop-color="#90caf9"/>
+      <stop offset="1" stop-color="#90caf9" stop-opacity="0"/>
+    </radialGradient>
+
+    <clipPath id="win6"><rect x="216" y="212" width="80" height="194"/></clipPath>
+
+    <g id="rowU6" stroke-linecap="round">
+      <line x1="228" y1="228" x2="228" y2="296" stroke="#2196f3" stroke-width="3"/>
+      <rect x="220" y="244" width="16" height="34" rx="2" fill="#2196f3"/>
+      <line x1="256" y1="224" x2="256" y2="292" stroke="#e53935" stroke-width="3"/>
+      <rect x="248" y="240" width="16" height="36" rx="2" fill="#e53935"/>
+      <line x1="284" y1="232" x2="284" y2="300" stroke="#2196f3" stroke-width="3"/>
+      <rect x="276" y="248" width="16" height="32" rx="2" fill="#2196f3"/>
+    </g>
+
+    <g id="rowL6" stroke-linecap="round">
+      <line x1="228" y1="320" x2="228" y2="392" stroke="#e53935" stroke-width="3"/>
+      <rect x="220" y="336" width="16" height="40" rx="2" fill="#e53935"/>
+      <line x1="256" y1="330" x2="256" y2="402" stroke="#2196f3" stroke-width="3"/>
+      <rect x="248" y="348" width="16" height="40" rx="2" fill="#2196f3"/>
+      <line x1="284" y1="326" x2="284" y2="398" stroke="#e53935" stroke-width="3"/>
+      <rect x="276" y="344" width="16" height="38" rx="2" fill="#e53935"/>
+    </g>
+  </defs>
+
+  <path d="M236 168 Q256 142 276 168 Z" fill="#0d2440"/>
+  <rect x="242" y="168" width="28" height="30" rx="2" fill="#0d2440"/>
+  <circle cx="256" cy="183" r="15" fill="url(#g6s)">
+    <animate attributeName="opacity" values="0.5;1;0.5" dur="1.4s" repeatCount="indefinite"/>
+    <animate attributeName="r" values="13;17;13" dur="1.4s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="256" cy="183" r="7" fill="#ffffff">
+    <animate attributeName="opacity" values="0.7;1;0.7" dur="1.4s" repeatCount="indefinite"/>
+  </circle>
+  <rect x="222" y="198" width="68" height="13" rx="3" fill="#0d2440"/>
+
+  <g clip-path="url(#win6)">
+    <g>
+      <animateTransform attributeName="transform" type="translate"
+        values="0 0; -84 0" dur="6s" repeatCount="indefinite"/>
+      <use href="#rowU6" x="-168"/>
+      <use href="#rowU6" x="-84"/>
+      <use href="#rowU6" x="0"/>
+      <use href="#rowU6" x="84"/>
+      <use href="#rowU6" x="168"/>
+    </g>
+    <g>
+      <animateTransform attributeName="transform" type="translate"
+        values="0 0; 84 0" dur="6s" repeatCount="indefinite"/>
+      <use href="#rowL6" x="-168"/>
+      <use href="#rowL6" x="-84"/>
+      <use href="#rowL6" x="0"/>
+      <use href="#rowL6" x="84"/>
+      <use href="#rowL6" x="168"/>
+    </g>
+  </g>
+
+  <rect x="206" y="404" width="100" height="15" rx="3" fill="#0d2440"/>
+  <rect x="192" y="419" width="128" height="15" rx="4" fill="#0d2440"/>
+</svg>

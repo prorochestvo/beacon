@@ -12,6 +12,10 @@ import (
 
 var _ Fetcher = (*httpFetcher)(nil)
 
+// maxResponseBytes caps the body read from any audit fetch to guard against
+// OOM from unexpectedly large responses; rate-source pages are KBs (KASE ~540 KB).
+const maxResponseBytes = 10 << 20 // 10 MB
+
 // DefaultUserAgent is the audit tool's User-Agent header, matching the
 // production extractor value.
 const DefaultUserAgent = "Beacon/1.0 (+https://github.com/seilbekskindirov/beacon)"
@@ -24,8 +28,10 @@ type FetchResult struct {
 }
 
 // Fetcher performs HTTP GETs and returns the body with metadata.
+// headers are per-source overrides applied after the default User-Agent; nil
+// is safe and results in only the default header being sent.
 type Fetcher interface {
-	Fetch(ctx context.Context, url string) (*FetchResult, error)
+	Fetch(ctx context.Context, url string, headers map[string]string) (*FetchResult, error)
 }
 
 // NewHTTPFetcher constructs an httpFetcher with the given per-request timeout.
@@ -66,7 +72,7 @@ type httpFetcher struct {
 	timeout time.Duration
 }
 
-func (f *httpFetcher) Fetch(ctx context.Context, url string) (*FetchResult, error) {
+func (f *httpFetcher) Fetch(ctx context.Context, url string, headers map[string]string) (*FetchResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
 
@@ -75,6 +81,10 @@ func (f *httpFetcher) Fetch(ctx context.Context, url string) (*FetchResult, erro
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("User-Agent", DefaultUserAgent)
+	// Per-source headers override defaults; applied after so source wins.
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := f.client.Do(req)
 	if err != nil {
@@ -86,7 +96,7 @@ func (f *httpFetcher) Fetch(ctx context.Context, url string) (*FetchResult, erro
 		return nil, fmt.Errorf("fetch %s: unexpected status %d (%s)", url, resp.StatusCode, resp.Status)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("read response body: %w", err)
 	}

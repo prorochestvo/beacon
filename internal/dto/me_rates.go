@@ -18,9 +18,9 @@ type MeHistoryResponse struct {
 }
 
 // MeHistoryRow is one rate-collection event for the requested pair.
-// Bid and Ask are pointers so a one-direction source emits exactly the
-// direction it owns. BidDeltaPct / AskDeltaPct are nil for the first
-// observation in their (title, direction) chain within the window.
+// Bid, Ask, and Last are pointers so a one-direction source emits exactly
+// the direction it owns. Delta fields are nil for the first observation in
+// their (title, direction) chain within the window.
 type MeHistoryRow struct {
 	// SourceTitle is the human-readable provider title (e.g. "Center Credit Bank (FX)").
 	// This is the grouping key: BID and ASK rows from sibling sources sharing the
@@ -28,16 +28,21 @@ type MeHistoryRow struct {
 	SourceTitle string `json:"source_title"`
 	// Timestamp is when the collector scraped this value.
 	Timestamp time.Time `json:"timestamp"`
-	// Bid is the BID price; nil when the source only tracks ASK.
+	// Bid is the BID price; nil when the source only tracks ASK or LAST.
 	Bid *float64 `json:"bid,omitempty"`
-	// Ask is the ASK price; nil when the source only tracks BID.
+	// Ask is the ASK price; nil when the source only tracks BID or LAST.
 	Ask *float64 `json:"ask,omitempty"`
+	// Last is the last-traded (equity) price; nil for BID/ASK-only sources.
+	Last *float64 `json:"last,omitempty"`
 	// BidDeltaPct is the percent change from the previous BID observation in
 	// this (title, direction) chain within the page; nil for the first row.
 	BidDeltaPct *float64 `json:"bid_delta_pct,omitempty"`
 	// AskDeltaPct is the percent change from the previous ASK observation in
 	// this (title, direction) chain within the page; nil for the first row.
 	AskDeltaPct *float64 `json:"ask_delta_pct,omitempty"`
+	// LastDeltaPct is the percent change from the previous LAST observation in
+	// this (title, direction) chain within the page; nil for the first row.
+	LastDeltaPct *float64 `json:"last_delta_pct,omitempty"`
 }
 
 // MeChartResponse is the JSON envelope returned by GET /api/me/rates/chart.

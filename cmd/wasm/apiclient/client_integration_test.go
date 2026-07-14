@@ -25,11 +25,18 @@ import (
 // newIntegrationClient creates a test server, wires a Client to it via
 // NewHTTPFetcher, and returns both with a cleanup function. Each integration
 // test owns its own server so parallel execution is safe.
+//
+// The fetcher is given srv.Client() rather than a nil client on purpose: a nil
+// client falls back to http.DefaultTransport, which every parallel test would
+// then share. httptest.Server.Close() unconditionally calls
+// http.DefaultTransport.CloseIdleConnections(), so a sibling test closing its
+// server would race the in-flight request of another. srv.Client() uses a
+// transport private to this server, and Close() tears down its idle connections.
 func newIntegrationClient(t *testing.T) (*apiclient.Client, *http.ServeMux, func()) {
 	t.Helper()
 	mux := http.NewServeMux()
 	srv := httptest.NewServer(mux)
-	fetcher := apiclient.NewHTTPFetcher(srv.URL, nil)
+	fetcher := apiclient.NewHTTPFetcher(srv.URL, srv.Client())
 	client := apiclient.New(fetcher)
 	return client, mux, srv.Close
 }

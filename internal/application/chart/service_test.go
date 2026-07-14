@@ -723,6 +723,78 @@ func TestService_ObtainMeChart(t *testing.T) {
 			"first sample at exactly since must not advance effectiveSince; EffectiveDays must equal the requested period")
 		require.NotEmpty(t, sr.Points)
 	})
+
+	t.Run("LAST source emits a non-empty series with equity category and ColorLast", func(t *testing.T) {
+		t.Parallel()
+		// AAPL/USD LAST source with two data points — the series must not be dropped.
+		since7d := fixedNow.Add(-7 * 24 * time.Hour)
+		svc := newService(
+			[]domain.RateUserSubscription{{SourceName: "aapl-last"}},
+			map[string]domain.RateSource{
+				"aapl-last": {BaseCurrency: "AAPL", QuoteCurrency: "USD", Kind: domain.RateSourceKindLAST, Active: true},
+			},
+			[]domain.RateValue{
+				{SourceName: "aapl-last", BaseCurrency: "AAPL", QuoteCurrency: "USD", Price: 220.0, Timestamp: since7d.Add(time.Hour)},
+				{SourceName: "aapl-last", BaseCurrency: "AAPL", QuoteCurrency: "USD", Price: 230.0, Timestamp: since7d.Add(48 * time.Hour)},
+			},
+		)
+		result, err := svc.ObtainMeChart(t.Context(), "user1")
+		require.NoError(t, err)
+		require.Len(t, result.Pairs, 1)
+		row := result.Pairs[0]
+
+		assert.Equal(t, "AAPL/USD", row.Pair, "LAST label must be natural base/quote direction")
+		assert.Equal(t, ratepair.CategoryEquity, row.Category)
+		assert.Nil(t, row.SpreadPct, "single LAST series must have nil SpreadPct")
+
+		require.Len(t, row.Series, 1)
+		sr := row.Series[0]
+		assert.Equal(t, domain.RateSourceKindLAST, sr.Kind)
+		assert.Equal(t, ratepair.ColorLast, sr.Color)
+		assert.NotEmpty(t, sr.Points, "non-empty values must produce a populated Points slice")
+	})
+
+	t.Run("LAST source with zero values yields sparse series not dropped row", func(t *testing.T) {
+		t.Parallel()
+		// Zero values: the series must still appear (sparse), not be silently dropped.
+		svc := newService(
+			[]domain.RateUserSubscription{{SourceName: "aapl-last"}},
+			map[string]domain.RateSource{
+				"aapl-last": {BaseCurrency: "AAPL", QuoteCurrency: "USD", Kind: domain.RateSourceKindLAST, Active: true},
+			},
+			nil, // no rate values
+		)
+		result, err := svc.ObtainMeChart(t.Context(), "user1")
+		require.NoError(t, err)
+		require.Len(t, result.Pairs, 1)
+		require.Len(t, result.Pairs[0].Series, 1)
+		assert.True(t, result.Pairs[0].Series[0].Sparse, "zero-data LAST series must be sparse")
+	})
+
+	t.Run("equity row sorts after fiat and metal rows", func(t *testing.T) {
+		t.Parallel()
+		svc := newService(
+			[]domain.RateUserSubscription{
+				{SourceName: "aapl-last"},
+				{SourceName: "gold-src"},
+				{SourceName: "usd-src"},
+			},
+			map[string]domain.RateSource{
+				"aapl-last": {BaseCurrency: "AAPL", QuoteCurrency: "USD", Kind: domain.RateSourceKindLAST, Active: true},
+				"gold-src":  {BaseCurrency: "GOLD", QuoteCurrency: "KZT", Kind: domain.RateSourceKindBID, Active: true},
+				"usd-src":   {BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: domain.RateSourceKindBID, Active: true},
+			},
+			nil,
+		)
+		result, err := svc.ObtainMeChart(t.Context(), "user1")
+		require.NoError(t, err)
+		require.Len(t, result.Pairs, 3)
+		// fiat (USD/KZT) first, metal (GOLD/KZT) second, equity (AAPL/USD) last.
+		assert.Equal(t, "USD/KZT", result.Pairs[0].Pair, "fiat must be first")
+		assert.Contains(t, result.Pairs[1].Pair, "GOLD", "metal must be second")
+		assert.Contains(t, result.Pairs[2].Pair, "AAPL", "equity must be last")
+		assert.Equal(t, ratepair.CategoryEquity, result.Pairs[2].Category)
+	})
 }
 
 var errFake = assert.AnError

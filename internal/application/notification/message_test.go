@@ -54,6 +54,21 @@ func TestBuildAlertMessage(t *testing.T) {
 		require.NotContains(t, msgs[0], "USD/KZT")
 	})
 
+	t.Run("LAST pair rendered as base/quote", func(t *testing.T) {
+		t.Parallel()
+
+		msgs, err := buildAlertMessage(fixedNow, nil, alert{
+			BaseCurrency:  "AAPL",
+			QuoteCurrency: "USD",
+			CurrentPrice:  282.34,
+			CurrencyKind:  domain.RateSourceKindLAST,
+		})
+		require.NoError(t, err)
+		require.Len(t, msgs, 1)
+		require.Contains(t, msgs[0], "AAPL/USD")
+		require.NotContains(t, msgs[0], "USD/AAPL")
+	})
+
 	t.Run("delta zero — blank delta cell, no 0.00 and no arrow", func(t *testing.T) {
 		t.Parallel()
 
