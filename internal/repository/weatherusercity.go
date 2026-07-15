@@ -259,7 +259,9 @@ func (r *WeatherUserCityRepository) ObtainDueWeatherUserCities(ctx context.Conte
 }
 
 // AdvanceLastNotifiedAt updates last_notified_at for the given city ID so that
-// IsMorningDue will not fire again on the same local calendar day.
+// IsMorningDue will not fire again on the same local calendar day. This is the
+// morning-summary cursor only; alert kinds use MarkWeatherAlertFired instead, which
+// updates last_notified_at with the forecast_date fire cursor semantics.
 func (r *WeatherUserCityRepository) AdvanceLastNotifiedAt(ctx context.Context, id string, when time.Time) error {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
@@ -271,6 +273,59 @@ func (r *WeatherUserCityRepository) AdvanceLastNotifiedAt(ctx context.Context, i
 		" SET " + weatherUserCityLastNotifiedAtFieldName + " = ?" +
 		" WHERE " + weatherUserCityIDFieldName + " = ?;"
 	if _, err := tx.ExecContext(ctx, cmd, when.Format(time.RFC3339), id); err != nil {
+		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), internal.NewTraceError())
+	}
+
+	if err := tx.Commit(); err != nil {
+		return errors.Join(err, internal.NewStackTraceError())
+	}
+	return nil
+}
+
+// SetWeatherAlertLatched persists the edge-trigger latch for one alert subscription.
+// It updates only alert_latched (not updated_at — the latch is system state, not a user
+// edit, and not last_notified_at — a re-arm is not a fire). Callers write only on a latch
+// transition, never per tick (see WeatherCheckAgent).
+func (r *WeatherUserCityRepository) SetWeatherAlertLatched(ctx context.Context, id string, latched bool) error {
+	tx, err := r.db.Transaction(ctx)
+	if err != nil {
+		return errors.Join(err, internal.NewStackTraceError())
+	}
+	defer printRollbackError(tx)
+
+	var latchedInt int
+	if latched {
+		latchedInt = 1
+	}
+	cmd := "UPDATE " + weatherUserCityTableName +
+		" SET " + weatherUserCityAlertLatchedFieldName + " = ?" +
+		" WHERE " + weatherUserCityIDFieldName + " = ?;"
+	if _, err := tx.ExecContext(ctx, cmd, latchedInt, id); err != nil {
+		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), internal.NewTraceError())
+	}
+
+	if err := tx.Commit(); err != nil {
+		return errors.Join(err, internal.NewStackTraceError())
+	}
+	return nil
+}
+
+// MarkWeatherAlertFired records that an alert fired for a given forecast_date: it sets
+// alert_latched = 1 and stores firedForDate in last_notified_at (the per-forecast_date fire
+// cursor for alert kinds). Pass domain.ForecastDateKey(obs.ForecastDate) as firedForDate.
+// Does not touch updated_at. Call only after the notification is successfully enqueued.
+func (r *WeatherUserCityRepository) MarkWeatherAlertFired(ctx context.Context, id string, firedForDate time.Time) error {
+	tx, err := r.db.Transaction(ctx)
+	if err != nil {
+		return errors.Join(err, internal.NewStackTraceError())
+	}
+	defer printRollbackError(tx)
+
+	cmd := "UPDATE " + weatherUserCityTableName +
+		" SET " + weatherUserCityAlertLatchedFieldName + " = 1, " +
+		weatherUserCityLastNotifiedAtFieldName + " = ?" +
+		" WHERE " + weatherUserCityIDFieldName + " = ?;"
+	if _, err := tx.ExecContext(ctx, cmd, firedForDate.Format(time.RFC3339), id); err != nil {
 		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), internal.NewTraceError())
 	}
 
@@ -297,6 +352,7 @@ const (
 	weatherUserCityNotifyHourFieldName     = "notify_hour"
 	weatherUserCityConditionValueFieldName = "condition_value"
 	weatherUserCityLastNotifiedAtFieldName = "last_notified_at"
+	weatherUserCityAlertLatchedFieldName   = "alert_latched"
 	weatherUserCityUpdatedAtFieldName      = "updated_at"
 	weatherUserCityCreatedAtFieldName      = "created_at"
 
@@ -316,6 +372,7 @@ const (
 		weatherUserCityNotifyHourFieldName + ", " +
 		weatherUserCityConditionValueFieldName + ", " +
 		weatherUserCityLastNotifiedAtFieldName + ", " +
+		weatherUserCityAlertLatchedFieldName + ", " +
 		weatherUserCityUpdatedAtFieldName + ", " +
 		weatherUserCityCreatedAtFieldName +
 		" FROM " + weatherUserCityTableName
@@ -352,6 +409,7 @@ type weatherUserCityScanner interface {
 func weatherUserCityScan(s weatherUserCityScanner) (domain.WeatherUserCity, error) {
 	var item domain.WeatherUserCity
 	var lastNotifiedAt *string
+	var alertLatched int
 	var updatedAt, createdAt string
 
 	if err := s.Scan(
@@ -370,11 +428,13 @@ func weatherUserCityScan(s weatherUserCityScanner) (domain.WeatherUserCity, erro
 		&item.NotifyHour,
 		&item.ConditionValue,
 		&lastNotifiedAt,
+		&alertLatched,
 		&updatedAt,
 		&createdAt,
 	); err != nil {
 		return domain.WeatherUserCity{}, errors.Join(err, internal.NewTraceError())
 	}
+	item.AlertLatched = alertLatched != 0
 
 	var err error
 	if item.UpdatedAt, err = time.Parse(time.RFC3339, updatedAt); err != nil {

@@ -54,6 +54,7 @@ func TestWeatherUserCityRepository_RetainWeatherUserCity(t *testing.T) {
 		assert.Equal(t, domain.WeatherNotifyMorningSummary, got.NotifyKind)
 		assert.Equal(t, 7, got.NotifyHour)
 		assert.True(t, got.LastNotifiedAt.IsZero())
+		assert.False(t, got.AlertLatched, "a fresh insert must default alert_latched to armed (false)")
 		assert.False(t, got.CreatedAt.IsZero())
 		assert.False(t, got.UpdatedAt.IsZero())
 	})
@@ -102,6 +103,40 @@ func TestWeatherUserCityRepository_RetainWeatherUserCity(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, firstID, found.ID)
 		assert.Equal(t, 9, found.NotifyHour)
+	})
+
+	t.Run("re-subscribe on conflict preserves an already-latched alert_latched", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		city := &domain.WeatherUserCity{
+			UserType:       domain.UserTypeTelegram,
+			UserID:         "u-relatch",
+			LocationID:     "loc-relatch",
+			Timezone:       "UTC",
+			NotifyKind:     domain.WeatherNotifyAlertFrost,
+			ConditionValue: "0",
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
+		require.NoError(t, repo.SetWeatherAlertLatched(t.Context(), city.ID, true))
+
+		// Re-subscribe (ON CONFLICT update) with the same unique key.
+		resubscribe := &domain.WeatherUserCity{
+			UserType:       domain.UserTypeTelegram,
+			UserID:         "u-relatch",
+			LocationID:     "loc-relatch",
+			Timezone:       "UTC",
+			NotifyKind:     domain.WeatherNotifyAlertFrost,
+			ConditionValue: "-5",
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), resubscribe))
+		assert.Equal(t, city.ID, resubscribe.ID, "re-subscribe must update the original row")
+
+		got, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.True(t, got.AlertLatched, "alert_latched is not in RetainWeatherUserCity's column list, so an ON CONFLICT update must not clobber it")
 	})
 
 	t.Run("stores and retrieves gismeteo_city_id", func(t *testing.T) {
@@ -444,6 +479,80 @@ func TestWeatherUserCityRepository_AdvanceLastNotifiedAt(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		assert.Equal(t, when.Format(time.RFC3339), got.LastNotifiedAt.Format(time.RFC3339))
+	})
+}
+
+func TestWeatherUserCityRepository_SetWeatherAlertLatched(t *testing.T) {
+	t.Parallel()
+
+	t.Run("sets and clears the latch without touching updated_at or last_notified_at", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		city := &domain.WeatherUserCity{
+			UserType:       domain.UserTypeTelegram,
+			UserID:         "u-latch",
+			LocationID:     "loc-latch",
+			Timezone:       "UTC",
+			NotifyKind:     domain.WeatherNotifyAlertFrost,
+			ConditionValue: "0",
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
+
+		before, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		require.False(t, before.AlertLatched)
+
+		require.NoError(t, repo.SetWeatherAlertLatched(t.Context(), city.ID, true))
+		afterSet, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.True(t, afterSet.AlertLatched)
+		assert.Equal(t, before.UpdatedAt.Format(time.RFC3339), afterSet.UpdatedAt.Format(time.RFC3339),
+			"the latch is system state, not a user edit: updated_at must not change")
+		assert.True(t, afterSet.LastNotifiedAt.IsZero(), "a latch-only write must not touch last_notified_at")
+
+		require.NoError(t, repo.SetWeatherAlertLatched(t.Context(), city.ID, false))
+		afterClear, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.False(t, afterClear.AlertLatched)
+		assert.Equal(t, before.UpdatedAt.Format(time.RFC3339), afterClear.UpdatedAt.Format(time.RFC3339))
+		assert.True(t, afterClear.LastNotifiedAt.IsZero())
+	})
+}
+
+func TestWeatherUserCityRepository_MarkWeatherAlertFired(t *testing.T) {
+	t.Parallel()
+
+	t.Run("latches and records the forecast_date fire cursor without touching updated_at", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		city := &domain.WeatherUserCity{
+			UserType:       domain.UserTypeTelegram,
+			UserID:         "u-fired",
+			LocationID:     "loc-fired",
+			Timezone:       "UTC",
+			NotifyKind:     domain.WeatherNotifyAlertFrost,
+			ConditionValue: "0",
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
+
+		before, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+
+		key, err := domain.ForecastDateKey("2026-01-15")
+		require.NoError(t, err)
+		require.NoError(t, repo.MarkWeatherAlertFired(t.Context(), city.ID, key))
+
+		got, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.True(t, got.AlertLatched)
+		assert.True(t, key.Equal(got.LastNotifiedAt), "last_notified_at must equal the stored forecast_date key")
+		assert.Equal(t, before.UpdatedAt.Format(time.RFC3339), got.UpdatedAt.Format(time.RFC3339))
 	})
 }
 

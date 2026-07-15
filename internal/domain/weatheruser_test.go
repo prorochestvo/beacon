@@ -360,13 +360,20 @@ func TestWeatherUserCity_EvaluateAlert(t *testing.T) {
 		assert.False(t, fired)
 	})
 
-	t.Run("thaw does not fire when it never froze", func(t *testing.T) {
+	t.Run("thaw fires on TempMax > 0 alone, even if it never froze (warm-side-only latch model)", func(t *testing.T) {
 		t.Parallel()
+		// Deviation from the pre-latch behaviour: thaw used to require TempMin ≤ 0 (a
+		// crossing) as well as TempMax > 0. Under the finalised edge-trigger model
+		// (plans/262-weather-alert-edge-trigger-hysteresis.md), thaw is a warm-side kind
+		// keyed on TempMax exclusively — the same axis alert_heat uses — so that
+		// re-arming (TempMax ≤ 0) is well-defined without a TempMin dead-band. The
+		// approved 7-day acceptance trace (day 5) requires this: TempMin=+2 must NOT
+		// re-arm thaw while TempMax stays positive.
 		c := &WeatherUserCity{ID: "c1", NotifyKind: WeatherNotifyAlertThaw}
 		obs := WeatherObservation{TempMin: ptr64(1), TempMax: ptr64(8)}
 		fired, _, err := c.EvaluateAlert(obs, time.Time{})
 		require.NoError(t, err)
-		assert.False(t, fired)
+		assert.True(t, fired)
 	})
 
 	t.Run("thaw does not fire on a degenerate all-zero day", func(t *testing.T) {
@@ -670,5 +677,336 @@ func TestWeatherUserCity_EvaluateRain(t *testing.T) {
 		}
 		_, _, err := city.EvaluateRain(WeatherObservation{}, now)
 		require.Error(t, err)
+	})
+}
+
+func TestForecastDateKey(t *testing.T) {
+	t.Parallel()
+
+	t.Run("parses a YYYY-MM-DD date to a stable UTC-midnight instant", func(t *testing.T) {
+		t.Parallel()
+		key, err := ForecastDateKey("2026-01-15")
+		require.NoError(t, err)
+		roundTripped, parseErr := time.Parse(time.RFC3339, key.Format(time.RFC3339))
+		require.NoError(t, parseErr)
+		assert.True(t, key.Equal(roundTripped), "RFC3339 round-trip must equal the original instant")
+	})
+
+	t.Run("two calls with the same date are equal", func(t *testing.T) {
+		t.Parallel()
+		a, err := ForecastDateKey("2026-03-01")
+		require.NoError(t, err)
+		b, err := ForecastDateKey("2026-03-01")
+		require.NoError(t, err)
+		assert.True(t, a.Equal(b))
+	})
+
+	t.Run("different dates are not equal", func(t *testing.T) {
+		t.Parallel()
+		a, err := ForecastDateKey("2026-03-01")
+		require.NoError(t, err)
+		b, err := ForecastDateKey("2026-03-02")
+		require.NoError(t, err)
+		assert.False(t, a.Equal(b))
+	})
+
+	t.Run("empty string returns an error", func(t *testing.T) {
+		t.Parallel()
+		_, err := ForecastDateKey("")
+		require.Error(t, err)
+	})
+
+	t.Run("malformed date returns an error", func(t *testing.T) {
+		t.Parallel()
+		_, err := ForecastDateKey("nonsense")
+		require.Error(t, err)
+	})
+}
+
+func TestWeatherUserCity_EvaluateLatched(t *testing.T) {
+	t.Parallel()
+
+	ptr64 := func(v float64) *float64 { return &v }
+	ptrint := func(v int) *int { return &v }
+
+	t.Run("frost(T=0)", func(t *testing.T) {
+		t.Parallel()
+		city := &WeatherUserCity{ID: "c1", NotifyKind: WeatherNotifyAlertFrost, ConditionValue: "0"}
+
+		t.Run("armed and met fires and latches", func(t *testing.T) {
+			t.Parallel()
+			fire, next, reason, err := city.EvaluateLatched(WeatherObservation{TempMin: ptr64(-4)}, time.Time{}, false)
+			require.NoError(t, err)
+			assert.True(t, fire)
+			assert.True(t, next)
+			assert.NotEmpty(t, reason)
+		})
+
+		t.Run("latched and still met does not re-fire but stays latched", func(t *testing.T) {
+			t.Parallel()
+			fire, next, _, err := city.EvaluateLatched(WeatherObservation{TempMin: ptr64(-4)}, time.Time{}, true)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.True(t, next)
+		})
+
+		t.Run("latched and cleared re-arms without firing", func(t *testing.T) {
+			t.Parallel()
+			fire, next, _, err := city.EvaluateLatched(WeatherObservation{TempMin: ptr64(2)}, time.Time{}, true)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.False(t, next)
+		})
+
+		t.Run("armed and not met stays armed", func(t *testing.T) {
+			t.Parallel()
+			fire, next, _, err := city.EvaluateLatched(WeatherObservation{TempMin: ptr64(2)}, time.Time{}, false)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.False(t, next)
+		})
+	})
+
+	t.Run("heat(T=35)", func(t *testing.T) {
+		t.Parallel()
+		city := &WeatherUserCity{ID: "c1", NotifyKind: WeatherNotifyAlertHeat, ConditionValue: "35"}
+
+		t.Run("armed and met fires and latches", func(t *testing.T) {
+			t.Parallel()
+			fire, next, reason, err := city.EvaluateLatched(WeatherObservation{TempMax: ptr64(38)}, time.Time{}, false)
+			require.NoError(t, err)
+			assert.True(t, fire)
+			assert.True(t, next)
+			assert.NotEmpty(t, reason)
+		})
+
+		t.Run("latched and still met does not re-fire", func(t *testing.T) {
+			t.Parallel()
+			fire, next, _, err := city.EvaluateLatched(WeatherObservation{TempMax: ptr64(38)}, time.Time{}, true)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.True(t, next)
+		})
+
+		t.Run("latched and cleared re-arms", func(t *testing.T) {
+			t.Parallel()
+			fire, next, _, err := city.EvaluateLatched(WeatherObservation{TempMax: ptr64(30)}, time.Time{}, true)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.False(t, next)
+		})
+
+		t.Run("armed and not met stays armed", func(t *testing.T) {
+			t.Parallel()
+			fire, next, _, err := city.EvaluateLatched(WeatherObservation{TempMax: ptr64(30)}, time.Time{}, false)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.False(t, next)
+		})
+	})
+
+	t.Run("thaw", func(t *testing.T) {
+		t.Parallel()
+		city := &WeatherUserCity{ID: "c1", NotifyKind: WeatherNotifyAlertThaw}
+
+		t.Run("armed and met (TempMax>0) fires and latches", func(t *testing.T) {
+			t.Parallel()
+			fire, next, reason, err := city.EvaluateLatched(WeatherObservation{TempMin: ptr64(-4), TempMax: ptr64(3)}, time.Time{}, false)
+			require.NoError(t, err)
+			assert.True(t, fire)
+			assert.True(t, next)
+			assert.NotEmpty(t, reason)
+		})
+
+		t.Run("latched and still met does not re-fire", func(t *testing.T) {
+			t.Parallel()
+			fire, next, _, err := city.EvaluateLatched(WeatherObservation{TempMin: ptr64(-4), TempMax: ptr64(3)}, time.Time{}, true)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.True(t, next)
+		})
+
+		t.Run("latched and cleared (TempMax<=0) re-arms", func(t *testing.T) {
+			t.Parallel()
+			fire, next, _, err := city.EvaluateLatched(WeatherObservation{TempMin: ptr64(-4), TempMax: ptr64(-1)}, time.Time{}, true)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.False(t, next)
+		})
+
+		t.Run("armed and not met stays armed", func(t *testing.T) {
+			t.Parallel()
+			fire, next, _, err := city.EvaluateLatched(WeatherObservation{TempMin: ptr64(-4), TempMax: ptr64(-1)}, time.Time{}, false)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.False(t, next)
+		})
+	})
+
+	t.Run("rain(P=70)", func(t *testing.T) {
+		t.Parallel()
+		now := time.Date(2026, 6, 30, 7, 0, 0, 0, time.UTC)
+		city := &WeatherUserCity{ID: "rain-c", NotifyKind: WeatherNotifyAlertRain, ConditionValue: "70"}
+		metObs := WeatherObservation{Hourly: []WeatherHourlyPoint{{Time: now.Add(time.Hour), PrecipProb: ptrint(85)}}}
+		notMetObs := WeatherObservation{Hourly: []WeatherHourlyPoint{{Time: now.Add(time.Hour), PrecipProb: ptrint(50)}}}
+
+		t.Run("armed and met fires and latches", func(t *testing.T) {
+			t.Parallel()
+			fire, next, reason, err := city.EvaluateLatched(metObs, now, false)
+			require.NoError(t, err)
+			assert.True(t, fire)
+			assert.True(t, next)
+			assert.NotEmpty(t, reason)
+		})
+
+		t.Run("latched and still met does not re-fire", func(t *testing.T) {
+			t.Parallel()
+			fire, next, _, err := city.EvaluateLatched(metObs, now, true)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.True(t, next)
+		})
+
+		t.Run("latched and cleared re-arms", func(t *testing.T) {
+			t.Parallel()
+			fire, next, _, err := city.EvaluateLatched(notMetObs, now, true)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.False(t, next)
+		})
+
+		t.Run("armed and not met stays armed", func(t *testing.T) {
+			t.Parallel()
+			fire, next, _, err := city.EvaluateLatched(notMetObs, now, false)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.False(t, next)
+		})
+	})
+
+	t.Run("thunderstorm", func(t *testing.T) {
+		t.Parallel()
+		city := &WeatherUserCity{ID: "c1", NotifyKind: WeatherNotifyAlertThunderstorm}
+
+		t.Run("armed and met fires and latches", func(t *testing.T) {
+			t.Parallel()
+			fire, next, reason, err := city.EvaluateLatched(WeatherObservation{WeatherCode: ptrint(95)}, time.Time{}, false)
+			require.NoError(t, err)
+			assert.True(t, fire)
+			assert.True(t, next)
+			assert.NotEmpty(t, reason)
+		})
+
+		t.Run("latched and still met does not re-fire", func(t *testing.T) {
+			t.Parallel()
+			fire, next, _, err := city.EvaluateLatched(WeatherObservation{WeatherCode: ptrint(95)}, time.Time{}, true)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.True(t, next)
+		})
+
+		t.Run("latched and cleared re-arms", func(t *testing.T) {
+			t.Parallel()
+			fire, next, _, err := city.EvaluateLatched(WeatherObservation{WeatherCode: ptrint(3)}, time.Time{}, true)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.False(t, next)
+		})
+
+		t.Run("armed and not met stays armed", func(t *testing.T) {
+			t.Parallel()
+			fire, next, _, err := city.EvaluateLatched(WeatherObservation{WeatherCode: ptrint(3)}, time.Time{}, false)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.False(t, next)
+		})
+	})
+
+	t.Run("data gap does not re-arm", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("frost with nil TempMin preserves the latch", func(t *testing.T) {
+			t.Parallel()
+			city := &WeatherUserCity{ID: "c1", NotifyKind: WeatherNotifyAlertFrost, ConditionValue: "0"}
+			fire, next, _, err := city.EvaluateLatched(WeatherObservation{TempMin: nil}, time.Time{}, true)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.True(t, next, "a data gap must preserve prevLatched, not re-arm")
+
+			fire, next, _, err = city.EvaluateLatched(WeatherObservation{TempMin: nil}, time.Time{}, false)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.False(t, next, "a data gap must preserve prevLatched, not spuriously latch")
+		})
+
+		t.Run("rain with empty Hourly preserves the latch", func(t *testing.T) {
+			t.Parallel()
+			city := &WeatherUserCity{ID: "rain-c", NotifyKind: WeatherNotifyAlertRain, ConditionValue: "70"}
+			fire, next, _, err := city.EvaluateLatched(WeatherObservation{Hourly: nil}, time.Time{}, true)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.True(t, next, "no usable hourly points must preserve prevLatched")
+		})
+
+		t.Run("thunderstorm with nil WeatherCode preserves the latch", func(t *testing.T) {
+			t.Parallel()
+			city := &WeatherUserCity{ID: "c1", NotifyKind: WeatherNotifyAlertThunderstorm}
+			fire, next, _, err := city.EvaluateLatched(WeatherObservation{WeatherCode: nil}, time.Time{}, true)
+			require.NoError(t, err)
+			assert.False(t, fire)
+			assert.True(t, next, "a data gap must preserve prevLatched")
+		})
+	})
+
+	t.Run("evaluator error preserves prevLatched", func(t *testing.T) {
+		t.Parallel()
+		city := &WeatherUserCity{ID: "c1", NotifyKind: WeatherNotifyAlertHeat, ConditionValue: "notanumber"}
+		fire, next, reason, err := city.EvaluateLatched(WeatherObservation{TempMax: ptr64(40)}, time.Time{}, true)
+		require.Error(t, err)
+		assert.False(t, fire)
+		assert.True(t, next, "on error nextLatched must equal prevLatched, never false")
+		assert.Empty(t, reason)
+	})
+
+	t.Run("approved 7-day trace: frost(T=0) seeded latched, thaw seeded armed", func(t *testing.T) {
+		t.Parallel()
+		frost := &WeatherUserCity{ID: "frost-trace", NotifyKind: WeatherNotifyAlertFrost, ConditionValue: "0"}
+		thaw := &WeatherUserCity{ID: "thaw-trace", NotifyKind: WeatherNotifyAlertThaw}
+
+		type day struct {
+			min, max                     float64
+			wantFrostFire, wantFrostNext bool
+			wantThawFire, wantThawNext   bool
+		}
+		days := []day{
+			{min: -8, max: -3, wantFrostFire: false, wantFrostNext: true, wantThawFire: false, wantThawNext: false},
+			{min: -5, max: -1, wantFrostFire: false, wantFrostNext: true, wantThawFire: false, wantThawNext: false},
+			{min: -2, max: 4, wantFrostFire: false, wantFrostNext: true, wantThawFire: true, wantThawNext: true},
+			{min: -1, max: 6, wantFrostFire: false, wantFrostNext: true, wantThawFire: false, wantThawNext: true},
+			{min: 2, max: 9, wantFrostFire: false, wantFrostNext: false, wantThawFire: false, wantThawNext: true},
+			{min: -1, max: 3, wantFrostFire: true, wantFrostNext: true, wantThawFire: false, wantThawNext: true},
+			{min: -4, max: -1, wantFrostFire: false, wantFrostNext: true, wantThawFire: false, wantThawNext: false},
+		}
+
+		frostLatched := true // day 0: frost already latched (in-condition, previously fired)
+		thawLatched := false // day 0: thaw armed
+		now := time.Time{}
+
+		for i, d := range days {
+			obs := WeatherObservation{TempMin: ptr64(d.min), TempMax: ptr64(d.max)}
+
+			frostFire, frostNext, _, err := frost.EvaluateLatched(obs, now, frostLatched)
+			require.NoError(t, err, "day %d frost", i+1)
+			assert.Equal(t, d.wantFrostFire, frostFire, "day %d frost fire", i+1)
+			assert.Equal(t, d.wantFrostNext, frostNext, "day %d frost next", i+1)
+
+			thawFire, thawNext, _, err := thaw.EvaluateLatched(obs, now, thawLatched)
+			require.NoError(t, err, "day %d thaw", i+1)
+			assert.Equal(t, d.wantThawFire, thawFire, "day %d thaw fire", i+1)
+			assert.Equal(t, d.wantThawNext, thawNext, "day %d thaw next", i+1)
+
+			frostLatched = frostNext
+			thawLatched = thawNext
+		}
 	})
 }

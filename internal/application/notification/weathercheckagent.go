@@ -17,30 +17,16 @@ import (
 // backstop: the forecast_date equality check is the primary freshness guard.
 const weatherGismeteoMaxAge = 24 * time.Hour
 
-// weatherAlertCooldownForecast is the minimum gap between successive alerts for
-// forecast-based kinds (heat, frost, thunderstorm). ~20 h means the alert can
-// re-arm the next calendar day without firing twice within one notifier run cycle.
-// It must be strictly greater than the notifier's tick interval (typically minutes)
-// so the cooldown is what prevents per-tick spam, not luck.
-const weatherAlertCooldownForecast = 20 * time.Hour
-
-// weatherAlertCooldownRain is the cooldown for rain alerts. A shorter ~6 h window
-// re-arms when a second rain band enters the fixed look-ahead window later in the
-// day, while still preventing per-tick spam. Must be strictly greater than the
-// notifier tick interval.
-const weatherAlertCooldownRain = 6 * time.Hour
-
-// weatherAlertCooldown returns the per-kind cooldown for alert kinds.
-func weatherAlertCooldown(kind domain.WeatherNotifyKind) time.Duration {
-	switch kind {
-	case domain.WeatherNotifyAlertHeat, domain.WeatherNotifyAlertFrost, domain.WeatherNotifyAlertThunderstorm, domain.WeatherNotifyAlertThaw:
-		return weatherAlertCooldownForecast
-	case domain.WeatherNotifyAlertRain:
-		return weatherAlertCooldownRain
-	default:
-		return weatherAlertCooldownForecast // safe default for any unrecognised future kind
-	}
-}
+// Alert kinds (heat, frost, thunderstorm, rain, thaw) are edge-triggered via the
+// per-row domain.WeatherUserCity.AlertLatched boolean, not a timer cooldown: a row
+// fires once on the transition into its condition and stays silent until the
+// condition clears and the latch re-arms (domain.WeatherUserCity.EvaluateLatched).
+// On top of the latch, a per-forecast_date fire cap (keyed on the repurposed
+// last_notified_at column via domain.ForecastDateKey) caps a row to at most one
+// fire per forecast_date — the anti-jitter backstop for a daily min/max that
+// crosses the fire/re-arm boundary more than once within one calendar day as the
+// collector rewrites the observation. See the alert-phase loop below and
+// plans/262-weather-alert-edge-trigger-hysteresis.md for the full design.
 
 // NewWeatherCheckAgent constructs a WeatherCheckAgent. All arguments are required.
 func NewWeatherCheckAgent(
@@ -83,6 +69,8 @@ type WeatherCheckAgent struct {
 type weatherCheckCityRepository interface {
 	ObtainDueWeatherUserCities(ctx context.Context, notifyKind domain.WeatherNotifyKind) ([]domain.WeatherUserCity, error)
 	AdvanceLastNotifiedAt(ctx context.Context, id string, when time.Time) error
+	SetWeatherAlertLatched(ctx context.Context, id string, latched bool) error
+	MarkWeatherAlertFired(ctx context.Context, id string, firedForDate time.Time) error
 }
 
 // weatherCheckObsRepository is the narrow observation-repository surface the check agent needs.
@@ -206,20 +194,45 @@ func (a *WeatherCheckAgent) Run(ctx context.Context) error {
 				continue
 			}
 
-			fired, reason, evalErr := city.EvaluateAlert(*obs, now)
+			prev := city.AlertLatched
+			fire, next, reason, evalErr := city.EvaluateLatched(*obs, now, prev)
 			if evalErr != nil {
 				errs = append(errs, fmt.Errorf("weather alert city=%s: evaluate: %w", city.ID, evalErr))
 				continue
 			}
-			if !fired {
+
+			if !fire {
+				// Re-arm (or any latch change without a fire) must still be persisted: this
+				// is the day-5 / day-7 transition that produces NO notification. Only write
+				// on a real change so steady state costs zero writes per tick.
+				if next != prev {
+					if setErr := a.cityRepo.SetWeatherAlertLatched(ctx, city.ID, next); setErr != nil {
+						errs = append(errs, fmt.Errorf("weather alert city=%s: persist re-arm: %w", city.ID, setErr))
+					}
+				}
 				continue
 			}
 
-			// Cooldown gate: suppress if an alert was sent recently for this row.
-			cooldown := weatherAlertCooldown(city.NotifyKind)
-			if !city.LastNotifiedAt.IsZero() && now.Sub(city.LastNotifiedAt) < cooldown {
+			// fire == true ⇒ next == true and prev == false (guaranteed by EvaluateLatched).
+			// Second gate: cap to one fire per forecast_date (anti-jitter backstop). For
+			// alert kinds LastNotifiedAt holds the forecast_date of the last fire.
+			fdKey, keyErr := domain.ForecastDateKey(obs.ForecastDate)
+			if keyErr == nil && !city.LastNotifiedAt.IsZero() && city.LastNotifiedAt.Equal(fdKey) {
+				// Same forecast_date already fired — a within-day jitter re-cross. Record
+				// the latch edge (next == true) but do NOT notify again.
+				if next != prev {
+					if setErr := a.cityRepo.SetWeatherAlertLatched(ctx, city.ID, next); setErr != nil {
+						errs = append(errs, fmt.Errorf("weather alert city=%s: persist latch (gated): %w", city.ID, setErr))
+					}
+				}
 				alertSuppressed++
-				continue // condition still holds but we alerted recently
+				continue
+			}
+			if keyErr != nil {
+				// Malformed/empty forecast_date is an anomaly: log, allow the fire (never
+				// drop an alert), but the fire cap cannot be recorded — fall back to a
+				// latch-only write below.
+				fmt.Fprintf(a.logger, "weather alert: city %s: unparseable forecast_date %q: %v\n", city.ID, obs.ForecastDate, keyErr)
 			}
 
 			msg, renderErr := RenderWeatherAlert(city, reason, *obs)
@@ -237,12 +250,19 @@ func (a *WeatherCheckAgent) Run(ctx context.Context) error {
 			alertAttempted++
 			if retainErr := a.eventRepo.RetainRateUserEvent(ctx, ev); retainErr != nil {
 				errs = append(errs, fmt.Errorf("weather alert city=%s: queue event: %w", city.ID, retainErr))
-				continue // do NOT advance; next run retries
+				continue // do NOT latch or record the fire date; next tick retries
 			}
 			alertQueued++
 
-			if advErr := a.cityRepo.AdvanceLastNotifiedAt(ctx, city.ID, now); advErr != nil {
-				errs = append(errs, fmt.Errorf("weather alert city=%s: advance last_notified_at: %w", city.ID, advErr))
+			// Persist ONLY after a successful enqueue, so a queue failure re-fires next tick.
+			var persistErr error
+			if keyErr == nil {
+				persistErr = a.cityRepo.MarkWeatherAlertFired(ctx, city.ID, fdKey) // latch=1 + record forecast_date
+			} else {
+				persistErr = a.cityRepo.SetWeatherAlertLatched(ctx, city.ID, true) // anomaly: latch only
+			}
+			if persistErr != nil {
+				errs = append(errs, fmt.Errorf("weather alert city=%s: persist fire: %w", city.ID, persistErr))
 			}
 		}
 	}
