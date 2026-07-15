@@ -691,6 +691,25 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		assert.Contains(t, rr.Body.String(), `"error"`)
 	})
 
+	t.Run("alert_thaw with non-empty condition_value returns 201 and blanks it", func(t *testing.T) {
+		t.Parallel()
+		cityRepo := &mockWeatherCityRepo{}
+		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
+		h.validateInitData = alwaysValidateInitData(callerUserID)
+
+		b := validBody
+		b.NotifyKind = "alert_thaw"
+		b.ConditionValue = "ignored free text"
+		req := httptest.NewRequest(http.MethodPost, "/api/me/weather/cities", bodyJSON(b))
+		rr := httptest.NewRecorder()
+		h.CreateMeWeatherCity(rr, req)
+
+		require.Equal(t, http.StatusCreated, rr.Code)
+		require.Len(t, cityRepo.retained, 1)
+		assert.Equal(t, domain.WeatherNotifyAlertThaw, cityRepo.retained[0].NotifyKind)
+		assert.Equal(t, "", cityRepo.retained[0].ConditionValue, "condition_value must be blanked for alert_thaw")
+	})
+
 	t.Run("unknown notify_kind returns 400 PublicError", func(t *testing.T) {
 		t.Parallel()
 		cityRepo := &mockWeatherCityRepo{}

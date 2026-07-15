@@ -1623,6 +1623,15 @@ func bindWeatherCurrentHandlers(app js.Value, scr *screen, alive *bool) {
 // Clear button (#weather-clear-btn): calls ClearSearch and redraws.
 // Delete buttons (.weather-city-delete): read data-id; call DeleteCity in a
 // goroutine and redraw on completion.
+// "+ Add alert" buttons (.weather-add-alert-btn): read data-location-id; call
+// OpenAlertForm and redraw to show the form.
+// Alert kind select (#weather-alert-kind): fires "change", not "click"/"input";
+// calls SetAlertFormKind and redraws so the threshold input shows/hides per kind.
+// Alert threshold input (#weather-alert-value): calls SetAlertFormValue on every
+// keystroke without redrawing, so the input never loses focus mid-typing.
+// Alert save button (#weather-alert-save): calls SavePendingAlert in a goroutine;
+// redraw shows the result. Alert cancel button (#weather-alert-cancel): calls
+// CloseAlertForm and redraws.
 //
 // ctx is the screen-lifetime context used for fetch goroutines so they are
 // cancelled on unmount. alive is a pointer into runRenderMeWeatherCities's
@@ -1673,6 +1682,20 @@ func bindWeatherCitiesHandlers(
 			page.ClearSearch()
 			redraw()
 			return
+		case "weather-alert-save":
+			go func() {
+				fetchCtx, fetchCancel := context.WithTimeout(ctx, 15*time.Second)
+				defer fetchCancel()
+				if err := page.SavePendingAlert(fetchCtx); err != nil {
+					js.Global().Get("console").Call("warn", "weather save alert:", err.Error())
+				}
+				redraw()
+			}()
+			return
+		case "weather-alert-cancel":
+			page.CloseAlertForm()
+			redraw()
+			return
 		}
 
 		// Search result item click: walk up to the nearest .weather-search-item
@@ -1693,21 +1716,34 @@ func bindWeatherCitiesHandlers(
 
 		// Delete button: walk up so clicks on child nodes inside the button resolve.
 		delBtn := target.Call("closest", ".weather-city-delete")
-		if delBtn.IsNull() || delBtn.IsUndefined() {
-			return
-		}
-		cityID := delBtn.Get("dataset").Get("id").String()
-		if cityID == "" {
-			return
-		}
-		go func() {
-			fetchCtx, fetchCancel := context.WithTimeout(ctx, 15*time.Second)
-			defer fetchCancel()
-			if err := page.DeleteCity(fetchCtx, cityID); err != nil {
-				js.Global().Get("console").Call("warn", "weather delete city:", err.Error())
+		if !delBtn.IsNull() && !delBtn.IsUndefined() {
+			cityID := delBtn.Get("dataset").Get("id").String()
+			if cityID == "" {
+				return
 			}
-			redraw()
-		}()
+			go func() {
+				fetchCtx, fetchCancel := context.WithTimeout(ctx, 15*time.Second)
+				defer fetchCancel()
+				if err := page.DeleteCity(fetchCtx, cityID); err != nil {
+					js.Global().Get("console").Call("warn", "weather delete city:", err.Error())
+				}
+				redraw()
+			}()
+			return
+		}
+
+		// "+ Add alert" button: has no id, so it is matched via closest(...) like
+		// the delete button above. Reading target.id here would return "".
+		addAlertBtn := target.Call("closest", ".weather-add-alert-btn")
+		if addAlertBtn.IsNull() || addAlertBtn.IsUndefined() {
+			return
+		}
+		locationID := addAlertBtn.Get("dataset").Get("locationId").String()
+		if locationID == "" {
+			return
+		}
+		page.OpenAlertForm(locationID)
+		redraw()
 	}))
 
 	// Delegated input handler on the stable #app container: debounced geocoding
@@ -1723,7 +1759,14 @@ func bindWeatherCitiesHandlers(
 		if t.IsNull() || t.IsUndefined() {
 			return
 		}
-		if t.Get("id").String() != "weather-search" {
+		id := t.Get("id").String()
+		if id == "weather-alert-value" {
+			// #weather-alert-value is a real <input>; do NOT redraw here or the
+			// element is rebuilt and the caret/focus is lost mid-typing.
+			page.SetAlertFormValue(t.Get("value").String())
+			return
+		}
+		if id != "weather-search" {
 			return
 		}
 		q := t.Get("value").String()
@@ -1741,5 +1784,23 @@ func bindWeatherCitiesHandlers(
 			}
 			redraw()
 		})
+	}))
+
+	// Delegated change handler on the stable #app container: <select> elements
+	// fire "change", not "click" or "input" — this is the only listener in this
+	// function bound to that event type.
+	scr.addRelease(dom.On(app, "change", func(ev js.Value) {
+		if !*alive {
+			return
+		}
+		t := ev.Get("target")
+		if t.IsNull() || t.IsUndefined() {
+			return
+		}
+		if t.Get("id").String() != "weather-alert-kind" {
+			return
+		}
+		page.SetAlertFormKind(t.Get("value").String())
+		redraw()
 	}))
 }

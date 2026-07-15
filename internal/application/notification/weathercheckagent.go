@@ -33,7 +33,7 @@ const weatherAlertCooldownRain = 6 * time.Hour
 // weatherAlertCooldown returns the per-kind cooldown for alert kinds.
 func weatherAlertCooldown(kind domain.WeatherNotifyKind) time.Duration {
 	switch kind {
-	case domain.WeatherNotifyAlertHeat, domain.WeatherNotifyAlertFrost, domain.WeatherNotifyAlertThunderstorm:
+	case domain.WeatherNotifyAlertHeat, domain.WeatherNotifyAlertFrost, domain.WeatherNotifyAlertThunderstorm, domain.WeatherNotifyAlertThaw:
 		return weatherAlertCooldownForecast
 	case domain.WeatherNotifyAlertRain:
 		return weatherAlertCooldownRain
@@ -183,6 +183,7 @@ func (a *WeatherCheckAgent) Run(ctx context.Context) error {
 		domain.WeatherNotifyAlertFrost,
 		domain.WeatherNotifyAlertThunderstorm,
 		domain.WeatherNotifyAlertRain,
+		domain.WeatherNotifyAlertThaw,
 	}
 
 	for _, kind := range alertKinds {

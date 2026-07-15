@@ -38,6 +38,12 @@ const (
 	// ConditionValue is TEXT rather than a single REAL column. Evaluated against
 	// Open-Meteo hourly data only; Gismeteo has no hourly block.
 	WeatherNotifyAlertRain WeatherNotifyKind = "rain_alert"
+
+	// WeatherNotifyAlertThaw fires when the forecast day itself crosses zero:
+	// TempMin ≤ 0 °C and TempMax > 0 °C ("froze overnight, thawed during the
+	// day"). ConditionValue is empty — no numeric threshold applies, same as
+	// alert_thunderstorm.
+	WeatherNotifyAlertThaw WeatherNotifyKind = "alert_thaw"
 )
 
 // alertMinusSign is the U+2212 MINUS SIGN used in alert reason strings to format
@@ -56,7 +62,7 @@ const weatherRainWindow = 6 * time.Hour
 // LastNotifiedAt is zero when no notification has ever been sent for this city.
 // GismeteoCityID is nil until the curated gismeteo city map is consulted (second increment).
 // ConditionValue holds the alert threshold for heat/frost kinds (a decimal number in °C),
-// and is empty for morning_summary and thunderstorm (which need no numeric bound).
+// and is empty for morning_summary, thunderstorm, and thaw (which need no numeric bound).
 type WeatherUserCity struct {
 	ID             string
 	UserType       UserType
@@ -96,7 +102,7 @@ func (c *WeatherUserCity) Validate() error {
 			return fmt.Errorf("condition_value for %s must be a temperature in °C in [-100, 100]", string(c.NotifyKind))
 		}
 		return nil
-	case WeatherNotifyAlertThunderstorm:
+	case WeatherNotifyAlertThunderstorm, WeatherNotifyAlertThaw:
 		return nil
 	case WeatherNotifyAlertRain:
 		v, err := strconv.ParseFloat(c.ConditionValue, 64)
@@ -135,6 +141,8 @@ func (c *WeatherUserCity) AlertThreshold() (float64, error) {
 //   - alert_frost: obs.TempMin  ≤ threshold (forecast daily low,  °C, Open-Meteo)
 //   - alert_thunderstorm: obs.WeatherCode ≥ 95 (WMO thunderstorm band; "today is
 //     forecast stormy," not instantaneous — the daily-dominant code is used)
+//   - alert_thaw: obs.TempMin ≤ 0 °C and obs.TempMax > 0 °C (the forecast day
+//     crosses zero: froze overnight, thawed during the day)
 //   - rain_alert: dispatches to EvaluateRain with now as the window anchor.
 //
 // now is used only for the rain_alert case to define the look-ahead window; it is
@@ -170,6 +178,15 @@ func (c *WeatherUserCity) EvaluateAlert(obs WeatherObservation, now time.Time) (
 		}
 		text, _ := WMOWeatherCode(*obs.WeatherCode)
 		return true, text, nil
+	case WeatherNotifyAlertThaw:
+		if obs.TempMin == nil || obs.TempMax == nil {
+			return false, "", nil // cannot evaluate a crossing without both bounds
+		}
+		if *obs.TempMin > 0 || *obs.TempMax <= 0 {
+			return false, "", nil // never froze, or never rose above freezing
+		}
+		return true, fmt.Sprintf("Thaw: %s → %s",
+			formatAlertTemp(*obs.TempMin), formatAlertTemp(*obs.TempMax)), nil
 	case WeatherNotifyAlertRain:
 		return c.EvaluateRain(obs, now)
 	default:

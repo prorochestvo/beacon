@@ -221,10 +221,12 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 		notifyKind = domain.WeatherNotifyKind(body.NotifyKind)
 	}
 
-	// morning_summary ignores condition_value; normalize to empty so arbitrary
-	// free text is never stored for a kind that does not use it.
+	// morning_summary and alert_thaw ignore condition_value; normalize to empty
+	// so arbitrary free text is never stored for a kind that does not use it.
+	// (alert_thunderstorm is not blanked here — pre-existing asymmetry, out of
+	// scope for this change.)
 	conditionValue := body.ConditionValue
-	if notifyKind == domain.WeatherNotifyMorningSummary {
+	if notifyKind == domain.WeatherNotifyMorningSummary || notifyKind == domain.WeatherNotifyAlertThaw {
 		conditionValue = ""
 	}
 

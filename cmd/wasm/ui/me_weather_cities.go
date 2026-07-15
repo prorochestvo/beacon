@@ -252,6 +252,8 @@ func alertKindLabel(kind, conditionValue string, notifyHour int) string {
 		return fmt.Sprintf("Frost alert ≤ %s°C", conditionValue)
 	case "alert_thunderstorm":
 		return "Thunderstorm alert"
+	case "alert_thaw":
+		return "Thaw alert"
 	case "rain_alert":
 		return fmt.Sprintf("Rain alert ≥ %s%% within 6h", conditionValue)
 	default: // morning_summary or empty
@@ -271,6 +273,7 @@ func renderWeatherAlertForm(state application.WeatherCitiesState) string {
 		{"alert_frost", "Frost alert (°C)"},
 		{"alert_thunderstorm", "Thunderstorm alert"},
 		{"rain_alert", "Rain alert (%)"},
+		{"alert_thaw", "Thaw alert"},
 	}
 	for _, k := range kinds {
 		selected := ""
@@ -281,8 +284,8 @@ func renderWeatherAlertForm(state application.WeatherCitiesState) string {
 	}
 	b.WriteString(`</select>`)
 
-	// Value input (hidden for thunderstorm).
-	if state.AlertFormKind != "alert_thunderstorm" {
+	// Value input (hidden for thunderstorm and thaw — neither has a numeric threshold).
+	if state.AlertFormKind != "alert_thunderstorm" && state.AlertFormKind != "alert_thaw" {
 		fmt.Fprintf(&b,
 			`<input class="weather-alert-value" id="weather-alert-value" type="number" step="0.1" `+
 				`placeholder="threshold" value="%s">`,

@@ -326,6 +326,21 @@ func TestRenderWeatherAlert(t *testing.T) {
 		assert.Contains(t, result, "+38.2°C")
 	})
 
+	t.Run("thaw alert renders emoji header and reason", func(t *testing.T) {
+		t.Parallel()
+		city := baseCity
+		city.NotifyKind = domain.WeatherNotifyAlertThaw
+		negMin := -3.0
+		thawObs := obs
+		thawObs.TempMin = &negMin
+		result, err := RenderWeatherAlert(city, "Thaw: −3.0°C → +2.0°C", thawObs)
+		require.NoError(t, err)
+		assert.Contains(t, result, "🫠")
+		assert.Contains(t, result, "Thaw alert")
+		assert.Contains(t, result, "Almaty")
+		assert.Contains(t, result, "Thaw: −3.0°C → +2.0°C")
+	})
+
 	t.Run("unknown kind returns error", func(t *testing.T) {
 		t.Parallel()
 		city := baseCity

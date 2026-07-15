@@ -56,6 +56,40 @@ func TestNewWeatherCheckAgent(t *testing.T) {
 	})
 }
 
+func TestWeatherAlertCooldown(t *testing.T) {
+	t.Parallel()
+
+	t.Run("heat uses the forecast cooldown", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, weatherAlertCooldownForecast, weatherAlertCooldown(domain.WeatherNotifyAlertHeat))
+	})
+
+	t.Run("frost uses the forecast cooldown", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, weatherAlertCooldownForecast, weatherAlertCooldown(domain.WeatherNotifyAlertFrost))
+	})
+
+	t.Run("thunderstorm uses the forecast cooldown", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, weatherAlertCooldownForecast, weatherAlertCooldown(domain.WeatherNotifyAlertThunderstorm))
+	})
+
+	t.Run("thaw uses the forecast cooldown", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, weatherAlertCooldownForecast, weatherAlertCooldown(domain.WeatherNotifyAlertThaw))
+	})
+
+	t.Run("rain uses the shorter rain cooldown", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, weatherAlertCooldownRain, weatherAlertCooldown(domain.WeatherNotifyAlertRain))
+	})
+
+	t.Run("unknown kind falls back to the forecast cooldown", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, weatherAlertCooldownForecast, weatherAlertCooldown(domain.WeatherNotifyKind("unknown")))
+	})
+}
+
 func TestWeatherCheckAgent_Run(t *testing.T) {
 	t.Parallel()
 
@@ -718,6 +752,72 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		require.NoError(t, a.Run(t.Context()))
 		require.Empty(t, eventRepo.retained, "no event when hourly data is absent")
 		require.Empty(t, cityRepo.advanced, "last_notified_at must not advance when condition not met")
+	})
+
+	t.Run("alert_thaw: condition met with no prior cooldown queues event and advances", func(t *testing.T) {
+		t.Parallel()
+		tempMin := -3.0
+		tempMax := 2.0
+		thawCity := domain.WeatherUserCity{
+			ID: "thaw-c1", UserType: domain.UserTypeTelegram, UserID: "u-thaw",
+			LocationID: "loc-thaw", DisplayName: "ThawCity", Timezone: "UTC",
+			NotifyKind:     domain.WeatherNotifyAlertThaw,
+			LastNotifiedAt: time.Time{}, // never alerted
+		}
+		thawObs := &domain.WeatherObservation{
+			Provider:   domain.ProviderOpenMeteo,
+			LocationID: "loc-thaw",
+			TempMin:    &tempMin,
+			TempMax:    &tempMax,
+		}
+		cityRepo := &mockWeatherCheckCityRepo{
+			citiesByKind: map[domain.WeatherNotifyKind][]domain.WeatherUserCity{
+				domain.WeatherNotifyAlertThaw: {thawCity},
+			},
+		}
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: thawObs,
+		}}
+		eventRepo := &mockCheckEventRepository{}
+
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		require.NoError(t, a.Run(t.Context()))
+		require.Len(t, eventRepo.retained, 1, "one thaw alert event must be queued")
+		assert.Contains(t, eventRepo.retained[0].Message, "Thaw alert")
+		require.Len(t, cityRepo.advanced, 1, "last_notified_at must be advanced after queuing")
+		assert.Equal(t, "thaw-c1", cityRepo.advanced[0])
+	})
+
+	t.Run("alert_thaw: within cooldown window suppresses re-alert", func(t *testing.T) {
+		t.Parallel()
+		tempMin := -3.0
+		tempMax := 2.0
+		thawCity := domain.WeatherUserCity{
+			ID: "thaw-c2", UserType: domain.UserTypeTelegram, UserID: "u-thaw",
+			LocationID: "loc-thaw2", DisplayName: "ThawCity", Timezone: "UTC",
+			NotifyKind:     domain.WeatherNotifyAlertThaw,
+			LastNotifiedAt: time.Now().UTC().Add(-1 * time.Hour), // alerted 1 h ago (< 20 h cooldown)
+		}
+		thawObs := &domain.WeatherObservation{
+			Provider:   domain.ProviderOpenMeteo,
+			LocationID: "loc-thaw2",
+			TempMin:    &tempMin,
+			TempMax:    &tempMax,
+		}
+		cityRepo := &mockWeatherCheckCityRepo{
+			citiesByKind: map[domain.WeatherNotifyKind][]domain.WeatherUserCity{
+				domain.WeatherNotifyAlertThaw: {thawCity},
+			},
+		}
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: thawObs,
+		}}
+		eventRepo := &mockCheckEventRepository{}
+
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		require.NoError(t, a.Run(t.Context()))
+		require.Empty(t, eventRepo.retained, "thaw alert within cooldown must be suppressed")
+		require.Empty(t, cityRepo.advanced, "last_notified_at must not advance when suppressed by cooldown")
 	})
 
 	t.Run("evaluator error on bad condition_value skips bad city, good city still fires", func(t *testing.T) {

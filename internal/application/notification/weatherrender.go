@@ -117,8 +117,8 @@ func renderWeatherBlock(obs domain.WeatherObservation, cityLoc *time.Location) s
 	return sb.String()
 }
 
-// RenderWeatherAlert produces a compact Telegram HTML alert message for a threshold
-// alert kind (heat, frost, thunderstorm). It includes a kind-specific header with
+// RenderWeatherAlert produces a compact Telegram HTML alert message for an alert
+// kind (heat, frost, thunderstorm, rain, thaw). It includes a kind-specific header with
 // emoji, the city name, the reason string from EvaluateAlert, and a one-line
 // forecast snapshot (condition + high/low).
 //
@@ -170,6 +170,8 @@ func alertKindHeader(kind domain.WeatherNotifyKind) (header, emoji string, ok bo
 		return "Thunderstorm alert", "⛈️", true
 	case domain.WeatherNotifyAlertRain:
 		return "Rain alert", "🌧️", true
+	case domain.WeatherNotifyAlertThaw:
+		return "Thaw alert", "🫠", true
 	default:
 		return "", "", false
 	}
