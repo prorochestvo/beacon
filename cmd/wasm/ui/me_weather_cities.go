@@ -206,7 +206,13 @@ func renderWeatherCityGroupItem(g WeatherCityGroup, state application.WeatherCit
 
 	var b strings.Builder
 	b.WriteString(`<li class="weather-city-group">`)
+	b.WriteString(`<div class="weather-city-group-header">`)
 	fmt.Fprintf(&b, `<span class="weather-city-name">%s</span>`, dom.Escape(label))
+	fmt.Fprintf(&b,
+		`<button class="weather-city-remove" type="button" data-location-id="%s" aria-label="Remove city">Remove city</button>`,
+		dom.Escape(g.LocationID),
+	)
+	b.WriteString(`</div>`)
 	b.WriteString(`<ul class="weather-city-kinds">`)
 
 	for _, row := range g.Rows {
@@ -230,9 +236,20 @@ func renderWeatherCityGroupItem(g WeatherCityGroup, state application.WeatherCit
 	return b.String()
 }
 
-// renderWeatherKindRow emits one subscription kind row with a delete button.
+// renderWeatherKindRow emits one subscription kind row. alert_thaw is forced and
+// system-managed: it renders an "always on" chip in place of the delete button —
+// the only way to remove it is the per-city "Remove city" control.
 func renderWeatherKindRow(row dto.WeatherCityRow) string {
 	label := alertKindLabel(row.NotifyKind, row.ConditionValue, row.NotifyHour)
+	if row.NotifyKind == "alert_thaw" {
+		return fmt.Sprintf(
+			`<li class="weather-kind-row">`+
+				`<span class="weather-kind-label">%s</span>`+
+				`<span class="weather-kind-locked">always on</span>`+
+				`</li>`,
+			dom.Escape(label),
+		)
+	}
 	return fmt.Sprintf(
 		`<li class="weather-kind-row">`+
 			`<span class="weather-kind-label">%s</span>`+
@@ -268,12 +285,13 @@ func renderWeatherAlertForm(state application.WeatherCitiesState) string {
 
 	// Kind selector.
 	b.WriteString(`<select class="weather-alert-kind" id="weather-alert-kind">`)
+	// alert_thaw is intentionally absent: it is forced onto every tracked city
+	// automatically (see CreateMeWeatherCity) and cannot be added manually.
 	kinds := []struct{ value, label string }{
 		{"alert_heat", "Heat alert (°C)"},
 		{"alert_frost", "Frost alert (°C)"},
 		{"alert_thunderstorm", "Thunderstorm alert"},
 		{"rain_alert", "Rain alert (%)"},
-		{"alert_thaw", "Thaw alert"},
 	}
 	for _, k := range kinds {
 		selected := ""

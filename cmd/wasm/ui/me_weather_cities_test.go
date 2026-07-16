@@ -401,18 +401,17 @@ func TestRenderMeWeatherCities_AlertForm(t *testing.T) {
 		assert.Contains(t, html, "Rain alert (%)")
 	})
 
-	t.Run("thaw option appears in kind selector and hides value input", func(t *testing.T) {
+	t.Run("thaw option does not appear in kind selector (forced, not user-addable)", func(t *testing.T) {
 		t.Parallel()
 		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
 			Cities:              []dto.WeatherCityRow{baseCity},
 			AlertFormLocationID: "loc1",
-			AlertFormKind:       "alert_thaw",
+			AlertFormKind:       "alert_heat",
 		})
-		assert.Contains(t, html, `<option value="alert_thaw" selected>`)
-		assert.NotContains(t, html, `id="weather-alert-value"`)
+		assert.NotContains(t, html, `value="alert_thaw"`)
 	})
 
-	t.Run("thaw alert row shows kind label without threshold", func(t *testing.T) {
+	t.Run("thaw alert row shows kind label, an always-on chip, and no delete button", func(t *testing.T) {
 		t.Parallel()
 		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
 			Cities: []dto.WeatherCityRow{
@@ -422,6 +421,35 @@ func TestRenderMeWeatherCities_AlertForm(t *testing.T) {
 			},
 		})
 		assert.Contains(t, html, "Thaw alert")
+		assert.Contains(t, html, "weather-kind-locked")
+		assert.Contains(t, html, "always on")
+
+		// Scope the delete-button-absence check to the thaw row's own <li> so it cannot
+		// false-pass on the sibling non-thaw row's delete button rendered elsewhere in
+		// the same HTML string.
+		thawIdx := strings.Index(html, "Thaw alert")
+		require.NotEqual(t, -1, thawIdx, "thaw row label must be present")
+		liStart := strings.LastIndex(html[:thawIdx], "<li")
+		require.NotEqual(t, -1, liStart, "thaw row must be wrapped in an <li>")
+		liEndRel := strings.Index(html[liStart:], "</li>")
+		require.NotEqual(t, -1, liEndRel, "thaw row <li> must be closed")
+		thawRowHTML := html[liStart : liStart+liEndRel+len("</li>")]
+
+		assert.NotContains(t, thawRowHTML, `data-id="c2"`, "thaw row must not carry a delete data-id")
+		assert.NotContains(t, thawRowHTML, "weather-city-delete", "thaw row must render no delete button")
+
+		// The sibling non-thaw row must still keep its own delete button and data-id.
+		assert.Contains(t, html, `data-id="`+baseCity.ID+`"`, "non-thaw sibling row must keep its data-id")
+		assert.Contains(t, html, "weather-city-delete", "non-thaw sibling row must keep its delete button")
+	})
+
+	t.Run("each city group renders a Remove city control carrying data-location-id", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities: []dto.WeatherCityRow{baseCity},
+		})
+		assert.Contains(t, html, "weather-city-remove")
+		assert.Contains(t, html, `data-location-id="loc1"`)
 	})
 
 	t.Run("different city gets Add alert button when another city has form open", func(t *testing.T) {

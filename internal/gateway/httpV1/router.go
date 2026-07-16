@@ -87,6 +87,7 @@ func NewRouter(
 	mux.HandleFunc("GET "+routes.MeWeatherCities, h.ListMeWeatherCities)
 	mux.HandleFunc("POST "+routes.MeWeatherCities, h.CreateMeWeatherCity)
 	mux.HandleFunc("DELETE "+routes.MeWeatherCityByID, h.DeleteMeWeatherCity)
+	mux.HandleFunc("DELETE "+routes.MeWeatherLocationByID, h.DeleteMeWeatherLocation)
 
 	// /ping is the liveness probe; /healthz is kept as a backward-compatible alias.
 	mux.HandleFunc("GET "+routes.Ping, h.Ping)
@@ -135,6 +136,7 @@ type meWeatherCityRepo interface {
 	ObtainWeatherUserCitiesByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.WeatherUserCity, error)
 	ObtainWeatherUserCityByID(ctx context.Context, id string) (*domain.WeatherUserCity, error)
 	RemoveWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
+	RemoveWeatherUserCitiesByLocation(ctx context.Context, userType domain.UserType, userID, locationID string) error
 }
 
 // weatherGeocoder threads the geocoding provider through the router layer.

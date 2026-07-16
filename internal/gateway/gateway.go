@@ -102,6 +102,7 @@ type meWeatherCityRepo interface {
 	ObtainWeatherUserCitiesByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.WeatherUserCity, error)
 	ObtainWeatherUserCityByID(ctx context.Context, id string) (*domain.WeatherUserCity, error)
 	RemoveWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
+	RemoveWeatherUserCitiesByLocation(ctx context.Context, userType domain.UserType, userID, locationID string) error
 }
 
 // meWeatherGeocoder is a pass-through interface for the geocoding provider used

@@ -47,7 +47,10 @@ func (r *WeatherUserCityRepository) CheckUP(ctx context.Context) error {
 // RetainWeatherUserCity inserts or updates a city subscription. On insert the ID
 // is minted when empty. On conflict on (user_type, user_id, location_id, notify_kind)
 // the row is updated in place so a re-subscribe refreshes resolved fields.
-// UpdatedAt is always set to now; CreatedAt is set only on insert.
+// UpdatedAt is always set to now; CreatedAt is set only on insert. AlertLatched is
+// written only on insert (from record.AlertLatched) and is never touched by the
+// ON CONFLICT DO UPDATE path — callers that need to change an existing row's latch
+// use SetWeatherAlertLatched or MarkWeatherAlertFired instead.
 func (r *WeatherUserCityRepository) RetainWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error {
 	if record == nil {
 		return errors.Join(errors.New("weather user city is nil"), internal.NewTraceError())
@@ -74,6 +77,14 @@ func (r *WeatherUserCityRepository) RetainWeatherUserCity(ctx context.Context, r
 		lastNotifiedAt = &s
 	}
 
+	// AlertLatched is insert-only: it is deliberately absent from the ON CONFLICT
+	// DO UPDATE SET clause below, so a re-subscribe or ensure-thaw retain never stomps
+	// a real latch state back to the caller's default.
+	var alertLatched int
+	if record.AlertLatched {
+		alertLatched = 1
+	}
+
 	cmd := "INSERT INTO " + weatherUserCityTableName + " (" +
 		weatherUserCityIDFieldName + ", " +
 		weatherUserCityUserTypeFieldName + ", " +
@@ -90,9 +101,10 @@ func (r *WeatherUserCityRepository) RetainWeatherUserCity(ctx context.Context, r
 		weatherUserCityNotifyHourFieldName + ", " +
 		weatherUserCityConditionValueFieldName + ", " +
 		weatherUserCityLastNotifiedAtFieldName + ", " +
+		weatherUserCityAlertLatchedFieldName + ", " +
 		weatherUserCityUpdatedAtFieldName + ", " +
 		weatherUserCityCreatedAtFieldName +
-		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
 		"ON CONFLICT(" +
 		weatherUserCityUserTypeFieldName + ", " +
 		weatherUserCityUserIDFieldName + ", " +
@@ -130,6 +142,7 @@ func (r *WeatherUserCityRepository) RetainWeatherUserCity(ctx context.Context, r
 		record.NotifyHour,
 		record.ConditionValue,
 		lastNotifiedAt,
+		alertLatched,
 		record.UpdatedAt.Format(time.RFC3339),
 		record.CreatedAt.Format(time.RFC3339),
 	).Scan(&record.ID); err != nil {
@@ -190,6 +203,43 @@ func (r *WeatherUserCityRepository) RemoveWeatherUserCity(ctx context.Context, r
 	cmd := "DELETE FROM " + weatherUserCityTableName + " WHERE " + weatherUserCityIDFieldName + " = ?;"
 	if _, err := tx.ExecContext(ctx, cmd, record.ID); err != nil {
 		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), internal.NewTraceError())
+	}
+
+	if err := tx.Commit(); err != nil {
+		return errors.Join(err, internal.NewStackTraceError())
+	}
+	return nil
+}
+
+// RemoveWeatherUserCitiesByLocation deletes every subscription row (all notify kinds,
+// including the forced alert_thaw row) for one (userType, userID, locationID) in a single
+// atomic check-and-delete. Used by the explicit "remove city" action so the whole city,
+// thaw included, is cleared atomically. Returns internal.ErrNotFound when no row matches
+// (missing location or a location owned entirely by a different user).
+func (r *WeatherUserCityRepository) RemoveWeatherUserCitiesByLocation(
+	ctx context.Context, userType domain.UserType, userID, locationID string,
+) error {
+	tx, err := r.db.Transaction(ctx)
+	if err != nil {
+		return errors.Join(err, internal.NewStackTraceError())
+	}
+	defer printRollbackError(tx)
+
+	cmd := "DELETE FROM " + weatherUserCityTableName +
+		" WHERE " + weatherUserCityUserTypeFieldName + " = ? AND " +
+		weatherUserCityUserIDFieldName + " = ? AND " +
+		weatherUserCityLocationIDFieldName + " = ?;"
+	res, err := tx.ExecContext(ctx, cmd, userType, userID, locationID)
+	if err != nil {
+		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), internal.NewTraceError())
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return errors.Join(err, internal.NewTraceError())
+	}
+	if affected == 0 {
+		return errors.Join(errors.New("unexpected result: no rows affected"), internal.ErrNotFound, internal.NewTraceError())
 	}
 
 	if err := tx.Commit(); err != nil {

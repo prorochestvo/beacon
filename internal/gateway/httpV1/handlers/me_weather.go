@@ -21,6 +21,10 @@ type meWeatherCityRepository interface {
 	ObtainWeatherUserCitiesByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.WeatherUserCity, error)
 	ObtainWeatherUserCityByID(ctx context.Context, id string) (*domain.WeatherUserCity, error)
 	RemoveWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
+	// RemoveWeatherUserCitiesByLocation deletes every subscription row (all notify
+	// kinds, including the forced alert_thaw row) for one (userType, userID, locationID).
+	// Returns internal.ErrNotFound when no row matches.
+	RemoveWeatherUserCitiesByLocation(ctx context.Context, userType domain.UserType, userID, locationID string) error
 }
 
 // meWeatherObsRepository is the read-only storage contract for weather
@@ -265,6 +269,39 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// alert_thaw is forced and system-managed: every tracked city carries exactly
+	// one, so any non-thaw add ensures one exists alongside it. Skipped when the
+	// requested kind already is thaw (nothing to add). Built from the already-
+	// validated body.* fields, not from record — RetainWeatherUserCity mutates
+	// record's ID/timestamps in place.
+	//
+	// AlertLatched starts true (pre-latched), matching the migration 202607.021
+	// backfill: thaw fires on TempMax > 0 alone, the default warm-season state, so an
+	// armed (false) new row would risk firing on the very first check tick for a city
+	// that is already past freezing. A genuinely still-frozen city simply re-arms to
+	// false on the next tick either way, with no notification.
+	if notifyKind != domain.WeatherNotifyAlertThaw {
+		thaw := &domain.WeatherUserCity{
+			UserType:       domain.UserTypeTelegram,
+			UserID:         tgUserID,
+			LocationID:     body.LocationID,
+			DisplayName:    body.DisplayName,
+			Latitude:       body.Latitude,
+			Longitude:      body.Longitude,
+			Timezone:       body.Timezone,
+			Country:        body.Country,
+			Admin1:         body.Admin1,
+			NotifyKind:     domain.WeatherNotifyAlertThaw,
+			NotifyHour:     weatherDefaultNotifyHour,
+			ConditionValue: "",
+			AlertLatched:   true,
+		}
+		if err := h.meWeatherCityRepo.RetainWeatherUserCity(r.Context(), thaw); err != nil {
+			h.internalError(w, fmt.Errorf("CreateMeWeatherCity ensure thaw: %w", err))
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(dto.WeatherCityCreateResponse{ID: record.ID}); err != nil {
@@ -309,8 +346,73 @@ func (h *Handler) DeleteMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if city.NotifyKind == domain.WeatherNotifyAlertThaw {
+		// Forced, system-managed row: it can only be removed by removing the whole
+		// city (DELETE /api/me/weather/locations/{location_id}). Reached only via
+		// the API — the UI renders no delete control for thaw.
+		pub := internal.NewPublicError("Thaw alerts stay on for every tracked city; remove the city to turn it off.")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		if encErr := json.NewEncoder(w).Encode(map[string]string{"error": pub.Details()}); encErr != nil {
+			h.logger.Print(errors.Join(fmt.Errorf("encode DeleteMeWeatherCity thaw-conflict response: %w", encErr), internal.NewTraceError()))
+		}
+		return
+	}
+
 	if err := h.meWeatherCityRepo.RemoveWeatherUserCity(r.Context(), city); err != nil {
 		h.internalError(w, fmt.Errorf("DeleteMeWeatherCity remove: %w", err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DeleteMeWeatherLocation removes every city subscription (all notify kinds, including the
+// forced alert_thaw row) owned by the authenticated caller at the given location.
+//
+// DELETE /api/me/weather/locations/{location_id}
+// Auth: X-Telegram-Init-Data header only.
+//
+// 204 No Content on success.
+// 400 when location_id is missing.
+// 401 on auth failure.
+// 404 when the caller has no rows at this location (missing or cross-user — same response,
+// no existence disclosure): the repository's atomic delete reports zero rows affected.
+// 503 when the weather service is not wired. 500 on persistence failure.
+func (h *Handler) DeleteMeWeatherLocation(w http.ResponseWriter, r *http.Request) {
+	if h.meWeatherCityRepo == nil {
+		http.Error(w, `{"error":"weather service unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	initData := r.Header.Get("X-Telegram-Init-Data")
+	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
+	if err != nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	tgUserID := strconv.FormatInt(userID, 10)
+
+	locationID := r.PathValue("location_id")
+	if strings.TrimSpace(locationID) == "" {
+		http.Error(w, `{"error":"missing location id"}`, http.StatusBadRequest)
+		return
+	}
+
+	// The repository's atomic check-and-delete is the sole ownership check: 404 (not
+	// 403) on internal.ErrNotFound covers both "no such location for anyone" and "owned
+	// by another user" — no existence disclosure, consistent with
+	// meWeatherCityOwnershipCheck. No pre-scan needed.
+	if err := h.meWeatherCityRepo.RemoveWeatherUserCitiesByLocation(r.Context(), domain.UserTypeTelegram, tgUserID, locationID); err != nil {
+		if errors.Is(err, internal.ErrNotFound) {
+			pub := internal.NewPublicError("city not found")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			if encErr := json.NewEncoder(w).Encode(map[string]string{"error": pub.Details()}); encErr != nil {
+				h.logger.Print(errors.Join(fmt.Errorf("encode DeleteMeWeatherLocation not-found response: %w", encErr), internal.NewTraceError()))
+			}
+			return
+		}
+		h.internalError(w, fmt.Errorf("DeleteMeWeatherLocation remove: %w", err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

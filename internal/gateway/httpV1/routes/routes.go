@@ -98,8 +98,15 @@ const (
 
 	// MeWeatherCityByID is the single-city endpoint (DELETE). Cross-user access
 	// returns 404 (same body as a genuine miss) to avoid existence disclosure.
+	// Deleting an alert_thaw row returns 409 (forced, system-managed subscription);
+	// remove the whole city via MeWeatherLocationByID instead.
 	// Auth via Telegram WebApp initData HMAC (X-Telegram-Init-Data header only).
 	MeWeatherCityByID = "/api/me/weather/cities/{id}"
+
+	// MeWeatherLocationByID is the location-scoped delete endpoint (DELETE). Removes every
+	// subscription row for the caller at this location, including the forced alert_thaw row.
+	// Cross-user / no-rows access returns 404 (no existence disclosure).
+	MeWeatherLocationByID = "/api/me/weather/locations/{location_id}"
 
 	// Ping is the liveness probe. Touches no dependency; always returns 200. Registered
 	// at /ping. /healthz is kept as a backward-compatible alias.

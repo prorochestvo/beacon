@@ -140,3 +140,8 @@ func meWeatherCitiesURL() string {
 func meWeatherCityByIDURL(id string) string {
 	return "/api/me/weather/cities/" + url.PathEscape(id)
 }
+
+// meWeatherLocationByIDURL returns the location-scoped "remove city" endpoint for DELETE.
+func meWeatherLocationByIDURL(locationID string) string {
+	return "/api/me/weather/locations/" + url.PathEscape(locationID)
+}

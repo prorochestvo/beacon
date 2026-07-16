@@ -780,6 +780,39 @@ func TestClient_MeWeatherCityDelete(t *testing.T) {
 	})
 }
 
+func TestClient_MeWeatherLocationDelete(t *testing.T) {
+	t.Parallel()
+
+	t.Run("happy path returns nil on 204", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{}
+		c := apiclient.New(f)
+		err := c.MeWeatherLocationDelete(t.Context(), "tok", "loc-abc")
+		require.NoError(t, err)
+		assert.Equal(t, "tok", f.lastHeaders["X-Telegram-Init-Data"])
+		assert.Equal(t, "/api/me/weather/locations/loc-abc", f.lastURL)
+		assert.Equal(t, "DELETE", f.lastMethod)
+	})
+
+	t.Run("location_id is percent-escaped", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{}
+		c := apiclient.New(f)
+		err := c.MeWeatherLocationDelete(t.Context(), "tok", "loc/with slash")
+		require.NoError(t, err)
+		assert.Equal(t, "/api/me/weather/locations/loc%2Fwith%20slash", f.lastURL)
+	})
+
+	t.Run("fetcher error propagates", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{noContentErr: errors.New("http 404")}
+		c := apiclient.New(f)
+		err := c.MeWeatherLocationDelete(t.Context(), "tok", "nonexistent")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "http 404")
+	})
+}
+
 func TestClient_MeSubscriptionDelete(t *testing.T) {
 	t.Parallel()
 

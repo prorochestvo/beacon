@@ -183,6 +183,18 @@ func (p *MeWeatherCitiesPage) DeleteCity(ctx context.Context, id string) error {
 	return p.LoadCities(ctx)
 }
 
+// RemoveCity removes the whole city (all alert kinds, including the forced thaw alert) at
+// locationID and reloads the list on success. Sets AuthFailure on 401.
+func (p *MeWeatherCitiesPage) RemoveCity(ctx context.Context, locationID string) error {
+	if err := p.client.MeWeatherLocationDelete(ctx, p.initData, locationID); err != nil {
+		if strings.Contains(err.Error(), AuthFailureSentinel) {
+			p.state.AuthFailure = true
+		}
+		return err
+	}
+	return p.LoadCities(ctx)
+}
+
 // ClearSearch resets the search form to its initial empty state.
 func (p *MeWeatherCitiesPage) ClearSearch() {
 	p.state.SearchQuery = ""

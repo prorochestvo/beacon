@@ -898,6 +898,23 @@
       color: var(--tg-theme-text-color, #222);
       margin-bottom: 4px;
     }
+    .weather-city-group-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .weather-city-remove {
+      background: transparent;
+      border: 1px solid var(--tg-theme-destructive-text-color, #e53935);
+      color: var(--tg-theme-destructive-text-color, #e53935);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      min-height: 44px;
+      flex-shrink: 0;
+    }
     .weather-city-kinds {
       list-style: none;
       margin: 0;
@@ -913,6 +930,14 @@
     .weather-kind-label {
       flex: 1;
       min-width: 0;
+    }
+    .weather-kind-locked {
+      color: var(--tg-theme-hint-color, #888);
+      background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+      border-radius: 10px;
+      padding: 2px 8px;
+      font-size: 11px;
+      flex-shrink: 0;
     }
     .weather-city-delete {
       background: transparent;

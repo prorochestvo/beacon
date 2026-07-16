@@ -1735,15 +1735,61 @@ func bindWeatherCitiesHandlers(
 		// "+ Add alert" button: has no id, so it is matched via closest(...) like
 		// the delete button above. Reading target.id here would return "".
 		addAlertBtn := target.Call("closest", ".weather-add-alert-btn")
-		if addAlertBtn.IsNull() || addAlertBtn.IsUndefined() {
+		if !addAlertBtn.IsNull() && !addAlertBtn.IsUndefined() {
+			locationID := addAlertBtn.Get("dataset").Get("locationId").String()
+			if locationID == "" {
+				return
+			}
+			page.OpenAlertForm(locationID)
+			redraw()
 			return
 		}
-		locationID := addAlertBtn.Get("dataset").Get("locationId").String()
+
+		// "Remove city" button: destructive (removes every alert kind including the
+		// forced thaw row), so it is gated by showConfirm/confirm like the
+		// subscription delete flow above — unlike the per-kind ✕, which is not.
+		removeBtn := target.Call("closest", ".weather-city-remove")
+		if removeBtn.IsNull() || removeBtn.IsUndefined() {
+			return
+		}
+		locationID := removeBtn.Get("dataset").Get("locationId").String()
 		if locationID == "" {
 			return
 		}
-		page.OpenAlertForm(locationID)
-		redraw()
+
+		confirmAndRemove := func(confirmed bool) {
+			if !confirmed {
+				return
+			}
+			go func() {
+				fetchCtx, fetchCancel := context.WithTimeout(ctx, 15*time.Second)
+				defer fetchCancel()
+				if err := page.RemoveCity(fetchCtx, locationID); err != nil {
+					js.Global().Get("console").Call("warn", "weather remove city:", err.Error())
+				}
+				redraw()
+			}()
+		}
+
+		webApp := js.Global().Get("Telegram").Get("WebApp")
+		if !webApp.IsUndefined() && !webApp.IsNull() {
+			showConfirm := webApp.Get("showConfirm")
+			if !showConfirm.IsUndefined() && !showConfirm.IsNull() {
+				// Release the js.Func inside the callback after it fires once, else it
+				// leaks a WASM function-table slot.
+				var cb js.Func
+				cb = js.FuncOf(func(_ js.Value, args []js.Value) any {
+					cb.Release()
+					confirmed := len(args) > 0 && args[0].Bool()
+					confirmAndRemove(confirmed)
+					return nil
+				})
+				webApp.Call("showConfirm", "Remove this city? Thaw alerts will stop too.", cb)
+				return
+			}
+		}
+		confirmed := js.Global().Call("confirm", "Remove this city? Thaw alerts will stop too.").Bool()
+		confirmAndRemove(confirmed)
 	}))
 
 	// Delegated input handler on the stable #app container: debounced geocoding

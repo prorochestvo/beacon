@@ -136,7 +136,67 @@ func TestWeatherUserCityRepository_RetainWeatherUserCity(t *testing.T) {
 
 		got, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
 		require.NoError(t, err)
-		assert.True(t, got.AlertLatched, "alert_latched is not in RetainWeatherUserCity's column list, so an ON CONFLICT update must not clobber it")
+		assert.True(t, got.AlertLatched, "alert_latched is absent from RetainWeatherUserCity's ON CONFLICT DO UPDATE SET clause, so a re-subscribe must not clobber it")
+	})
+
+	t.Run("alert_latched true is persisted on insert", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		city := &domain.WeatherUserCity{
+			UserType:     domain.UserTypeTelegram,
+			UserID:       "u-prelatch",
+			LocationID:   "loc-prelatch",
+			Timezone:     "UTC",
+			NotifyKind:   domain.WeatherNotifyAlertThaw,
+			AlertLatched: true,
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
+
+		got, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.True(t, got.AlertLatched, "a fresh insert must persist AlertLatched=true when the caller sets it (e.g. the forced thaw row)")
+	})
+
+	t.Run("re-subscribe does not overwrite alert_latched even when the payload sets it true", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		city := &domain.WeatherUserCity{
+			UserType:   domain.UserTypeTelegram,
+			UserID:     "u-armed",
+			LocationID: "loc-armed",
+			Timezone:   "UTC",
+			NotifyKind: domain.WeatherNotifyAlertThaw,
+			// AlertLatched omitted (false): simulates a row that has re-armed since it
+			// was first created latched.
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
+
+		before, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		require.False(t, before.AlertLatched)
+
+		// A re-subscribe / ensure-thaw retain on the same unique key, requesting
+		// AlertLatched=true, must not stomp the row's real (re-armed) latch state —
+		// alert_latched is insert-only and absent from the ON CONFLICT SET clause.
+		resubscribe := &domain.WeatherUserCity{
+			UserType:     domain.UserTypeTelegram,
+			UserID:       "u-armed",
+			LocationID:   "loc-armed",
+			Timezone:     "UTC",
+			NotifyKind:   domain.WeatherNotifyAlertThaw,
+			AlertLatched: true,
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), resubscribe))
+
+		got, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.False(t, got.AlertLatched, "ON CONFLICT must never write alert_latched, regardless of what the incoming payload requests")
 	})
 
 	t.Run("stores and retrieves gismeteo_city_id", func(t *testing.T) {
@@ -354,6 +414,70 @@ func TestWeatherUserCityRepository_RemoveWeatherUserCity(t *testing.T) {
 		repo, err := NewWeatherUserCityRepository(db)
 		require.NoError(t, err)
 		require.Error(t, repo.RemoveWeatherUserCity(t.Context(), nil))
+	})
+}
+
+func TestWeatherUserCityRepository_RemoveWeatherUserCitiesByLocation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("deletes every row for the target location, other location and other user survive", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		for _, kind := range []domain.WeatherNotifyKind{
+			domain.WeatherNotifyMorningSummary,
+			domain.WeatherNotifyAlertHeat,
+			domain.WeatherNotifyAlertThaw,
+		} {
+			require.NoError(t, repo.RetainWeatherUserCity(t.Context(), &domain.WeatherUserCity{
+				UserType:   domain.UserTypeTelegram,
+				UserID:     "target-user",
+				LocationID: "target-loc",
+				Timezone:   "UTC",
+				NotifyKind: kind,
+			}))
+		}
+
+		otherLocation := &domain.WeatherUserCity{
+			UserType:   domain.UserTypeTelegram,
+			UserID:     "target-user",
+			LocationID: "other-loc",
+			Timezone:   "UTC",
+			NotifyKind: domain.WeatherNotifyMorningSummary,
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), otherLocation))
+
+		otherUser := &domain.WeatherUserCity{
+			UserType:   domain.UserTypeTelegram,
+			UserID:     "other-user",
+			LocationID: "target-loc",
+			Timezone:   "UTC",
+			NotifyKind: domain.WeatherNotifyMorningSummary,
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), otherUser))
+
+		require.NoError(t, repo.RemoveWeatherUserCitiesByLocation(t.Context(), domain.UserTypeTelegram, "target-user", "target-loc"))
+
+		remaining, err := repo.ObtainWeatherUserCitiesByUserID(t.Context(), domain.UserTypeTelegram, "target-user")
+		require.NoError(t, err)
+		require.Len(t, remaining, 1, "only the other-location row for target-user must survive")
+		assert.Equal(t, "other-loc", remaining[0].LocationID)
+
+		otherUserRows, err := repo.ObtainWeatherUserCitiesByUserID(t.Context(), domain.UserTypeTelegram, "other-user")
+		require.NoError(t, err)
+		require.Len(t, otherUserRows, 1, "another user's row at the same location_id must survive")
+	})
+
+	t.Run("no matching rows returns ErrNotFound", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		err = repo.RemoveWeatherUserCitiesByLocation(t.Context(), domain.UserTypeTelegram, "nobody", "nowhere")
+		require.True(t, errors.Is(err, internal.ErrNotFound))
 	})
 }
 

@@ -437,6 +437,53 @@ func TestMeWeatherCitiesPage_DeleteCity(t *testing.T) {
 	})
 }
 
+func TestMeWeatherCitiesPage_RemoveCity(t *testing.T) {
+	t.Parallel()
+
+	t.Run("successful removal reloads list", func(t *testing.T) {
+		t.Parallel()
+		f := &editFakeFetcher{
+			urlJSON: map[string][]byte{
+				"/api/me/weather/cities": citiesResponse(nil),
+			},
+		}
+		page := weatherPageWithFetcher(f)
+
+		require.NoError(t, page.RemoveCity(t.Context(), "loc-1"))
+
+		st := page.State()
+		assert.Empty(t, st.Cities)
+	})
+
+	t.Run("removal error is returned and AuthFailure is not set for non-401", func(t *testing.T) {
+		t.Parallel()
+		f := &editFakeFetcher{
+			urlNoContentErr: map[string]error{
+				"/api/me/weather/locations/": errors.New("server error"),
+			},
+		}
+		page := weatherPageWithFetcher(f)
+
+		err := page.RemoveCity(t.Context(), "loc-1")
+		require.Error(t, err)
+		assert.False(t, page.State().AuthFailure)
+	})
+
+	t.Run("removal 401 sets AuthFailure", func(t *testing.T) {
+		t.Parallel()
+		f := &editFakeFetcher{
+			urlNoContentErr: map[string]error{
+				"/api/me/weather/locations/": errors.New("http 401"),
+			},
+		}
+		page := weatherPageWithFetcher(f)
+
+		err := page.RemoveCity(t.Context(), "loc-1")
+		require.Error(t, err)
+		assert.True(t, page.State().AuthFailure)
+	})
+}
+
 func TestMeWeatherCitiesPage_OpenAlertForm(t *testing.T) {
 	t.Parallel()
 
