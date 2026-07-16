@@ -17,7 +17,7 @@ const (
 
 	// WeatherNotifyAlertHeat fires when the daily forecast high (TempMax) meets or
 	// exceeds the configured threshold (ConditionValue, °C). Evaluated against the
-	// Open-Meteo daily observation only; gismeteo is comparison-only.
+	// Open-Meteo daily observation.
 	WeatherNotifyAlertHeat WeatherNotifyKind = "alert_heat"
 
 	// WeatherNotifyAlertFrost fires when the daily forecast low (TempMin) meets or
@@ -36,7 +36,7 @@ const (
 	// decimal percent string (e.g. "70"). The window is a fixed constant, not
 	// user-configurable; a per-user window would encode as "70@6h" — that is why
 	// ConditionValue is TEXT rather than a single REAL column. Evaluated against
-	// Open-Meteo hourly data only; Gismeteo has no hourly block.
+	// Open-Meteo hourly data.
 	WeatherNotifyAlertRain WeatherNotifyKind = "rain_alert"
 
 	// WeatherNotifyAlertThaw fires when the forecast day itself crosses zero:
@@ -59,7 +59,6 @@ const weatherRainWindow = 6 * time.Hour
 
 // WeatherUserCity records a user's per-city weather subscription.
 // NotifyHour is the local-time hour (0–23) at which the daily summary fires, in Timezone.
-// GismeteoCityID is nil until the curated gismeteo city map is consulted (second increment).
 // ConditionValue holds the alert threshold for heat/frost kinds (a decimal number in °C),
 // and is empty for morning_summary, thunderstorm, and thaw (which need no numeric bound).
 //
@@ -83,7 +82,6 @@ type WeatherUserCity struct {
 	Timezone       string // IANA timezone name, e.g. "Asia/Almaty"
 	Country        string
 	Admin1         string
-	GismeteoCityID *int
 	NotifyKind     WeatherNotifyKind
 	NotifyHour     int // local 0–23
 	ConditionValue string

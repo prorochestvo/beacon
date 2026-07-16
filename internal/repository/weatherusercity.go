@@ -96,7 +96,6 @@ func (r *WeatherUserCityRepository) RetainWeatherUserCity(ctx context.Context, r
 		weatherUserCityTimezoneFieldName + ", " +
 		weatherUserCityCountryFieldName + ", " +
 		weatherUserCityAdmin1FieldName + ", " +
-		weatherUserCityGismeteoCityIDFieldName + ", " +
 		weatherUserCityNotifyKindFieldName + ", " +
 		weatherUserCityNotifyHourFieldName + ", " +
 		weatherUserCityConditionValueFieldName + ", " +
@@ -104,7 +103,7 @@ func (r *WeatherUserCityRepository) RetainWeatherUserCity(ctx context.Context, r
 		weatherUserCityAlertLatchedFieldName + ", " +
 		weatherUserCityUpdatedAtFieldName + ", " +
 		weatherUserCityCreatedAtFieldName +
-		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
 		"ON CONFLICT(" +
 		weatherUserCityUserTypeFieldName + ", " +
 		weatherUserCityUserIDFieldName + ", " +
@@ -117,7 +116,6 @@ func (r *WeatherUserCityRepository) RetainWeatherUserCity(ctx context.Context, r
 		weatherUserCityTimezoneFieldName + " = excluded." + weatherUserCityTimezoneFieldName + ", " +
 		weatherUserCityCountryFieldName + " = excluded." + weatherUserCityCountryFieldName + ", " +
 		weatherUserCityAdmin1FieldName + " = excluded." + weatherUserCityAdmin1FieldName + ", " +
-		weatherUserCityGismeteoCityIDFieldName + " = excluded." + weatherUserCityGismeteoCityIDFieldName + ", " +
 		weatherUserCityNotifyHourFieldName + " = excluded." + weatherUserCityNotifyHourFieldName + ", " +
 		weatherUserCityConditionValueFieldName + " = excluded." + weatherUserCityConditionValueFieldName + ", " +
 		weatherUserCityUpdatedAtFieldName + " = excluded." + weatherUserCityUpdatedAtFieldName +
@@ -137,7 +135,6 @@ func (r *WeatherUserCityRepository) RetainWeatherUserCity(ctx context.Context, r
 		record.Timezone,
 		record.Country,
 		record.Admin1,
-		record.GismeteoCityID,
 		record.NotifyKind,
 		record.NotifyHour,
 		record.ConditionValue,
@@ -263,8 +260,7 @@ func (r *WeatherUserCityRepository) ObtainDistinctWeatherLocations(ctx context.C
 		weatherUserCityIDFieldName + "), " +
 		weatherUserCityLocationIDFieldName + ", MIN(" +
 		weatherUserCityLatitudeFieldName + "), MIN(" +
-		weatherUserCityLongitudeFieldName + "), MIN(" +
-		weatherUserCityGismeteoCityIDFieldName + ")" +
+		weatherUserCityLongitudeFieldName + ")" +
 		" FROM " + weatherUserCityTableName +
 		" GROUP BY " + weatherUserCityLocationIDFieldName + ";"
 
@@ -282,7 +278,6 @@ func (r *WeatherUserCityRepository) ObtainDistinctWeatherLocations(ctx context.C
 			&item.LocationID,
 			&item.Latitude,
 			&item.Longitude,
-			&item.GismeteoCityID,
 		); scanErr != nil {
 			return nil, errors.Join(scanErr, internal.NewTraceError())
 		}
@@ -397,7 +392,6 @@ const (
 	weatherUserCityTimezoneFieldName       = "timezone"
 	weatherUserCityCountryFieldName        = "country"
 	weatherUserCityAdmin1FieldName         = "admin1"
-	weatherUserCityGismeteoCityIDFieldName = "gismeteo_city_id"
 	weatherUserCityNotifyKindFieldName     = "notify_kind"
 	weatherUserCityNotifyHourFieldName     = "notify_hour"
 	weatherUserCityConditionValueFieldName = "condition_value"
@@ -417,7 +411,6 @@ const (
 		weatherUserCityTimezoneFieldName + ", " +
 		weatherUserCityCountryFieldName + ", " +
 		weatherUserCityAdmin1FieldName + ", " +
-		weatherUserCityGismeteoCityIDFieldName + ", " +
 		weatherUserCityNotifyKindFieldName + ", " +
 		weatherUserCityNotifyHourFieldName + ", " +
 		weatherUserCityConditionValueFieldName + ", " +
@@ -473,7 +466,6 @@ func weatherUserCityScan(s weatherUserCityScanner) (domain.WeatherUserCity, erro
 		&item.Timezone,
 		&item.Country,
 		&item.Admin1,
-		&item.GismeteoCityID,
 		&item.NotifyKind,
 		&item.NotifyHour,
 		&item.ConditionValue,

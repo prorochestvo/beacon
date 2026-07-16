@@ -5,12 +5,15 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/infrastructure/sqlitedb"
 	"github.com/seilbekskindirov/beacon/internal/infrastructure/sqlitedb/sqlitedbtest"
+	"github.com/seilbekskindirov/beacon/migrations"
 	_ "modernc.org/sqlite"
 )
 
@@ -59,6 +62,64 @@ func stubSQLiteDB(t testing.TB, sourceNames ...string) *sqlitedb.SQLiteClient {
 	}
 
 	return sqliteDB
+}
+
+// stubSQLiteDBThrough opens an in-memory SQLite DB with every embedded migration
+// up to and including throughFilename applied — a schema snapshot frozen at that
+// point in migration history, not the full current chain stubSQLiteDB applies.
+//
+// Two uses: (1) replaying an old, immutable migration's own committed SQL text,
+// which may name a column a later migration has since dropped — the replay must
+// run against the schema shape from the moment that migration was written, not a
+// future one; (2) seeding a "before this migration" fixture and then applying the
+// remaining pending migrations via sqlitedbtest.Apply (which only executes files
+// __schema_migrations doesn't already record), to prove a later migration carries
+// existing rows forward correctly — mirroring a real production upgrade.
+func stubSQLiteDBThrough(t *testing.T, throughFilename string) *sqlitedb.SQLiteClient {
+	t.Helper()
+
+	entries, err := migrations.MigrationsFS.ReadDir(".")
+	if err != nil {
+		t.Fatalf("stubSQLiteDBThrough: read migrations dir: %v", err)
+	}
+
+	subset := fstest.MapFS{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".sql") || name > throughFilename {
+			continue
+		}
+		data, readErr := migrations.MigrationsFS.ReadFile(name)
+		if readErr != nil {
+			t.Fatalf("stubSQLiteDBThrough: read %s: %v", name, readErr)
+		}
+		subset[name] = &fstest.MapFile{Data: data}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	mem, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		panic(err)
+	}
+	t.Cleanup(func() { _ = mem.Close() })
+	mem.SetMaxOpenConns(1)
+
+	db, err := sqlitedb.NewSQLiteClientEx(mem, os.Stdout)
+	if err != nil {
+		panic(err)
+	}
+
+	m, err := sqlitedb.NewMigrator(db, subset)
+	if err != nil {
+		t.Fatalf("stubSQLiteDBThrough: new migrator: %v", err)
+	}
+	if err = m.Run(t.Context()); err != nil {
+		t.Fatalf("stubSQLiteDBThrough: run migrator: %v", err)
+	}
+
+	return db
 }
 
 // seedRateSources inserts a minimal rate_source row for each provided name so

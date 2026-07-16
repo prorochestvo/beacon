@@ -9,23 +9,8 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
-// weatherProviderLabel maps a literal provider data token to a human-readable display label.
-// The input is a data token that must never be translated; only the returned label is English prose.
-func weatherProviderLabel(provider string) string {
-	switch provider {
-	case domain.ProviderOpenMeteo:
-		return "Open-Meteo"
-	case domain.ProviderGismeteo:
-		return "Gismeteo"
-	default:
-		return html.EscapeString(provider)
-	}
-}
-
-// RenderMorningSummary produces a Telegram HTML morning-weather summary for city,
-// incorporating one or more provider observations. The variadic obs signature allows
-// the gismeteo increment (Task 13) to pass two observations for a side-by-side
-// comparison; the MVP passes a single Open-Meteo observation.
+// RenderMorningSummary produces a Telegram HTML morning-weather summary for city
+// from a single Open-Meteo observation.
 //
 // All dynamic text (city name, condition descriptions) is HTML-escaped.
 // Times in the header and sunrise/sunset are shown in the city's IANA timezone.
@@ -33,11 +18,8 @@ func weatherProviderLabel(provider string) string {
 // converted to city-local time here via obs.Sunrise.In(cityLoc). Nil optional
 // fields render as "—", never "0".
 //
-// Returns an error when obs is empty or the city timezone fails to load.
-func RenderMorningSummary(city domain.WeatherUserCity, obs ...domain.WeatherObservation) (string, error) {
-	if len(obs) == 0 {
-		return "", fmt.Errorf("RenderMorningSummary: no observations provided for city %s", city.ID)
-	}
+// Returns an error when the city timezone fails to load.
+func RenderMorningSummary(city domain.WeatherUserCity, obs domain.WeatherObservation) (string, error) {
 	loc, err := time.LoadLocation(city.Timezone)
 	if err != nil {
 		return "", fmt.Errorf("weather render: load timezone %q: %w", city.Timezone, err)
@@ -49,19 +31,8 @@ func RenderMorningSummary(city domain.WeatherUserCity, obs ...domain.WeatherObse
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "<b>%s</b>\n%s", cityName, ts)
-
-	multiProvider := len(obs) > 1
-	for i, o := range obs {
-		sb.WriteString("\n\n")
-		if multiProvider {
-			fmt.Fprintf(&sb, "<b>%s</b>\n", weatherProviderLabel(o.Provider))
-		}
-		sb.WriteString(renderWeatherBlock(o, loc))
-		// between provider sections add an extra blank line
-		if multiProvider && i < len(obs)-1 {
-			sb.WriteString("\n")
-		}
-	}
+	sb.WriteString("\n\n")
+	sb.WriteString(renderWeatherBlock(obs, loc))
 
 	return sb.String(), nil
 }

@@ -568,7 +568,6 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		assert.Equal(t, "9999", stored.LocationID)
 		assert.Equal(t, "Almaty", stored.DisplayName)
 		assert.Equal(t, "Asia/Almaty", stored.Timezone)
-		assert.Nil(t, stored.GismeteoCityID, "GismeteoCityID must be nil in MVP")
 	})
 
 	t.Run("default notify_hour is applied when omitted", func(t *testing.T) {

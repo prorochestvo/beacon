@@ -6,14 +6,9 @@ import (
 	"time"
 )
 
-const (
-	// ProviderOpenMeteo is the literal provider token stored in WeatherObservation.Provider
-	// for Open-Meteo forecasts. It is a data token; do not translate it.
-	ProviderOpenMeteo = "open-meteo"
-	// ProviderGismeteo is the literal provider token for Gismeteo forecasts.
-	// It is a data token; do not translate it.
-	ProviderGismeteo = "gismeteo"
-)
+// ProviderOpenMeteo is the literal provider token stored in WeatherObservation.Provider
+// for Open-Meteo forecasts. It is a data token; do not translate it.
+const ProviderOpenMeteo = "open-meteo"
 
 // WeatherHourlyPoint holds one hourly forecast slot for a WeatherObservation.
 // Time is a UTC instant (parsed from the provider's local-timezone ISO-8601 string via
@@ -29,12 +24,11 @@ type WeatherHourlyPoint struct {
 // WeatherObservation is a weather forecast snapshot for a (location, provider, day) triple.
 // Nullable forecast fields use pointer types so that a provider that omits a field stores
 // NULL rather than a misleading zero — zero temperature is real data, not absence.
-// Hourly holds the per-hour forecast from the Open-Meteo hourly block (nil for Gismeteo
-// observations, which have no hourly data).
+// Hourly holds the per-hour forecast from the Open-Meteo hourly block.
 type WeatherObservation struct {
 	ID           string
 	LocationID   string
-	Provider     string // ProviderOpenMeteo | ProviderGismeteo — literal data tokens, never translated
+	Provider     string // ProviderOpenMeteo — a literal data token, never translated
 	Latitude     float64
 	Longitude    float64
 	CapturedAt   time.Time
@@ -58,9 +52,8 @@ type WeatherObservation struct {
 	Precip      *float64
 	CloudCover  *int
 
-	// Hourly is the per-hour forecast block, populated for Open-Meteo observations only.
-	// Gismeteo rows store nil (no hourly data). The slice is ordered by ascending time.
-	// Use MarshalHourlyJSON / UnmarshalHourlyJSON for the hourly_json column round-trip.
+	// Hourly is the per-hour forecast block, ordered by ascending time. Use
+	// MarshalHourlyJSON / UnmarshalHourlyJSON for the hourly_json column round-trip.
 	Hourly []WeatherHourlyPoint
 }
 

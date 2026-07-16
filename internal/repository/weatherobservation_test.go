@@ -225,13 +225,15 @@ func TestWeatherObservationRepository_ObtainLatestObservation(t *testing.T) {
 		assert.Equal(t, newer.ID, got.ID, "must return the most recent observation")
 	})
 
-	t.Run("provider isolation: open-meteo and gismeteo are independent", func(t *testing.T) {
+	t.Run("provider isolation: rows for different provider tokens are independent", func(t *testing.T) {
 		t.Parallel()
 		db := stubSQLiteDB(t)
 		repo, err := NewWeatherObservationRepository(db)
 		require.NoError(t, err)
 
-		for _, prov := range []string{"open-meteo", "gismeteo"} {
+		// "test-provider" is a neutral token proving the provider column partitions
+		// observations; it is not a real provider the product ever writes.
+		for _, prov := range []string{"open-meteo", "test-provider"} {
 			require.NoError(t, repo.RetainWeatherObservation(t.Context(), &domain.WeatherObservation{
 				LocationID:   "loc-prov",
 				Provider:     prov,
@@ -240,9 +242,9 @@ func TestWeatherObservationRepository_ObtainLatestObservation(t *testing.T) {
 			}))
 		}
 
-		got, err := repo.ObtainLatestObservation(t.Context(), "loc-prov", "gismeteo")
+		got, err := repo.ObtainLatestObservation(t.Context(), "loc-prov", "test-provider")
 		require.NoError(t, err)
-		assert.Equal(t, "gismeteo", got.Provider)
+		assert.Equal(t, "test-provider", got.Provider)
 	})
 }
 

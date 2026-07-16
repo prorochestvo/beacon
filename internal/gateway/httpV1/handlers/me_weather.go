@@ -247,7 +247,6 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 		NotifyKind:     notifyKind,
 		NotifyHour:     notifyHour,
 		ConditionValue: conditionValue,
-		// GismeteoCityID stays nil — populated only by the curated map in the second increment.
 	}
 
 	// Validate the (kind, condition_value) pair. Validate() returns a plain error

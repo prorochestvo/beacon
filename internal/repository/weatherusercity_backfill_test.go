@@ -10,12 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// backfillAlertThawFilename names the immutable, already-applied-to-production
+// migration this test exercises.
+const backfillAlertThawFilename = "202607.021.weather_user_cities.backfill_alert_thaw.sql"
+
 // backfillAlertThawSQL is the exact content of migration 202607.021, read from
 // the canonical embedded FS so this test exercises the real migration text
 // rather than a copy that could drift.
 func backfillAlertThawSQL(t *testing.T) string {
 	t.Helper()
-	raw, err := migrations.MigrationsFS.ReadFile("202607.021.weather_user_cities.backfill_alert_thaw.sql")
+	raw, err := migrations.MigrationsFS.ReadFile(backfillAlertThawFilename)
 	require.NoError(t, err)
 	return string(raw)
 }
@@ -36,12 +40,23 @@ func runBackfillAlertThaw(t *testing.T, db db) {
 // migrations/202607.021.weather_user_cities.backfill_alert_thaw.sql: every
 // distinct (user_type, user_id, location_id) that has at least one row but no
 // alert_thaw row gains exactly one, and the migration is idempotent.
+//
+// Every subtest builds its DB via stubSQLiteDBThrough(t, backfillAlertThawFilename)
+// rather than the usual stubSQLiteDB — deliberately NOT the full migration chain.
+// Migration 202607.025 (later in the real chain) rebuilds weather_user_cities
+// without gismeteo_city_id, but 202607.021's committed, immutable SQL text
+// explicitly names gismeteo_city_id in its INSERT column list. Replaying that
+// exact text (runBackfillAlertThaw) against the fully-migrated schema fails with
+// "no such column: gismeteo_city_id": 021 is a historical migration frozen
+// against the schema shape at the moment it was written, so it must be exercised
+// against a DB snapshot from that same moment, not a future one where the column
+// no longer exists.
 func TestWeatherUserCityBackfillAlertThawMigration(t *testing.T) {
 	t.Parallel()
 
 	t.Run("one thaw row per distinct city with multiple non-thaw rows", func(t *testing.T) {
 		t.Parallel()
-		sqlDB := stubSQLiteDB(t)
+		sqlDB := stubSQLiteDBThrough(t, backfillAlertThawFilename)
 		repo, err := NewWeatherUserCityRepository(sqlDB)
 		require.NoError(t, err)
 
@@ -97,7 +112,7 @@ func TestWeatherUserCityBackfillAlertThawMigration(t *testing.T) {
 
 	t.Run("rerun is a no-op", func(t *testing.T) {
 		t.Parallel()
-		sqlDB := stubSQLiteDB(t)
+		sqlDB := stubSQLiteDBThrough(t, backfillAlertThawFilename)
 		repo, err := NewWeatherUserCityRepository(sqlDB)
 		require.NoError(t, err)
 
@@ -122,7 +137,7 @@ func TestWeatherUserCityBackfillAlertThawMigration(t *testing.T) {
 
 	t.Run("city that already has a thaw row is left untouched", func(t *testing.T) {
 		t.Parallel()
-		sqlDB := stubSQLiteDB(t)
+		sqlDB := stubSQLiteDBThrough(t, backfillAlertThawFilename)
 		repo, err := NewWeatherUserCityRepository(sqlDB)
 		require.NoError(t, err)
 
@@ -159,7 +174,7 @@ func TestWeatherUserCityBackfillAlertThawMigration(t *testing.T) {
 
 	t.Run("distinct users at the same location each get their own thaw row", func(t *testing.T) {
 		t.Parallel()
-		sqlDB := stubSQLiteDB(t)
+		sqlDB := stubSQLiteDBThrough(t, backfillAlertThawFilename)
 		repo, err := NewWeatherUserCityRepository(sqlDB)
 		require.NoError(t, err)
 

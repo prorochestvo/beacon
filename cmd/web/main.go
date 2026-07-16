@@ -27,7 +27,6 @@ import (
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
 	"github.com/seilbekskindirov/beacon/internal/application/inspector"
 	"github.com/seilbekskindirov/beacon/internal/application/service"
-	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
 	"github.com/seilbekskindirov/beacon/internal/gateway"
 	"github.com/seilbekskindirov/beacon/internal/gateway/middleware"
@@ -139,23 +138,12 @@ func main() {
 	} else {
 		log.Printf("telegram: authenticated as @%s (id=%d)", username, id)
 	}
-	// Construct the weather-source repository here, ahead of the health agent, so the
-	// gismeteo inspector can be aligned with the operator's active flag and configured
-	// base URL. This is the one repository built in the dependencies section; the rest
-	// follow under "init repositories".
-	weatherSourceRepo, err := repository.NewWeatherSourceRepository(db)
-	if err != nil {
-		// This constructor runs in the dependencies phase (before "dependencies:
-		// initiated"), so its fatal must carry the "dependencies:" marker to keep the
-		// startup-marker grep sequence operators triage on intact.
-		log.Fatalf("dependencies: weather source repository: %s", err.Error())
-	}
 	healthAgent := inspector.NewAgentWithAdvisory(0,
 		[]inspector.Inspector{
 			inspector.NewDBInspector(db),
 			inspector.NewTelegramInspector(tbot),
 		},
-		buildWeatherAdvisoryInspectors(context.Background(), weatherSourceRepo),
+		[]inspector.Inspector{inspector.NewOpenMeteoInspector()},
 	)
 	log.Println("dependencies: initiated")
 
@@ -365,47 +353,6 @@ func (a *openMeteoGeoAdapter) Geocode(ctx context.Context, name string, count in
 		})
 	}
 	return items, nil
-}
-
-// gismeteoSourceLoader is the narrow weather_sources surface that
-// buildWeatherAdvisoryInspectors needs to decide gismeteo inspector registration.
-type gismeteoSourceLoader interface {
-	ObtainWeatherSourceByProvider(ctx context.Context, provider string) (*domain.WeatherSource, error)
-}
-
-// buildWeatherAdvisoryInspectors returns the advisory weather inspectors registered on
-// the health agent. Open-Meteo is always advisory. Gismeteo is registered with its
-// configured base URL when active — a missing row defaults to active — and omitted when
-// the operator has set active=0, so a disabled provider is not reported as a health
-// component (the ok|<error> services contract is not widened with a "disabled" value).
-// A config-read failure falls back to the default-URL inspector: the gismeteo inspector
-// is advisory, so a false "down" can never fail the deploy health-gate.
-//
-// Registration is evaluated once at process boot. Toggling weather_sources.active or
-// base_url for gismeteo at runtime has no effect on /health/check until cmd/web is
-// restarted — unlike the collector, which re-reads the row every tick.
-func buildWeatherAdvisoryInspectors(ctx context.Context, loader gismeteoSourceLoader) []inspector.Inspector {
-	advisory := []inspector.Inspector{inspector.NewOpenMeteoInspector()}
-
-	row, err := loader.ObtainWeatherSourceByProvider(ctx, domain.ProviderGismeteo)
-	switch {
-	case err != nil:
-		log.Printf("weather: gismeteo health config load failed, using default probe URL: %v", err)
-		advisory = append(advisory, inspector.NewGismeteoInspector())
-	case row == nil || row.Active:
-		baseURL := ""
-		if row != nil {
-			baseURL = row.BaseURL
-		}
-		// Record which base URL the probe uses (empty ⇒ compiled-in default) so an
-		// operator can confirm the active weather providers from the boot log.
-		log.Printf("weather: gismeteo health inspector registered (base_url=%q)", baseURL)
-		advisory = append(advisory, inspector.NewGismeteoInspectorWithURL(baseURL))
-	default:
-		log.Printf("weather: gismeteo inactive — health inspector not registered")
-	}
-
-	return advisory
 }
 
 // flagPort, flagTimeout, etc. hold the raw flag values populated by flag.Parse in

@@ -215,7 +215,7 @@ const (
 	weatherObservationCloudCoverFieldName    = "cloud_cover"
 	// weatherObservationHourlyJSONFieldName is the nullable column storing the
 	// Open-Meteo hourly forecast block as a compact JSON array (migration 014).
-	// NULL for Gismeteo rows and for rows stored before the migration was applied.
+	// NULL for rows stored before the migration was applied.
 	weatherObservationHourlyJSONFieldName = "hourly_json"
 
 	weatherObservationSQLSelect = "SELECT " +

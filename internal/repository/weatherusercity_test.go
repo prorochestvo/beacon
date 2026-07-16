@@ -50,7 +50,6 @@ func TestWeatherUserCityRepository_RetainWeatherUserCity(t *testing.T) {
 		assert.Equal(t, "Asia/Almaty", got.Timezone)
 		assert.Equal(t, "Kazakhstan", got.Country)
 		assert.Equal(t, "Almaty", got.Admin1)
-		assert.Nil(t, got.GismeteoCityID)
 		assert.Equal(t, domain.WeatherNotifyMorningSummary, got.NotifyKind)
 		assert.Equal(t, 7, got.NotifyHour)
 		assert.True(t, got.LastNotifiedAt.IsZero())
@@ -197,29 +196,6 @@ func TestWeatherUserCityRepository_RetainWeatherUserCity(t *testing.T) {
 		got, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
 		require.NoError(t, err)
 		assert.False(t, got.AlertLatched, "ON CONFLICT must never write alert_latched, regardless of what the incoming payload requests")
-	})
-
-	t.Run("stores and retrieves gismeteo_city_id", func(t *testing.T) {
-		t.Parallel()
-		db := stubSQLiteDB(t)
-		repo, err := NewWeatherUserCityRepository(db)
-		require.NoError(t, err)
-
-		gisID := 12345
-		city := &domain.WeatherUserCity{
-			UserType:       domain.UserTypeTelegram,
-			UserID:         "u3",
-			LocationID:     "loc3",
-			Timezone:       "UTC",
-			NotifyKind:     domain.WeatherNotifyMorningSummary,
-			GismeteoCityID: &gisID,
-		}
-		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
-
-		got, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
-		require.NoError(t, err)
-		require.NotNil(t, got.GismeteoCityID)
-		assert.Equal(t, gisID, *got.GismeteoCityID)
 	})
 
 	t.Run("condition_value round-trips for alert_heat", func(t *testing.T) {

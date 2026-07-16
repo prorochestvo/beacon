@@ -156,34 +156,6 @@ func TestRenderMorningSummary(t *testing.T) {
 		assert.NotContains(t, result, "-5.2°C")
 	})
 
-	t.Run("two providers renders both with labels and content", func(t *testing.T) {
-		t.Parallel()
-		tempMax2 := 30.0
-		tempMin2 := 19.5
-		code2 := 1 // Mainly clear
-		obs2 := domain.WeatherObservation{
-			Provider:    "gismeteo",
-			WeatherCode: &code2,
-			TempMax:     &tempMax2,
-			TempMin:     &tempMin2,
-		}
-		result, err := RenderMorningSummary(baseCity, fullObs, obs2)
-		require.NoError(t, err)
-		assert.Contains(t, result, "Open-Meteo")
-		assert.Contains(t, result, "Gismeteo")
-		assert.Contains(t, result, "+31.6°C")
-		assert.Contains(t, result, "+30.0°C")
-		assert.Contains(t, result, "Moderate drizzle")
-		assert.Contains(t, result, "Mainly clear")
-	})
-
-	t.Run("no observations returns error", func(t *testing.T) {
-		t.Parallel()
-		_, err := RenderMorningSummary(baseCity)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "no observations provided")
-	})
-
 	t.Run("bad timezone returns error", func(t *testing.T) {
 		t.Parallel()
 		badCity := baseCity
@@ -348,24 +320,5 @@ func TestRenderWeatherAlert(t *testing.T) {
 		_, err := RenderWeatherAlert(city, "reason", obs)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unrecognised alert kind")
-	})
-}
-
-func TestWeatherProviderLabel(t *testing.T) {
-	t.Parallel()
-
-	t.Run("open-meteo token maps to human label", func(t *testing.T) {
-		t.Parallel()
-		assert.Equal(t, "Open-Meteo", weatherProviderLabel("open-meteo"))
-	})
-
-	t.Run("gismeteo token maps to human label", func(t *testing.T) {
-		t.Parallel()
-		assert.Equal(t, "Gismeteo", weatherProviderLabel("gismeteo"))
-	})
-
-	t.Run("unknown provider is HTML-escaped", func(t *testing.T) {
-		t.Parallel()
-		assert.Equal(t, "&lt;unknown&gt;", weatherProviderLabel("<unknown>"))
 	})
 }

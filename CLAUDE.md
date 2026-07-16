@@ -25,12 +25,17 @@ operator tooling (LLM rule generation and source auditing). Sources use a `kind`
 
 ### Weather providers
 
-Two providers feed the morning summary, both data-driven (no rebuild to reconfigure): `weather_sources` (migration 016) holds each provider's `active` toggle, base URL, User-Agent, throttle; `weather_gismeteo_cities` (migration 017) is the gismeteo coverage source of truth, keyed by Open-Meteo geocoding id. The collector loads both once at startup. A **missing** `weather_sources` row defaults to active, so a half-migrated DB never goes dark.
+Open-Meteo (`domain.ProviderOpenMeteo`) is the sole weather provider: global, keyless
+JSON, hardcoded always-on (no `active` toggle, no per-provider config row). The
+collector fetches it per tick for every distinct subscribed location, throttled by
+`collection.DefaultWeatherThrottleInterval` per location. `weather_observations.provider`
+is a retained vestigial column (it partitions two composite indexes) that now only ever
+holds `'open-meteo'`; it was kept rather than dropped to avoid a rebuild of the largest
+weather table for zero functional gain.
 
-- **Open-Meteo** (`domain.ProviderOpenMeteo`) — global, keyless JSON, primary source of truth; client has hardcoded endpoints, so its row's `base_url`/`options` are inert (only `active` matters).
-- **Gismeteo** (`domain.ProviderGismeteo`) — plain-HTTP scrape of `www.gismeteo.kz` for cross-provider comparison; a city outside `weather_gismeteo_cities`, an empty table, or `active=0` skips gismeteo silently. Tooltip→WMO parsing rules stay in Go (DOM-coupled), not deploy config.
-
-Egress asymmetry: `cmd/collector` honours `BEACON_PROXY_URL`; the weather inspectors in `cmd/web` probe **direct** (cmd/web ignores `BEACON_PROXY_URL`), so a false "down" there can't fail the deploy gate — the inspectors are advisory.
+Egress asymmetry: `cmd/collector` honours `BEACON_PROXY_URL`; the Open-Meteo inspector
+in `cmd/web` probes **direct** (cmd/web ignores `BEACON_PROXY_URL`), so a false "down"
+there can't fail the deploy gate — the inspector is advisory.
 
 ### Layer Responsibilities
 
@@ -64,7 +69,7 @@ Routes are registered in `internal/gateway/` (grep the path literals for the ful
 - **Weather alert delete** — `DELETE /api/me/weather/cities/{id}` removes one subscription row, but a direct delete of an `alert_thaw` row returns **409 + PublicError** (ownership check runs first, so cross-user/missing is still 404, never 409). To turn thaw off, remove the whole location via `DELETE /api/me/weather/locations/{location_id}`, which deletes every row (all kinds, including thaw) the caller owns there (204; 404 when the caller owns nothing at that location — no existence disclosure). The Mini App renders no ✕ on the thaw row and offers a separate per-city "Remove city" control.
 - **`GET /`** — dispatcher inline script routes on `window.Telegram.WebApp.initData`: non-empty → Mini App view, empty → public view.
 - **`GET /ping`** (alias `/healthz`) — liveness, always 200, touches no dependency, no auth.
-- **`GET /health/check`** — readiness; runs all inspectors under a 3s bound, per-component report. Critical (`sqlite`, `telegram`) flip `status=false` → HTTP 503; advisory (`open-meteo`, `gismeteo`) appear but never force 503 (a weather outage must not fail the deploy gate). The `gismeteo` key is **absent** (not `"disabled"`) only when an operator set `weather_sources.active=0`; a missing row or config-read failure fails **open** (key present). Monitors treat an absent key as N/A. No auth.
+- **`GET /health/check`** — readiness; runs all inspectors under a 3s bound, per-component report. Critical (`sqlite`, `telegram`) flip `status=false` → HTTP 503; advisory (`open-meteo`) appears but never forces 503 (a weather outage must not fail the deploy gate). No auth.
 
 ### Static asset caching
 
@@ -123,8 +128,6 @@ Repository files in `internal/repository/` reference table and column names
 exclusively through `const` declarations (e.g. `rateSourceTableName`,
 `rateSourceNameFieldName`) so a schema rename surfaces at compile time and via
 `grep`, never via a runtime "no such column" error.
-
-`weather_user_cities.gismeteo_city_id` (migration 011) is **deprecated and always NULL** — gismeteo eligibility resolves from `weather_gismeteo_cities` at collector startup, never from this column. Left in place because dropping it needs a full SQLite table rebuild (a standalone cleanup migration, not a feature change).
 
 Deploy flow:
 ```

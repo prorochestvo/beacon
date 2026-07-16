@@ -1,6 +1,5 @@
-// Package weather provides HTTP clients for external weather data providers.
-// Currently only Open-Meteo (keyless, global JSON API) is implemented; the
-// gismeteo provider is deferred to a subsequent increment.
+// Package weather provides an HTTP client for the Open-Meteo weather API
+// (keyless, global JSON), the sole weather data source.
 package weather
 
 import (
