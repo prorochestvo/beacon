@@ -7,7 +7,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
@@ -80,7 +80,7 @@ type weatherCollectionObsRepo interface {
 func (a *WeatherAgent) Run(ctx context.Context) error {
 	locations, err := a.cityRepo.ObtainDistinctWeatherLocations(ctx)
 	if err != nil {
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	if len(locations) == 0 {
 		return nil

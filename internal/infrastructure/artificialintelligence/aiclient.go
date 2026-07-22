@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/prorochestvo/dsninjector"
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 )
 
 // AIClient is the interface that all AI provider drivers implement.
@@ -65,7 +65,7 @@ func NewClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (A
 
 	r, err := newStubAIClient(stubAIDefaultResponse)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	return r, nil
 }
@@ -94,7 +94,7 @@ func parseDSNTimeout(dns dsninjector.DataSource) (time.Duration, error) {
 	if err != nil {
 		return 0, errors.Join(
 			fmt.Errorf("unable to parse timeout=%q: %w", value, err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 	duration = max(duration, 10*time.Second)
@@ -132,7 +132,7 @@ func parseDSNKey(dns dsninjector.DataSource) (string, error) {
 	if encoded == "" {
 		return "", errors.Join(
 			fmt.Errorf("missing API key in DSN"),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -140,14 +140,14 @@ func parseDSNKey(dns dsninjector.DataSource) (string, error) {
 	if err != nil {
 		return "", errors.Join(
 			fmt.Errorf("unable to base64-decode API key: %w", err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
 	if len(decoded) == 0 {
 		return "", errors.Join(
 			fmt.Errorf("missing API key in DSN"),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 

@@ -27,7 +27,7 @@ import (
 	"net/url"
 
 	"github.com/prorochestvo/dsninjector"
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 )
 
 // openRouterCheckUPModel is the cheapest paid variant on OpenRouter, used for
@@ -43,12 +43,12 @@ const openRouterCheckUPModel = "meta-llama/llama-3.2-1b-instruct"
 func newOpenRouterClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (*openRouterClient, error) {
 	apiKey, err := parseDSNKey(dns)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	baseURL, err := url.JoinPath(fmt.Sprintf("https://%s", dns.Addr()), dns.Database())
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	model := "openai/gpt-4o"
@@ -58,12 +58,12 @@ func newOpenRouterClient(dns dsninjector.DataSource, logger io.Writer, proxyURL 
 
 	timeout, err := parseDSNTimeout(dns)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	httpClient, err := buildHTTPClient(timeout, proxyURL)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	return &openRouterClient{

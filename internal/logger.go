@@ -48,12 +48,12 @@ func NewLogger(logsDir, name string, printerMinLevel loginjector.LogLevel) (*log
 	}
 	defer log.Printf("logs folder: %s", folder)
 
-	fHNDL := loginjector.CyclicOverwritingFilesHandler(folder, name, defaultFileSize, 7)
+	// WithFileMode 0600: log lines carry chat_id (PII-adjacent per the data policy),
+	// so keep files owner-only. Applies to files the handler creates; an existing live
+	// file opened O_APPEND keeps its prior mode until the next rotation.
+	fHNDL := loginjector.RotatingFileHandler(folder, name, loginjector.WithMaxFileSize(defaultFileSize), loginjector.WithMaxFiles(7), loginjector.WithFileMode(0o600))
 
-	l, err := loginjector.NewLogger(LogLevelWarning, fHNDL)
-	if err != nil {
-		return nil, err
-	}
+	l := loginjector.NewLogger(LogLevelWarning, fHNDL)
 
 	var printerLevels []loginjector.LogLevel
 	for _, lvl := range []loginjector.LogLevel{LogLevelDebug, LogLevelInfo, LogLevelWarning, LogLevelError, LogLevelSevere, LogLevelCritical} {
@@ -65,10 +65,12 @@ func NewLogger(logsDir, name string, printerMinLevel loginjector.LogLevel) (*log
 		_ = l.Hook(&printer{}, printerLevels[0], printerLevels[1:]...)
 	}
 
+	SetRuntimeDetailsProvider()
+
 	log.SetOutput(l.WriterAs(LogLevelWarning))
 	log.SetFlags(0) // timestamp is added by printer; avoid duplicating it
 
-	return l, err
+	return l, nil
 }
 
 // ParseLogLevel converts a string name to a LogLevel constant.

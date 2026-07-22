@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
 	"github.com/seilbekskindirov/beacon/internal/application/service"
 	"github.com/seilbekskindirov/beacon/internal/domain"
@@ -58,7 +58,7 @@ func NewGateway(
 		},
 	)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	return mux, nil

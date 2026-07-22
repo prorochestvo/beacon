@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
@@ -29,17 +30,17 @@ func (r *RateUserProfileRepository) Name() string { return rateUserProfileTableN
 func (r *RateUserProfileRepository) CheckUP(ctx context.Context) error {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
 	query := "SELECT COUNT(*) FROM " + rateUserProfileTableName + ";"
 	var count int64
 	if err := tx.QueryRowContext(ctx, query).Scan(&count); err != nil {
-		return errors.Join(err, fmt.Errorf("SQL: %s", query), internal.NewTraceError())
+		return errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
 	if count < 0 {
-		return errors.Join(errors.New("unexpected result"), internal.NewStackTraceError())
+		return errors.Join(errors.New("unexpected result"), loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -51,7 +52,7 @@ func (r *RateUserProfileRepository) CheckUP(ctx context.Context) error {
 func (r *RateUserProfileRepository) ObtainRateUserProfileByUserID(ctx context.Context, userType domain.UserType, userID string) (*domain.RateUserProfile, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -80,14 +81,14 @@ func (r *RateUserProfileRepository) ObtainRateUserProfileByUserID(ctx context.Co
 		return nil, internal.ErrNotFound
 	}
 	if err != nil {
-		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), internal.NewTraceError())
+		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
 
 	if item.UpdatedAt, err = time.Parse(time.RFC3339, updatedAt); err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	if item.CreatedAt, err = time.Parse(time.RFC3339, createdAt); err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	return &item, nil
 }
@@ -99,7 +100,7 @@ func (r *RateUserProfileRepository) ObtainRateUserProfileByUserID(ctx context.Co
 // is set only on insert.
 func (r *RateUserProfileRepository) UpsertRateUserProfile(ctx context.Context, record *domain.RateUserProfile) error {
 	if record == nil {
-		return errors.Join(errors.New("user profile is nil"), internal.NewTraceError())
+		return errors.Join(errors.New("user profile is nil"), loginjector.NewTraceError())
 	}
 	if record.UserType == "" || record.UserID == "" {
 		return internal.NewPublicError("Invalid user identity.")
@@ -116,7 +117,7 @@ func (r *RateUserProfileRepository) UpsertRateUserProfile(ctx context.Context, r
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -142,11 +143,11 @@ func (r *RateUserProfileRepository) UpsertRateUserProfile(ctx context.Context, r
 		record.UpdatedAt.Format(time.RFC3339),
 		record.CreatedAt.Format(time.RFC3339),
 	); err != nil {
-		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), internal.NewTraceError())
+		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), loginjector.NewTraceError())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	return nil
 }

@@ -53,8 +53,8 @@ github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 h1:o4JXh1EVt
 github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55/go.mod h1:OmDBASR4679mdNQnz2pUhc2G8CO2JrUAVFDRBDP/hJE=
 github.com/prorochestvo/dsninjector v0.0.2 h1:xx0cMafXVta60ow7u/LxI0PeAdPPNTYNi11OkcGtDAA=
 github.com/prorochestvo/dsninjector v0.0.2/go.mod h1:IkuIIFYaBlrF4QUX2y1v+wbb6NPcZBhSuRwhZn6xrPU=
-github.com/prorochestvo/loginjector v1.0.5 h1:UmVidGR1jAGSL8YKIQzd/MHde71I9wnFr3wKNeiqW4w=
-github.com/prorochestvo/loginjector v1.0.5/go.mod h1:Er/3eIaDMIZAXbrw06bqwfQXQeOOPIr4INUqJtP2ygU=
+github.com/prorochestvo/loginjector v1.0.9 h1:EfAKPYMTymJQDXlSE4p3zLixf4dLewIeYoEFo6/7pCQ=
+github.com/prorochestvo/loginjector v1.0.9/go.mod h1:QV4NPjcRNOb1mqHHlKkb1Xv8kOTcMn6hj0ZjuEyH/i8=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/robfig/cron/v3 v3.0.1 h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=

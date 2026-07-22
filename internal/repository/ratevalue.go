@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/domain/identity"
@@ -41,20 +42,20 @@ func (r *RateValueRepository) Name() string { return rateValueTableName }
 func (r *RateValueRepository) CheckUP(ctx context.Context) error {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
 
 	count, err := rateValueCount(tx, ctx, ";")
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if count < 0 {
 		err = errors.New("unexpected result")
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -66,7 +67,7 @@ func (r *RateValueRepository) CheckUP(ctx context.Context) error {
 func (r *RateValueRepository) ObtainAllRateValueBySourceName(ctx context.Context, sourceName string) ([]domain.RateValue, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	defer printRollbackError(tx)
@@ -74,7 +75,7 @@ func (r *RateValueRepository) ObtainAllRateValueBySourceName(ctx context.Context
 	sqlCommand := "WHERE " + rateValueSourceNameFieldName + " = ?;"
 	rates, err := rateValueQueryContext(tx, ctx, sqlCommand, sourceName)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
@@ -93,7 +94,7 @@ func (r *RateValueRepository) ObtainLatestRateValuesBySourceNames(ctx context.Co
 
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -129,7 +130,7 @@ func (r *RateValueRepository) ObtainLatestRateValuesBySourceNames(ctx context.Co
 
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), internal.NewTraceError())
+		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 
@@ -140,7 +141,7 @@ func (r *RateValueRepository) ObtainLatestRateValuesBySourceNames(ctx context.Co
 		if scanErr := rows.Scan(
 			&item.ID, &item.SourceName, &item.BaseCurrency, &item.QuoteCurrency, &item.Price, &timestamp,
 		); scanErr != nil {
-			return nil, errors.Join(scanErr, internal.NewTraceError())
+			return nil, errors.Join(scanErr, loginjector.NewTraceError())
 		}
 		if parsed, parseErr := time.Parse(time.RFC3339, timestamp); parseErr == nil {
 			item.Timestamp = parsed
@@ -148,7 +149,7 @@ func (r *RateValueRepository) ObtainLatestRateValuesBySourceNames(ctx context.Co
 		result[item.SourceName] = item
 	}
 	if err = rows.Err(); err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	return result, nil
 }
@@ -158,7 +159,7 @@ func (r *RateValueRepository) ObtainLatestRateValuesBySourceNames(ctx context.Co
 func (r *RateValueRepository) ObtainLastNRateValuesBySourceName(ctx context.Context, sourceName string, limit int64) ([]domain.RateValue, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	defer printRollbackError(tx)
@@ -168,7 +169,7 @@ func (r *RateValueRepository) ObtainLastNRateValuesBySourceName(ctx context.Cont
 	sqlCommand := " WHERE " + rateValueSourceNameFieldName + " = ?" + " ORDER BY " + rateValueTimestampFieldName + " DESC, " + rateValueIdFieldName + " DESC LIMIT ?;"
 	rates, err := rateValueQueryContext(tx, ctx, sqlCommand, sourceName, limit)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
@@ -179,7 +180,7 @@ func (r *RateValueRepository) ObtainLastNRateValuesBySourceName(ctx context.Cont
 func (r *RateValueRepository) RetainRateValue(ctx context.Context, record *domain.RateValue) error {
 	if record == nil {
 		err := errors.New("rate value is nil")
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -190,14 +191,14 @@ func (r *RateValueRepository) RetainRateValue(ctx context.Context, record *domai
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
 
 	count, err := rateValueCount(tx, ctx, " WHERE "+rateValueIdFieldName+" = ?;", record.ID)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -223,24 +224,24 @@ func (r *RateValueRepository) RetainRateValue(ctx context.Context, record *domai
 		res, err = tx.ExecContext(ctx, cmd, record.ID, record.SourceName, record.BaseCurrency, record.QuoteCurrency, record.Price, record.Timestamp.Format(time.RFC3339))
 	}
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	rows, err := res.RowsAffected()
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	if rows <= 0 {
 		err = errors.New("unexpected result: no rows affected")
 		err = errors.Join(err, internal.ErrNotFound)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if err = tx.Commit(); err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -251,13 +252,13 @@ func (r *RateValueRepository) RetainRateValue(ctx context.Context, record *domai
 func (r *RateValueRepository) RemoveRateValue(ctx context.Context, record *domain.RateValue) error {
 	if record == nil {
 		err := errors.New("rate value is nil")
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
@@ -266,12 +267,12 @@ func (r *RateValueRepository) RemoveRateValue(ctx context.Context, record *domai
 	_, err = tx.ExecContext(ctx, cmd, record.ID)
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", cmd))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if err = tx.Commit(); err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -313,7 +314,7 @@ func (r *RateValueRepository) ObtainHistoryForPairsPaged(
 
 	tx, txErr := r.db.ReadOnlyTransaction(ctx)
 	if txErr != nil {
-		return nil, 0, 0, errors.Join(txErr, internal.NewStackTraceError())
+		return nil, 0, 0, errors.Join(txErr, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -342,7 +343,7 @@ func (r *RateValueRepository) ObtainHistoryForPairsPaged(
 	// Query 1: row-level COUNT(*) for the full WHERE.
 	countQuery := "SELECT COUNT(*) FROM " + rateValueTableName + " WHERE " + inClause + ";"
 	if scanErr := tx.QueryRowContext(ctx, countQuery, args...).Scan(&rowTotal); scanErr != nil {
-		return nil, 0, 0, errors.Join(scanErr, fmt.Errorf("SQL: %s", countQuery), internal.NewTraceError())
+		return nil, 0, 0, errors.Join(scanErr, fmt.Errorf("SQL: %s", countQuery), loginjector.NewTraceError())
 	}
 
 	if rowTotal == 0 {
@@ -359,7 +360,7 @@ func (r *RateValueRepository) ObtainHistoryForPairsPaged(
 
 	sqlRows, queryErr := tx.QueryContext(ctx, pageQuery, selectArgs...)
 	if queryErr != nil {
-		return nil, 0, 0, errors.Join(queryErr, fmt.Errorf("SQL: %s", pageQuery), internal.NewTraceError())
+		return nil, 0, 0, errors.Join(queryErr, fmt.Errorf("SQL: %s", pageQuery), loginjector.NewTraceError())
 	}
 	defer func() { err = errors.Join(err, sqlRows.Close()) }()
 
@@ -370,20 +371,20 @@ func (r *RateValueRepository) ObtainHistoryForPairsPaged(
 		if scanErr := sqlRows.Scan(
 			&item.ID, &item.SourceName, &item.BaseCurrency, &item.QuoteCurrency, &item.Price, &timestamp,
 		); scanErr != nil {
-			return nil, 0, 0, errors.Join(scanErr, internal.NewTraceError())
+			return nil, 0, 0, errors.Join(scanErr, loginjector.NewTraceError())
 		}
 		parsed, parseErr := time.Parse(time.RFC3339, timestamp)
 		if parseErr != nil {
 			return nil, 0, 0, errors.Join(
 				fmt.Errorf("rate %s has invalid timestamp %s: %w", item.ID, timestamp, parseErr),
-				internal.NewTraceError(),
+				loginjector.NewTraceError(),
 			)
 		}
 		item.Timestamp = parsed
 		result = append(result, item)
 	}
 	if iterErr := sqlRows.Err(); iterErr != nil {
-		return nil, 0, 0, errors.Join(iterErr, internal.NewTraceError())
+		return nil, 0, 0, errors.Join(iterErr, loginjector.NewTraceError())
 	}
 
 	// Query 3: grouped count of distinct (title, timestamp) tuples, in the same
@@ -398,7 +399,7 @@ func (r *RateValueRepository) ObtainHistoryForPairsPaged(
 		" WHERE " + inClauseJoin + ";"
 
 	if scanErr := tx.QueryRowContext(ctx, groupedQuery, args...).Scan(&groupedTotal); scanErr != nil {
-		return nil, 0, 0, errors.Join(scanErr, fmt.Errorf("SQL: %s", groupedQuery), internal.NewTraceError())
+		return nil, 0, 0, errors.Join(scanErr, fmt.Errorf("SQL: %s", groupedQuery), loginjector.NewTraceError())
 	}
 
 	return result, rowTotal, groupedTotal, nil
@@ -423,7 +424,7 @@ func (r *RateValueRepository) ObtainValuesForPairsSince(ctx context.Context, pai
 
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -453,7 +454,7 @@ func (r *RateValueRepository) ObtainValuesForPairsSince(ctx context.Context, pai
 
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), internal.NewTraceError())
+		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 
@@ -464,17 +465,17 @@ func (r *RateValueRepository) ObtainValuesForPairsSince(ctx context.Context, pai
 		if scanErr := rows.Scan(
 			&item.ID, &item.SourceName, &item.BaseCurrency, &item.QuoteCurrency, &item.Price, &timestamp,
 		); scanErr != nil {
-			return nil, errors.Join(scanErr, internal.NewTraceError())
+			return nil, errors.Join(scanErr, loginjector.NewTraceError())
 		}
 		parsed, parseErr := time.Parse(time.RFC3339, timestamp)
 		if parseErr != nil {
-			return nil, errors.Join(fmt.Errorf("rate %s has invalid timestamp %s: %w", item.ID, timestamp, parseErr), internal.NewTraceError())
+			return nil, errors.Join(fmt.Errorf("rate %s has invalid timestamp %s: %w", item.ID, timestamp, parseErr), loginjector.NewTraceError())
 		}
 		item.Timestamp = parsed
 		result = append(result, item)
 	}
 	if iterErr := rows.Err(); iterErr != nil {
-		return nil, errors.Join(iterErr, internal.NewTraceError())
+		return nil, errors.Join(iterErr, loginjector.NewTraceError())
 	}
 	if result == nil {
 		result = []domain.RateValue{}
@@ -512,7 +513,7 @@ func rateValueCount(tx *sql.Tx, ctx context.Context, condition string, args ...a
 		return 0, nil
 	} else if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return 0, err
 	}
 
@@ -522,7 +523,7 @@ func rateValueCount(tx *sql.Tx, ctx context.Context, condition string, args ...a
 func rateValueQueryContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (items []domain.RateValue, err error) {
 	count, err := rateValueCount(tx, ctx, condition, args...)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return
 	}
 	if count == 0 {
@@ -535,7 +536,7 @@ func rateValueQueryContext(tx *sql.Tx, ctx context.Context, condition string, ar
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return
 	}
 	defer func(rows io.Closer) { err = errors.Join(err, rows.Close()) }(rows)
@@ -555,14 +556,14 @@ func rateValueQueryContext(tx *sql.Tx, ctx context.Context, condition string, ar
 			&timestamp,
 		)
 		if err != nil {
-			err = errors.Join(err, internal.NewTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return
 		}
 
 		item.Timestamp, err = time.Parse(time.RFC3339, timestamp)
 		if err != nil {
 			err = fmt.Errorf("rate %s has invalid timestamp %s: %w", item.ID, timestamp, err)
-			err = errors.Join(err, internal.NewTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return
 		}
 

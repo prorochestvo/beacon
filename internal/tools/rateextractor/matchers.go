@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strconv"
 
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 )
 
 // ApplyRegex compiles pattern and extracts the first capture group from payload.
@@ -17,13 +17,13 @@ func ApplyRegex(pattern string, payload []byte) ([]byte, error) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		err = fmt.Errorf("compile pattern %q: %w", pattern, err)
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	matches := re.FindSubmatch(payload)
 	if len(matches) < 2 {
 		err = fmt.Errorf("pattern %q produced no match in body (len=%d)", pattern, len(payload))
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	return matches[1], nil

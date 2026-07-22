@@ -158,6 +158,39 @@ The `webAppURL` BotFather setting must point to `https://<host>/` (trailing slas
 
 Standard release layout: immutable `/opt/beacon/artifacts/<VERSION_ID>/` build sets and a `bin/release` channel symlink the units run through. **Security boundary**: the CI deploy user may write only under `artifacts/` and `bin/`; `.env`, the DB, and the base dir are root-owned and out of reach. The `release.yml` job (on an `r_*` tag) uploads a new `artifacts/<VERSION_ID>/`, flips the symlink, runs migrations via the **`beacon-migrate` one-shot unit (root, so the deploy user never writes the DB)**, restarts `beacon`, and health-gates on `/health/check` with one-symlink rollback. Schema reconciliation is deploy-time, not startup-time — the service unit has no `ExecStartPre` migrator. `make init` provisions the layout, both units, the narrow `/etc/sudoers.d/beacon-deploy`, and the nginx vhost. See `deploy/README.md`.
 
+### Forecasting (`internal/tools/rateforecaster`)
+
+Method doctrine (baseline-first, series profiling, walk-forward backtesting, metrics,
+leakage traps) comes from the `knowledge:forecasting` skill — load it for any work
+here. Beacon-specific rules:
+
+- **Contract**: `Forecaster.Forecast(ctx, []*domain.RateValue) (domain.ForecastResult, error)`
+  in `forecaster.go`. `rates` is **newest-first**; return `ErrInsufficientData` when
+  `len(rates) < 3`; implementations must be safe for concurrent use. One implementation
+  per file alongside `moving_average.go`, `linear_regression.go`, `composite.go`.
+- **Data access**: `ObtainLastNRateValuesBySourceName` (`internal/repository/ratevalue.go`);
+  query through the compound index `idx_rate_values_lookup`
+  (`source_name, base_currency, quote_currency, timestamp DESC`), never bypass it.
+- **`ForecastResult.Method` strings** are stable short identifiers that land in logs and
+  DB rows (`"moving_average"`, `"linear_regression"`, `"composite"`; new ones like
+  `"ar2"`, `"holt_winters"`, `"naive_last"`). Never encode hyperparameters in the
+  string — those are struct fields.
+- **Shipping bar**: a new model must beat naive last-value **and** the existing
+  `MovingAverageForecaster` on the same walk-forward window, or it doesn't ship. For FX,
+  weigh directional accuracy alongside error metrics. The backtest ships in the same
+  change, as subtests of the implementation's `Test*` function; report the metrics
+  table (new model + baselines, same window) in chat — numbers, not adjectives.
+- **Profile on real history**: `make backups` pulls production data to
+  `./backups/beacon.sqlite` — use it; don't invent synthetic fixtures when real data
+  is on disk.
+- **Dependencies**: the bar is "gonum can't do this cleanly" (AR(p) fits via
+  `gonum/mat.Solve` on the lag design matrix — no regression dep needed). New deps are
+  proposed in the plan for explicit approval.
+- **Anomaly detection is a separate concern** — a parallel `Detector` in
+  `internal/tools/rateanomaly/` (mirroring the rateforecaster layout), not a
+  `Forecaster` implementation. Cheapest credible start: residual threshold
+  `|observed − predicted| > k·σ` over an existing forecaster.
+
 ## Error Handling
 
 `internal.PublicError` (in `internal/errors.go`, alongside `TraceError`, `StackTraceError`, `HttpCodeError`, and the `ErrNotFound` sentinel) carries messages **safe to show to end users**. Wrap at the point the error is created (service layer) with `internal.NewPublicError("...")` when the failure meaningfully tells the user something; return a plain `error` for everything else (DB down, unexpected nil, ...). The controller catches every sub-handler error and sends `PublicError.Details()` for a public error, else a generic fallback constant.
@@ -233,58 +266,37 @@ reason.
 
 ## Constraints
 
+Generic Go conventions (style, file declaration order, test structure, godoc,
+error discipline, build hygiene, code organization) come from the `stack-go`
+plugin skills — they are not restated here. Project-specific constraints:
+
 - **Forbidden imports**: CGO-dependent SQLite drivers (e.g. `github.com/mattn/go-sqlite3`)
   must never appear in `go.mod` — persistence is pure-Go via `modernc.org/sqlite`.
   Enforced via `make lint`.
-- **Testing**: Use `github.com/stretchr/testify`; run tests with `-race`; parallel
-  subtests preferred where there's no shared mutable state.
-- **One `Test*` per method, scenarios as subtests**: each tested method/function gets
-  exactly one top-level test function named after it (e.g. `TestEncode` for `Encode`),
-  and every scenario for that method lives as a `t.Run("descriptive name", ...)`
-  subtest inside it. Do **not** create separate top-level tests like
-  `TestEncode_EmptyInput`, `TestEncode_Unicode`, `TestEncode_Error` — these belong
-  as subtests of a single `TestEncode`. Methods on a type follow the same rule with
-  the standard `TestType_Method` form (e.g. `TestUser_Validate`).
-- **No CGO**: `CGO_ENABLED=0` must be set for all build and test commands (unless the
-  project intentionally requires CGO).
-- **Compile-time interface checks**: Every mock/stub struct in test files must have a
-  `var _ interfaceName = &mockStruct{}` assertion at the top of the file.
-- **No section-divider comments**: Do not use `// --- section ---` or `// ----` style
-  separator comments. Let the code structure speak for itself.
-- **No skipped errors**: Never use `_` to discard error return values in production or
-  test code. Always capture the error and assert/check it. The only exceptions are
-  `fmt.Fprint*` writes to loggers, `Rollback()` calls in error-recovery paths, and
-  resource `.Close()` in `t.Cleanup` / `defer`.
-- **Godoc on exported identifiers**: every exported Type/Func/Method/Var/Const gets a doc comment starting with its name and ending with a period; one `// Package <name>` per package (`// Command <name>` for `cmd/*`). Skip it if it would only restate the signature. Document the non-obvious: concurrency guarantees, which methods return `PublicError` vs plain errors, lifecycle contracts ("caller must Close"), error-sentinel conditions. Preserve existing WHY-comments verbatim; comment unexported symbols only when intent is non-obvious.
-- **Build outputs live in `./build/`, scratch in `./tmp/`, logs in `./logs/`**:
-  Never run `go build` without `-o ./build/<name>` — bare `go build ./cmd/web`
-  drops a `./web` binary in the project root, which is **not** in `.gitignore` and
-  would be picked up by `git add .`. The same applies to any throwaway artifacts,
-  fixtures, or intermediate files: use `./tmp/` (e.g. `./tmp/probe_*`) rather than
-  the repo root. Runtime / cyclic logs go to `./logs/`. Only these three directories
-  are gitignored at the root.
+- **Scratch files** go to `./tmp/` (e.g. `./tmp/probe_*`), never the repo root; bare
+  `go build ./cmd/web` drops a `./web` binary in the root, which is not gitignored.
 
-## Planning Workflow
+## Working agreement
 
-Non-trivial work is tracked as a Markdown plan file before implementation.
+All non-trivial work follows the plan-first pipeline:
 
-- **Active** (`plans/`) — `NNN-slug.md`, zero-padded sequential; next number = highest existing prefix across `plans/`, `completed/`, and `history/`; readable slug (`002-add-rate-limiting.md`, not `004-task.md`).
-- **Completed** (`plans/completed/`) — `YYMMDD.NNNN.slug.md`, where `NNNN` is a daily index resetting to `0001` each day. Move here only when every acceptance criterion is met and `make test` passes.
-- **Archived** (`plans/history/`) — abandoned/superseded plans, keeping their original `NNN-` filename.
+1. **Plan** — the `architect` agent writes `plans/NNN-slug.md` (create via the
+   `pipeline:new-plan` skill). No source edits before a plan exists.
+2. **Implement** — the `engineer` agent executes the plan's tasks with tests.
+3. **Review** — three `reviewer` agents launched in parallel in ONE message, each
+   prompt naming its lens (A: correctness & tests, B: security & operations,
+   C: performance & architecture) and the changed files. Full three-lens fan-out is
+   mandatory on the first review; the post-fix re-review is ONE solo reviewer scoped
+   to the changed lines.
+4. **Gate** — `make test` must be green before review; a red tree goes to the
+   `testdoctor` agent first, at any stage.
+5. **Complete** — the orchestrator merges the three reports, deduplicates, resolves
+   conflicting verdicts (naming what was rejected and why; the user has final say).
+   P0/P1 findings loop back to the engineer. Only when every P0/P1 is fixed or
+   explicitly accepted: move the plan via the `pipeline:complete-plan` skill.
 
-Rules: one plan per concern; create (or confirm) the plan before touching source; if implementation diverges, update the plan before completing it. Each plan carries: Overview, Assumptions, Tasks (each with Description / Acceptance Criteria / Pitfalls / Complexity), Execution Order, Risks, Trade-offs.
+Forecasting work follows the same pipeline; the engineer and reviewers load the
+`knowledge:forecasting` skill and the **Forecasting** section above.
 
-## Agent Pipeline
-
-Non-trivial tasks run a three-stage pipeline; no stage is skipped:
-
-1. **`gocode-architect`** → writes/updates the plan file in `plans/` (see Planning Workflow) before any code.
-2. **`gocode-engineer`** → implements the plan tasks plus their tests.
-3. **`gocode-reviewer` ×5, parallel** — launched in a **single message** (five tool calls) so they run concurrently; each prompt names its lens and states what to SKIP to avoid overlap:
-   - **A** correctness, races, edge cases, error paths
-   - **B** tests, coverage, flakiness, fixtures
-   - **C** ops, observability, log volume, operator UX
-   - **D** security, input validation, secrets, auth boundaries
-   - **E** performance & architecture — allocations, blocking I/O, leaks, API-contract / exported-surface stability, layering
-
-The orchestrator (main session) synthesises the five reports, resolves conflicting verdicts (naming the rejected suggestion; user has final say), and gates completion: the plan moves to `plans/completed/` only once every Blocker/Major is fixed or explicitly accepted. `make test` must be green before review — hand a red tree to **`gocode-testdoctor`** (scoped to the minimal patch that goes green, no redesign) first. After a fix, re-review is a **single** pass scoped to the changed lines, not another five-way fan-out.
+Plans live in `plans/` (active), `plans/completed/` (shipped, `YYMMDD.NNNN.slug.md`),
+`plans/history/` (abandoned/superseded). One plan per concern.

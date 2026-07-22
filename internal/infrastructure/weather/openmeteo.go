@@ -12,9 +12,10 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/seilbekskindirov/beacon/internal"
-	"github.com/seilbekskindirov/beacon/internal/domain"
 	_ "time/tzdata" // embed IANA tzdata so LoadLocation works without system tzdata (WASM, containers)
+
+	"github.com/prorochestvo/loginjector"
+	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
 const (
@@ -90,7 +91,7 @@ func NewOpenMeteoWithClient(client *http.Client) *OpenMeteo {
 func (o *OpenMeteo) Geocode(ctx context.Context, name string, count int) ([]GeoResult, error) {
 	u, err := url.Parse(openMeteoGeocodingBase)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	q := u.Query()
 	q.Set("name", name)
@@ -119,7 +120,7 @@ func (o *OpenMeteo) Geocode(ctx context.Context, name string, count int) ([]GeoR
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, errors.Join(
 			fmt.Errorf("open-meteo geocode: decode response: %w", err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -165,7 +166,7 @@ func LocationKey(geo GeoResult) string {
 func (o *OpenMeteo) Forecast(ctx context.Context, lat, lng float64) (*domain.WeatherObservation, error) {
 	u, err := url.Parse(openMeteoForecastBase)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	q := u.Query()
 	q.Set("latitude", fmt.Sprintf("%f", lat))
@@ -224,14 +225,14 @@ func decodeOpenMeteoForecast(body []byte, lat, lng float64) (*domain.WeatherObse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, errors.Join(
 			fmt.Errorf("open-meteo forecast: decode response: %w", err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
 	if len(resp.Daily.Time) == 0 {
 		return nil, errors.Join(
 			errors.New("open-meteo forecast: daily[] array is empty"),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -244,7 +245,7 @@ func decodeOpenMeteoForecast(body []byte, lat, lng float64) (*domain.WeatherObse
 	if err != nil {
 		return nil, errors.Join(
 			fmt.Errorf("open-meteo forecast: load timezone %q: %w", resp.Timezone, err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -298,7 +299,7 @@ func decodeOpenMeteoForecast(body []byte, lat, lng float64) (*domain.WeatherObse
 		if err != nil {
 			return nil, errors.Join(
 				fmt.Errorf("open-meteo forecast: parse sunrise %q: %w", resp.Daily.Sunrise[0], err),
-				internal.NewTraceError(),
+				loginjector.NewTraceError(),
 			)
 		}
 		obs.Sunrise = &t
@@ -308,7 +309,7 @@ func decodeOpenMeteoForecast(body []byte, lat, lng float64) (*domain.WeatherObse
 		if err != nil {
 			return nil, errors.Join(
 				fmt.Errorf("open-meteo forecast: parse sunset %q: %w", resp.Daily.Sunset[0], err),
-				internal.NewTraceError(),
+				loginjector.NewTraceError(),
 			)
 		}
 		obs.Sunset = &t
@@ -349,7 +350,7 @@ func (o *OpenMeteo) get(ctx context.Context, rawURL string) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Join(
 			fmt.Errorf("open-meteo: create request: %w", err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 	req.Header.Set("User-Agent", openMeteoUserAgent)
@@ -358,7 +359,7 @@ func (o *OpenMeteo) get(ctx context.Context, rawURL string) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Join(
 			fmt.Errorf("open-meteo: do request: %w", err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 	defer func(c io.Closer) { _ = c.Close() }(resp.Body)
@@ -368,7 +369,7 @@ func (o *OpenMeteo) get(ctx context.Context, rawURL string) ([]byte, error) {
 			// Omit the query string from the error to avoid leaking latitude/longitude
 			// coordinates (forecast) or search terms (geocode) into logs.
 			fmt.Errorf("open-meteo: unexpected status %d for %s%s", resp.StatusCode, req.URL.Host, req.URL.Path),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -376,7 +377,7 @@ func (o *OpenMeteo) get(ctx context.Context, rawURL string) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Join(
 			fmt.Errorf("open-meteo: read response body: %w", err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 	return body, nil

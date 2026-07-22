@@ -16,7 +16,7 @@ import (
 
 	tgbotapi "github.com/OvyFlash/telegram-bot-api"
 	"github.com/prorochestvo/dsninjector"
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 )
 
 // UpdateHandler is called for every incoming Telegram update in the event bus.
@@ -46,7 +46,7 @@ func NewTBotClient(tbotDSN dsninjector.DataSource, logger io.Writer) (*TelegramB
 			err = fmt.Errorf("admin chat id cannot be zero")
 		}
 		err = fmt.Errorf("invalid admin chat id: %w", err)
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	// Transport whose Proxy always returns nil: Telegram Bot API traffic is
@@ -94,7 +94,7 @@ func (tbot *TelegramBotClient) AdminChatID() int64 { return int64(tbot.adminChat
 func (tbot *TelegramBotClient) Ping(_ context.Context) error {
 	u, err := tbot.bot.GetMe()
 	if err != nil {
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	if u.ID == 0 {
 		return errors.New("telegram: bot ping failed: invalid response")
@@ -106,7 +106,7 @@ func (tbot *TelegramBotClient) Ping(_ context.Context) error {
 func (tbot *TelegramBotClient) Me(_ context.Context) (TelegramChatID, string, error) {
 	u, err := tbot.bot.GetMe()
 	if err != nil {
-		return 0, "", errors.Join(err, internal.NewTraceError())
+		return 0, "", errors.Join(err, loginjector.NewTraceError())
 	}
 	if u.ID == 0 {
 		return 0, "", errors.New("telegram: bot ping failed: invalid response")
@@ -157,7 +157,7 @@ func (tbot *TelegramBotClient) SendHTMLMessageReturning(_ context.Context, chatI
 	m.ParseMode = tgbotapi.ModeHTML
 	msg, err := tbot.dispatch(m, int64(chatID), "html")
 	if err != nil {
-		return 0, errors.Join(err, internal.NewTraceError())
+		return 0, errors.Join(err, loginjector.NewTraceError())
 	}
 	return msg.MessageID, nil
 }
@@ -179,7 +179,7 @@ func (tbot *TelegramBotClient) SendHTMLMessageWithKeyboard(_ context.Context, ch
 	m.ParseMode = tgbotapi.ModeHTML
 	m.ReplyMarkup = keyboard
 	if _, err := tbot.dispatch(m, int64(chatID), "html+kb"); err != nil {
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -189,7 +189,7 @@ func (tbot *TelegramBotClient) AnswerCallbackQuery(_ context.Context, callbackQu
 	cfg := tgbotapi.NewCallback(callbackQueryID, text)
 	if _, err := tbot.bot.Request(cfg); err != nil {
 		log.Printf("telegram: send kind=callback_ack err=%v", err)
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	log.Printf("telegram: send kind=callback_ack")
 	return nil
@@ -204,7 +204,7 @@ func (tbot *TelegramBotClient) EditMessageText(_ context.Context, chatID Telegra
 		if strings.Contains(err.Error(), "message is not modified") {
 			return nil
 		}
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -227,7 +227,7 @@ func (tbot *TelegramBotClient) EditHTMLMessageWithKeyboard(
 			strings.Contains(s, "message to edit not found") {
 			return nil
 		}
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -264,7 +264,7 @@ func (tbot *TelegramBotClient) Listen(ctx context.Context, handler UpdateHandler
 // tgbotapi.Chattable.
 func (tbot *TelegramBotClient) emit(_ context.Context, m tgbotapi.Chattable, chatID int64, kind string) error {
 	if _, err := tbot.dispatch(m, chatID, kind); err != nil {
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	return nil
 }

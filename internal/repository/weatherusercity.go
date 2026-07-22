@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/domain/identity"
@@ -29,17 +30,17 @@ func (r *WeatherUserCityRepository) Name() string { return weatherUserCityTableN
 func (r *WeatherUserCityRepository) CheckUP(ctx context.Context) error {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
 	query := "SELECT COUNT(*) FROM " + weatherUserCityTableName + ";"
 	var count int64
 	if err := tx.QueryRowContext(ctx, query).Scan(&count); err != nil {
-		return errors.Join(err, fmt.Errorf("SQL: %s", query), internal.NewTraceError())
+		return errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
 	if count < 0 {
-		return errors.Join(errors.New("unexpected result"), internal.NewStackTraceError())
+		return errors.Join(errors.New("unexpected result"), loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -53,7 +54,7 @@ func (r *WeatherUserCityRepository) CheckUP(ctx context.Context) error {
 // use SetWeatherAlertLatched or MarkWeatherAlertFired instead.
 func (r *WeatherUserCityRepository) RetainWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error {
 	if record == nil {
-		return errors.Join(errors.New("weather user city is nil"), internal.NewTraceError())
+		return errors.Join(errors.New("weather user city is nil"), loginjector.NewTraceError())
 	}
 
 	now := time.Now().UTC()
@@ -67,7 +68,7 @@ func (r *WeatherUserCityRepository) RetainWeatherUserCity(ctx context.Context, r
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -143,11 +144,11 @@ func (r *WeatherUserCityRepository) RetainWeatherUserCity(ctx context.Context, r
 		record.UpdatedAt.Format(time.RFC3339),
 		record.CreatedAt.Format(time.RFC3339),
 	).Scan(&record.ID); err != nil {
-		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), internal.NewTraceError())
+		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), loginjector.NewTraceError())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -157,7 +158,7 @@ func (r *WeatherUserCityRepository) RetainWeatherUserCity(ctx context.Context, r
 func (r *WeatherUserCityRepository) ObtainWeatherUserCitiesByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.WeatherUserCity, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -170,7 +171,7 @@ func (r *WeatherUserCityRepository) ObtainWeatherUserCitiesByUserID(ctx context.
 func (r *WeatherUserCityRepository) ObtainWeatherUserCityByID(ctx context.Context, id string) (*domain.WeatherUserCity, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -188,22 +189,22 @@ func (r *WeatherUserCityRepository) ObtainWeatherUserCityByID(ctx context.Contex
 // RemoveWeatherUserCity deletes the given city subscription by ID.
 func (r *WeatherUserCityRepository) RemoveWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error {
 	if record == nil {
-		return errors.Join(errors.New("weather user city is nil"), internal.NewTraceError())
+		return errors.Join(errors.New("weather user city is nil"), loginjector.NewTraceError())
 	}
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
 	cmd := "DELETE FROM " + weatherUserCityTableName + " WHERE " + weatherUserCityIDFieldName + " = ?;"
 	if _, err := tx.ExecContext(ctx, cmd, record.ID); err != nil {
-		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), internal.NewTraceError())
+		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), loginjector.NewTraceError())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -218,7 +219,7 @@ func (r *WeatherUserCityRepository) RemoveWeatherUserCitiesByLocation(
 ) error {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -228,19 +229,19 @@ func (r *WeatherUserCityRepository) RemoveWeatherUserCitiesByLocation(
 		weatherUserCityLocationIDFieldName + " = ?;"
 	res, err := tx.ExecContext(ctx, cmd, userType, userID, locationID)
 	if err != nil {
-		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), internal.NewTraceError())
+		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), loginjector.NewTraceError())
 	}
 
 	affected, err := res.RowsAffected()
 	if err != nil {
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	if affected == 0 {
-		return errors.Join(errors.New("unexpected result: no rows affected"), internal.ErrNotFound, internal.NewTraceError())
+		return errors.Join(errors.New("unexpected result: no rows affected"), internal.ErrNotFound, loginjector.NewTraceError())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -250,7 +251,7 @@ func (r *WeatherUserCityRepository) RemoveWeatherUserCitiesByLocation(
 func (r *WeatherUserCityRepository) ObtainDistinctWeatherLocations(ctx context.Context) ([]domain.WeatherUserCity, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -266,7 +267,7 @@ func (r *WeatherUserCityRepository) ObtainDistinctWeatherLocations(ctx context.C
 
 	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
-		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), internal.NewTraceError())
+		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 
@@ -279,7 +280,7 @@ func (r *WeatherUserCityRepository) ObtainDistinctWeatherLocations(ctx context.C
 			&item.Latitude,
 			&item.Longitude,
 		); scanErr != nil {
-			return nil, errors.Join(scanErr, internal.NewTraceError())
+			return nil, errors.Join(scanErr, loginjector.NewTraceError())
 		}
 		items = append(items, item)
 	}
@@ -295,7 +296,7 @@ func (r *WeatherUserCityRepository) ObtainDistinctWeatherLocations(ctx context.C
 func (r *WeatherUserCityRepository) ObtainDueWeatherUserCities(ctx context.Context, notifyKind domain.WeatherNotifyKind) ([]domain.WeatherUserCity, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -310,7 +311,7 @@ func (r *WeatherUserCityRepository) ObtainDueWeatherUserCities(ctx context.Conte
 func (r *WeatherUserCityRepository) AdvanceLastNotifiedAt(ctx context.Context, id string, when time.Time) error {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -318,11 +319,11 @@ func (r *WeatherUserCityRepository) AdvanceLastNotifiedAt(ctx context.Context, i
 		" SET " + weatherUserCityLastNotifiedAtFieldName + " = ?" +
 		" WHERE " + weatherUserCityIDFieldName + " = ?;"
 	if _, err := tx.ExecContext(ctx, cmd, when.Format(time.RFC3339), id); err != nil {
-		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), internal.NewTraceError())
+		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), loginjector.NewTraceError())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -334,7 +335,7 @@ func (r *WeatherUserCityRepository) AdvanceLastNotifiedAt(ctx context.Context, i
 func (r *WeatherUserCityRepository) SetWeatherAlertLatched(ctx context.Context, id string, latched bool) error {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -346,11 +347,11 @@ func (r *WeatherUserCityRepository) SetWeatherAlertLatched(ctx context.Context, 
 		" SET " + weatherUserCityAlertLatchedFieldName + " = ?" +
 		" WHERE " + weatherUserCityIDFieldName + " = ?;"
 	if _, err := tx.ExecContext(ctx, cmd, latchedInt, id); err != nil {
-		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), internal.NewTraceError())
+		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), loginjector.NewTraceError())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -362,7 +363,7 @@ func (r *WeatherUserCityRepository) SetWeatherAlertLatched(ctx context.Context, 
 func (r *WeatherUserCityRepository) MarkWeatherAlertFired(ctx context.Context, id string, firedForDate time.Time) error {
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -371,11 +372,11 @@ func (r *WeatherUserCityRepository) MarkWeatherAlertFired(ctx context.Context, i
 		weatherUserCityLastNotifiedAtFieldName + " = ?" +
 		" WHERE " + weatherUserCityIDFieldName + " = ?;"
 	if _, err := tx.ExecContext(ctx, cmd, firedForDate.Format(time.RFC3339), id); err != nil {
-		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), internal.NewTraceError())
+		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), loginjector.NewTraceError())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -426,7 +427,7 @@ func weatherUserCityQueryContext(tx *sql.Tx, ctx context.Context, condition stri
 
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), internal.NewTraceError())
+		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 
@@ -474,20 +475,20 @@ func weatherUserCityScan(s weatherUserCityScanner) (domain.WeatherUserCity, erro
 		&updatedAt,
 		&createdAt,
 	); err != nil {
-		return domain.WeatherUserCity{}, errors.Join(err, internal.NewTraceError())
+		return domain.WeatherUserCity{}, errors.Join(err, loginjector.NewTraceError())
 	}
 	item.AlertLatched = alertLatched != 0
 
 	var err error
 	if item.UpdatedAt, err = time.Parse(time.RFC3339, updatedAt); err != nil {
-		return domain.WeatherUserCity{}, errors.Join(err, internal.NewTraceError())
+		return domain.WeatherUserCity{}, errors.Join(err, loginjector.NewTraceError())
 	}
 	if item.CreatedAt, err = time.Parse(time.RFC3339, createdAt); err != nil {
-		return domain.WeatherUserCity{}, errors.Join(err, internal.NewTraceError())
+		return domain.WeatherUserCity{}, errors.Join(err, loginjector.NewTraceError())
 	}
 	if lastNotifiedAt != nil && *lastNotifiedAt != "" {
 		if item.LastNotifiedAt, err = time.Parse(time.RFC3339, *lastNotifiedAt); err != nil {
-			return domain.WeatherUserCity{}, errors.Join(err, internal.NewTraceError())
+			return domain.WeatherUserCity{}, errors.Join(err, loginjector.NewTraceError())
 		}
 	}
 

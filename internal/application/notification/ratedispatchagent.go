@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	integration "github.com/seilbekskindirov/beacon/internal/infrastructure/telegrambot"
 )
@@ -56,7 +56,7 @@ type telegramClient interface {
 func (a *RateDispatchAgent) Run(ctx context.Context) error {
 	events, err := a.rateUserEventRepository.ObtainUnprocessedRateUserEvents(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -81,7 +81,7 @@ func (a *RateDispatchAgent) Run(ctx context.Context) error {
 			if err != nil {
 				event.LastError = err.Error()
 				event.Status = domain.RateUserEventStatusFailed
-				errs = append(errs, errors.Join(err, internal.NewTraceError()))
+				errs = append(errs, errors.Join(err, loginjector.NewTraceError()))
 			} else {
 				event.Status = domain.RateUserEventStatusSent
 				event.LastError = ""
@@ -90,7 +90,7 @@ func (a *RateDispatchAgent) Run(ctx context.Context) error {
 
 		err = a.rateUserEventRepository.RetainRateUserEvent(ctx, &event)
 		if err != nil {
-			errs = append(errs, errors.Join(err, internal.NewTraceError()))
+			errs = append(errs, errors.Join(err, loginjector.NewTraceError()))
 		}
 
 		// Delay to avoid Telegram rate limits. ctx-aware so SIGTERM mid-batch
@@ -113,7 +113,7 @@ func (a *RateDispatchAgent) Vacuum(ctx context.Context) error {
 func (a *RateDispatchAgent) runUserTypeTelegram(ctx context.Context, event *domain.RateUserEvent) error {
 	if event == nil {
 		err := errors.New("notification record is nil")
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -123,13 +123,13 @@ func (a *RateDispatchAgent) runUserTypeTelegram(ctx context.Context, event *doma
 			err = fmt.Errorf("invalid user id: %s", event.UserID)
 		}
 		err = errors.Join(fmt.Errorf("invalid Telegram chat ID: %s", event.UserID), err)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	err = a.telegramClient.SendHTMLMessage(ctx, integration.TelegramChatID(chatID), event.Message)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 

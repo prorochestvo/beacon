@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/prorochestvo/dsninjector"
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/application/collection"
 	"github.com/seilbekskindirov/beacon/internal/infrastructure/sqlitedb"
@@ -141,8 +142,8 @@ func main() {
 		func() {
 			defer func() {
 				if rec := recover(); rec != nil {
-					stackErr := internal.NewStackTraceError()
-					log.Printf("execution: runner panic recovered: %v\n%s", rec, stackErr.Error())
+					stackErr := loginjector.NewStackTraceError()
+					log.Printf("execution: runner panic recovered: %v\n%s\n%s", rec, loginjector.StackRedacted(stackErr), stackErr.Runtime())
 					errs = append(errs, fmt.Errorf("runner panic: %v", rec))
 				}
 			}()
@@ -222,12 +223,12 @@ func buildRunners(
 		logger,
 	)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	weatherAgent, err := wireWeather(weatherCity, weatherObs, proxyURL, logger)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	return []runner{collectionRateAgent, weatherAgent}, nil
@@ -246,7 +247,7 @@ func wireWeather(
 ) (runner, error) {
 	openMeteoProvider, err := weatherinfra.NewOpenMeteo(proxyURL)
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("weather: open-meteo provider: %w", err), internal.NewTraceError())
+		return nil, errors.Join(fmt.Errorf("weather: open-meteo provider: %w", err), loginjector.NewTraceError())
 	}
 
 	weatherAgent, err := collection.NewWeatherAgent(
@@ -255,7 +256,7 @@ func wireWeather(
 		logger,
 	)
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("weather: agent: %w", err), internal.NewTraceError())
+		return nil, errors.Join(fmt.Errorf("weather: agent: %w", err), loginjector.NewTraceError())
 	}
 	return weatherAgent, nil
 }

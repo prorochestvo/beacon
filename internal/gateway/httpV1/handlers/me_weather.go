@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
@@ -258,7 +259,7 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		if encErr := json.NewEncoder(w).Encode(map[string]string{"error": pub.Details()}); encErr != nil {
-			h.logger.Print(errors.Join(fmt.Errorf("encode validation error response: %w", encErr), internal.NewTraceError()))
+			h.logger.Print(errors.Join(fmt.Errorf("encode validation error response: %w", encErr), loginjector.NewTraceError()))
 		}
 		return
 	}
@@ -306,7 +307,7 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(dto.WeatherCityCreateResponse{ID: record.ID}); err != nil {
 		h.logger.Print(errors.Join(
 			fmt.Errorf("encode CreateMeWeatherCity response: %w", err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		))
 	}
 }
@@ -353,7 +354,7 @@ func (h *Handler) DeleteMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		if encErr := json.NewEncoder(w).Encode(map[string]string{"error": pub.Details()}); encErr != nil {
-			h.logger.Print(errors.Join(fmt.Errorf("encode DeleteMeWeatherCity thaw-conflict response: %w", encErr), internal.NewTraceError()))
+			h.logger.Print(errors.Join(fmt.Errorf("encode DeleteMeWeatherCity thaw-conflict response: %w", encErr), loginjector.NewTraceError()))
 		}
 		return
 	}
@@ -407,7 +408,7 @@ func (h *Handler) DeleteMeWeatherLocation(w http.ResponseWriter, r *http.Request
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
 			if encErr := json.NewEncoder(w).Encode(map[string]string{"error": pub.Details()}); encErr != nil {
-				h.logger.Print(errors.Join(fmt.Errorf("encode DeleteMeWeatherLocation not-found response: %w", encErr), internal.NewTraceError()))
+				h.logger.Print(errors.Join(fmt.Errorf("encode DeleteMeWeatherLocation not-found response: %w", encErr), loginjector.NewTraceError()))
 			}
 			return
 		}

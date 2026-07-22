@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
@@ -96,7 +97,7 @@ type rateUserProfileRepository interface {
 func (a *RateCheckAgent) Run(ctx context.Context) error {
 	sources, err := a.rateSourceRepository.ObtainAllRateSources(ctx)
 	if err != nil {
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	if len(sources) == 0 {
 		return nil
@@ -114,7 +115,7 @@ func (a *RateCheckAgent) Run(ctx context.Context) error {
 	for _, source := range sources {
 		values, err := a.rateValueRepository.ObtainLastNRateValuesBySourceName(ctx, source.Name, 1)
 		if err != nil {
-			errs[source.Name] = errors.Join(errs[source.Name], errors.Join(err, internal.NewTraceError()))
+			errs[source.Name] = errors.Join(errs[source.Name], errors.Join(err, loginjector.NewTraceError()))
 			continue
 		}
 		if len(values) == 0 {
@@ -124,7 +125,7 @@ func (a *RateCheckAgent) Run(ctx context.Context) error {
 
 		subscriptions, err := a.rateUserSubscriptionRepository.ObtainRateUserSubscriptionsBySource(ctx, source.Name)
 		if err != nil {
-			errs[source.Name] = errors.Join(errs[source.Name], errors.Join(err, internal.NewTraceError()))
+			errs[source.Name] = errors.Join(errs[source.Name], errors.Join(err, loginjector.NewTraceError()))
 			continue
 		}
 
@@ -137,7 +138,7 @@ func (a *RateCheckAgent) Run(ctx context.Context) error {
 
 			ok, err := sub.IsDue(now, delta)
 			if err != nil {
-				errs[source.Name] = errors.Join(errs[source.Name], errors.Join(err, internal.NewTraceError()))
+				errs[source.Name] = errors.Join(errs[source.Name], errors.Join(err, loginjector.NewTraceError()))
 				continue
 			}
 			if !ok {
@@ -153,7 +154,7 @@ func (a *RateCheckAgent) Run(ctx context.Context) error {
 			// the bucket-fold below so a sub collapsing into an existing bucket still advances.
 			sub.LatestNotifiedRate = currentValue
 			if retainErr := a.rateUserSubscriptionRepository.RetainRateUserSubscription(ctx, &sub); retainErr != nil {
-				errs[source.Name] = errors.Join(errs[source.Name], errors.Join(retainErr, internal.NewTraceError()))
+				errs[source.Name] = errors.Join(errs[source.Name], errors.Join(retainErr, loginjector.NewTraceError()))
 			}
 
 			if sub.UserType != domain.UserTypeTelegram {

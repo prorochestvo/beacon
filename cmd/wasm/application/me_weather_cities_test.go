@@ -26,12 +26,16 @@ type weatherFakeFetcher struct {
 	postErr map[string]error
 	// delErr maps URL prefix → error for DELETE requests via FetchNoContent.
 	delErr map[string]error
+	// lastPostBody records the body of the most recent POST FetchJSON call so tests
+	// can assert how the page marshals the create request.
+	lastPostBody any
 }
 
 var _ apiclient.Fetcher = (*weatherFakeFetcher)(nil)
 
-func (f *weatherFakeFetcher) FetchJSON(_ context.Context, method, rawURL string, _ any, _ map[string]string) ([]byte, error) {
+func (f *weatherFakeFetcher) FetchJSON(_ context.Context, method, rawURL string, body any, _ map[string]string) ([]byte, error) {
 	if method == "POST" {
+		f.lastPostBody = body
 		for prefix, err := range f.postErr {
 			if strings.HasPrefix(rawURL, prefix) {
 				return nil, err
@@ -692,6 +696,70 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 		st := page.State()
 		assert.Empty(t, st.AlertFormLocationID, "form must be closed on success")
 		assert.Nil(t, st.AlertSaveError)
+	})
+
+	t.Run("morning_summary routes the value to NotifyHour, not ConditionValue", func(t *testing.T) {
+		t.Parallel()
+		f := &weatherFakeFetcher{
+			getJSON: map[string][]byte{
+				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+			},
+		}
+		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
+		require.NoError(t, page.LoadCities(t.Context()))
+
+		page.OpenAlertForm("loc1")
+		page.SetAlertFormKind("morning_summary")
+		page.SetAlertFormValue("9")
+		require.NoError(t, page.SavePendingAlert(t.Context()))
+
+		body, ok := f.lastPostBody.(dto.WeatherCityCreateRequest)
+		require.True(t, ok, "POST body must be a WeatherCityCreateRequest")
+		require.NotNil(t, body.NotifyHour, "hour must be sent for morning_summary")
+		assert.Equal(t, 9, *body.NotifyHour)
+		assert.Empty(t, body.ConditionValue, "morning_summary must not send a condition_value")
+	})
+
+	t.Run("morning_summary with blank hour omits NotifyHour so the server default applies", func(t *testing.T) {
+		t.Parallel()
+		f := &weatherFakeFetcher{
+			getJSON: map[string][]byte{
+				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+			},
+		}
+		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
+		require.NoError(t, page.LoadCities(t.Context()))
+
+		page.OpenAlertForm("loc1")
+		page.SetAlertFormKind("morning_summary")
+		// Value left blank on purpose.
+		require.NoError(t, page.SavePendingAlert(t.Context()))
+
+		body, ok := f.lastPostBody.(dto.WeatherCityCreateRequest)
+		require.True(t, ok)
+		assert.Nil(t, body.NotifyHour, "blank hour must omit NotifyHour")
+	})
+
+	t.Run("morning_summary non-numeric hour is rejected client-side without a POST", func(t *testing.T) {
+		t.Parallel()
+		f := &weatherFakeFetcher{
+			getJSON: map[string][]byte{
+				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+			},
+		}
+		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
+		require.NoError(t, page.LoadCities(t.Context()))
+
+		page.OpenAlertForm("loc1")
+		page.SetAlertFormKind("morning_summary")
+		page.SetAlertFormValue("noon")
+		err := page.SavePendingAlert(t.Context())
+		require.Error(t, err)
+
+		st := page.State()
+		assert.NotEmpty(t, st.AlertFormLocationID, "form must stay open on a client-side validation error")
+		assert.NotNil(t, st.AlertSaveError)
+		assert.Nil(t, f.lastPostBody, "no POST must be made when the hour is invalid")
 	})
 }
 

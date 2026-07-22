@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
@@ -34,14 +35,14 @@ func (r *RateSourceRepository) Name() string { return rateSourceTableName }
 func (r *RateSourceRepository) CheckUP(ctx context.Context) error {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
 	var probe int
 	err = tx.QueryRowContext(ctx, "SELECT 1 FROM "+rateSourceTableName+" LIMIT 1;").Scan(&probe)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -50,14 +51,14 @@ func (r *RateSourceRepository) CheckUP(ctx context.Context) error {
 func (r *RateSourceRepository) ObtainRateSourceByName(ctx context.Context, name string) (*domain.RateSource, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	defer printRollbackError(tx)
 
 	rows, err := rateSourceQueryRowContext(tx, ctx, "WHERE "+rateSourceNameFieldName+" = ?;", name)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
@@ -75,7 +76,7 @@ func (r *RateSourceRepository) ObtainRateSourcesByNames(ctx context.Context, nam
 
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	defer printRollbackError(tx)
@@ -88,7 +89,7 @@ func (r *RateSourceRepository) ObtainRateSourcesByNames(ctx context.Context, nam
 
 	rows, err := rateSourceQueryContext(tx, ctx, "WHERE "+rateSourceNameFieldName+" IN ("+placeholders+");", args...)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
@@ -108,7 +109,7 @@ func (r *RateSourceRepository) ObtainRateSourcesByNames(ctx context.Context, nam
 func (r *RateSourceRepository) ObtainDistinctActivePairTriples(ctx context.Context) ([]domain.SourcePairKey, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -122,7 +123,7 @@ func (r *RateSourceRepository) ObtainDistinctActivePairTriples(ctx context.Conte
 
 	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
-		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), internal.NewTraceError())
+		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
 	defer func(rows io.Closer) { err = errors.Join(err, rows.Close()) }(rows)
 
@@ -130,12 +131,12 @@ func (r *RateSourceRepository) ObtainDistinctActivePairTriples(ctx context.Conte
 	for rows.Next() {
 		var k domain.SourcePairKey
 		if err = rows.Scan(&k.SourceName, &k.BaseCurrency, &k.QuoteCurrency, &k.Kind); err != nil {
-			return nil, errors.Join(err, internal.NewTraceError())
+			return nil, errors.Join(err, loginjector.NewTraceError())
 		}
 		out = append(out, k)
 	}
 	if err = rows.Err(); err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	return out, nil
 }
@@ -145,14 +146,14 @@ func (r *RateSourceRepository) ObtainDistinctActivePairTriples(ctx context.Conte
 func (r *RateSourceRepository) ObtainAllRateSources(ctx context.Context) ([]domain.RateSource, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	defer printRollbackError(tx)
 
 	rows, err := rateSourceQueryContext(tx, ctx, "ORDER BY "+rateSourceNameFieldName+" DESC;")
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
@@ -163,7 +164,7 @@ func (r *RateSourceRepository) ObtainAllRateSources(ctx context.Context) ([]doma
 func (r *RateSourceRepository) RetainRateSource(ctx context.Context, record *domain.RateSource) error {
 	if record == nil {
 		err := errors.New("rate source is nil")
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -185,34 +186,34 @@ func (r *RateSourceRepository) RetainRateSource(ctx context.Context, record *dom
 	rules, err := json.Marshal(record.Rules)
 	if err != nil {
 		err = fmt.Errorf("marshal rules for rate source %q: %w", record.Name, err)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	opts, err := json.Marshal(record.Options)
 	if err != nil {
 		err = fmt.Errorf("marshal options for rate source %q: %w", record.Name, err)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	ruleMetadata, err := json.Marshal(record.RuleMetadata)
 	if err != nil {
 		err = fmt.Errorf("marshal rule_metadata for rate source %q: %w", record.Name, err)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
 
 	count, err := rateSourceCount(tx, ctx, "WHERE "+rateSourceNameFieldName+" = ?;", record.Name)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -280,24 +281,24 @@ func (r *RateSourceRepository) RetainRateSource(ctx context.Context, record *dom
 		)
 	}
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	rows, err := res.RowsAffected()
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	if rows <= 0 {
 		err = errors.New("unexpected result: no rows affected")
 		err = errors.Join(err, internal.ErrNotFound)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if err = tx.Commit(); err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -314,13 +315,13 @@ func (r *RateSourceRepository) RetainRateSource(ctx context.Context, record *dom
 func (r *RateSourceRepository) RemoveRateSource(ctx context.Context, record *domain.RateSource) error {
 	if record == nil {
 		err := errors.New("rate source is nil")
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
@@ -329,12 +330,12 @@ func (r *RateSourceRepository) RemoveRateSource(ctx context.Context, record *dom
 	_, err = tx.ExecContext(ctx, cmd, record.Name)
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", cmd))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if err = tx.Commit(); err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -386,7 +387,7 @@ func rateSourceCount(tx *sql.Tx, ctx context.Context, condition string, args ...
 		return 0, nil
 	} else if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return 0, err
 	}
 
@@ -396,7 +397,7 @@ func rateSourceCount(tx *sql.Tx, ctx context.Context, condition string, args ...
 func rateSourceQueryContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (items []domain.RateSource, err error) {
 	count, err := rateSourceCount(tx, ctx, condition, args...)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return
 	}
 	if count == 0 {
@@ -409,7 +410,7 @@ func rateSourceQueryContext(tx *sql.Tx, ctx context.Context, condition string, a
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	defer func(rows io.Closer) { err = errors.Join(err, rows.Close()) }(rows)
@@ -434,7 +435,7 @@ func rateSourceQueryContext(tx *sql.Tx, ctx context.Context, condition string, a
 			&rulesJSON,
 			&ruleMetadataJSON,
 		); err != nil {
-			err = errors.Join(err, internal.NewTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return nil, err
 		}
 
@@ -442,25 +443,25 @@ func rateSourceQueryContext(tx *sql.Tx, ctx context.Context, condition string, a
 			item.Kind != domain.RateSourceKindBID &&
 			item.Kind != domain.RateSourceKindLAST {
 			err = fmt.Errorf("unknown kind %s", item.Kind)
-			err = errors.Join(err, internal.NewTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return nil, err
 		}
 
 		if err = json.Unmarshal([]byte(optsJSON), &item.Options); err != nil {
 			err = fmt.Errorf("unmarshal options for source %q: %w", item.Name, err)
-			err = errors.Join(err, internal.NewTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return nil, err
 		}
 
 		if err = json.Unmarshal([]byte(rulesJSON), &item.Rules); err != nil {
 			err = fmt.Errorf("unmarshal rules for source %q: %w", item.Name, err)
-			err = errors.Join(err, internal.NewTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return nil, err
 		}
 
 		if err = json.Unmarshal([]byte(ruleMetadataJSON), &item.RuleMetadata); err != nil {
 			err = fmt.Errorf("unmarshal rule_metadata for source %q: %w", item.Name, err)
-			err = errors.Join(err, internal.NewTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return nil, err
 		}
 
@@ -493,25 +494,25 @@ func rateSourceQueryRowContext(tx *sql.Tx, ctx context.Context, condition string
 		return nil, nil
 	} else if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
 	if err = json.Unmarshal([]byte(optionsJSON), &item.Options); err != nil {
 		err = fmt.Errorf("unmarshal options for source %q: %w", item.Name, err)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
 	if err = json.Unmarshal([]byte(rulesJSON), &item.Rules); err != nil {
 		err = fmt.Errorf("unmarshal rules for source %q: %w", item.Name, err)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
 	if err = json.Unmarshal([]byte(ruleMetadataJSON), &item.RuleMetadata); err != nil {
 		err = fmt.Errorf("unmarshal rule_metadata for source %q: %w", item.Name, err)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 

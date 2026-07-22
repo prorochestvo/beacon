@@ -31,7 +31,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
 	"github.com/prorochestvo/dsninjector"
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 )
 
 // OpenAIModels is the allowlist of models that support Structured Output
@@ -56,7 +56,7 @@ var OpenAIModels = []string{
 func newOpenAIClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (AIClient, error) {
 	apiKey, err := parseDSNKey(dns)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	model := shared.ChatModel(openaisdk.ChatModelGPT4o)
@@ -71,7 +71,7 @@ func newOpenAIClient(dns dsninjector.DataSource, logger io.Writer, proxyURL stri
 		if !found {
 			return nil, errors.Join(
 				fmt.Errorf("unsupported model %q", v),
-				internal.NewTraceError(),
+				loginjector.NewTraceError(),
 			)
 		}
 		model = shared.ChatModel(v)
@@ -79,12 +79,12 @@ func newOpenAIClient(dns dsninjector.DataSource, logger io.Writer, proxyURL stri
 
 	timeout, err := parseDSNTimeout(dns)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	httpClient, err := buildHTTPClient(timeout, proxyURL)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	api := openaisdk.NewClient(
@@ -127,11 +127,11 @@ func (c *openAIClient) CheckUP(ctx context.Context) error {
 	page, err := c.api.Models.List(ctx)
 	if err != nil {
 		c.logger.Printf("op=checkup stage=models_list err=%v", err)
-		return errors.Join(fmt.Errorf("openai: checkup: %w", err), internal.NewTraceError())
+		return errors.Join(fmt.Errorf("openai: checkup: %w", err), loginjector.NewTraceError())
 	}
 	if page == nil || len(page.Data) == 0 {
 		c.logger.Printf("op=checkup stage=empty_models_list")
-		return errors.Join(errors.New("openai: checkup: empty models list"), internal.NewTraceError())
+		return errors.Join(errors.New("openai: checkup: empty models list"), loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -163,7 +163,7 @@ func (c *openAIClient) Complete(ctx context.Context, systemPrompt, userMessage s
 	result, err := c.api.Responses.New(ctx, params)
 	if err != nil {
 		c.logger.Printf("op=complete stage=responses_new err=%v", err)
-		return "", errors.Join(fmt.Errorf("openai: complete: %w", err), internal.NewTraceError())
+		return "", errors.Join(fmt.Errorf("openai: complete: %w", err), loginjector.NewTraceError())
 	}
 
 	return result.OutputText(), nil

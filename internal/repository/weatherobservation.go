@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/domain/identity"
@@ -29,17 +30,17 @@ func (r *WeatherObservationRepository) Name() string { return weatherObservation
 func (r *WeatherObservationRepository) CheckUP(ctx context.Context) error {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
 	query := "SELECT COUNT(*) FROM " + weatherObservationTableName + ";"
 	var count int64
 	if err := tx.QueryRowContext(ctx, query).Scan(&count); err != nil {
-		return errors.Join(err, fmt.Errorf("SQL: %s", query), internal.NewTraceError())
+		return errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
 	if count < 0 {
-		return errors.Join(errors.New("unexpected result"), internal.NewStackTraceError())
+		return errors.Join(errors.New("unexpected result"), loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -49,7 +50,7 @@ func (r *WeatherObservationRepository) CheckUP(ctx context.Context) error {
 // is the caller's responsibility via the RemoveWeatherObservationsOlderThan vacuum.
 func (r *WeatherObservationRepository) RetainWeatherObservation(ctx context.Context, record *domain.WeatherObservation) error {
 	if record == nil {
-		return errors.Join(errors.New("weather observation is nil"), internal.NewTraceError())
+		return errors.Join(errors.New("weather observation is nil"), loginjector.NewTraceError())
 	}
 
 	if record.ID == "" {
@@ -58,7 +59,7 @@ func (r *WeatherObservationRepository) RetainWeatherObservation(ctx context.Cont
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -75,7 +76,7 @@ func (r *WeatherObservationRepository) RetainWeatherObservation(ctx context.Cont
 	// Marshal the hourly block to JSON; nil bytes → SQL NULL (no hourly data for this row).
 	hourlyJSON, err := record.MarshalHourlyJSON()
 	if err != nil {
-		return errors.Join(fmt.Errorf("weather observation: marshal hourly_json: %w", err), internal.NewTraceError())
+		return errors.Join(fmt.Errorf("weather observation: marshal hourly_json: %w", err), loginjector.NewTraceError())
 	}
 	var hourlyJSONArg interface{}
 	if len(hourlyJSON) > 0 {
@@ -131,11 +132,11 @@ func (r *WeatherObservationRepository) RetainWeatherObservation(ctx context.Cont
 		record.CloudCover,
 		hourlyJSONArg,
 	); err != nil {
-		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), internal.NewTraceError())
+		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), loginjector.NewTraceError())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -145,7 +146,7 @@ func (r *WeatherObservationRepository) RetainWeatherObservation(ctx context.Cont
 func (r *WeatherObservationRepository) ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -161,7 +162,7 @@ func (r *WeatherObservationRepository) ObtainLatestObservation(ctx context.Conte
 		return nil, internal.ErrNotFound
 	}
 	if err != nil {
-		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), internal.NewTraceError())
+		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
 	return &item, nil
 }
@@ -174,18 +175,18 @@ func (r *WeatherObservationRepository) RemoveWeatherObservationsOlderThan(ctx co
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
 	cmd := "DELETE FROM " + weatherObservationTableName +
 		" WHERE " + weatherObservationCapturedAtFieldName + " < ?;"
 	if _, err := tx.ExecContext(ctx, cmd, cutoff.Format(time.RFC3339)); err != nil {
-		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), internal.NewTraceError())
+		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), loginjector.NewTraceError())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -279,19 +280,19 @@ func weatherObservationScan(s weatherUserCityScanner) (domain.WeatherObservation
 
 	var err error
 	if item.CapturedAt, err = time.Parse(time.RFC3339, capturedAt); err != nil {
-		return domain.WeatherObservation{}, errors.Join(err, internal.NewTraceError())
+		return domain.WeatherObservation{}, errors.Join(err, loginjector.NewTraceError())
 	}
 	if sunriseStr != nil && *sunriseStr != "" {
 		t, parseErr := time.Parse(time.RFC3339, *sunriseStr)
 		if parseErr != nil {
-			return domain.WeatherObservation{}, errors.Join(parseErr, internal.NewTraceError())
+			return domain.WeatherObservation{}, errors.Join(parseErr, loginjector.NewTraceError())
 		}
 		item.Sunrise = &t
 	}
 	if sunsetStr != nil && *sunsetStr != "" {
 		t, parseErr := time.Parse(time.RFC3339, *sunsetStr)
 		if parseErr != nil {
-			return domain.WeatherObservation{}, errors.Join(parseErr, internal.NewTraceError())
+			return domain.WeatherObservation{}, errors.Join(parseErr, loginjector.NewTraceError())
 		}
 		item.Sunset = &t
 	}
@@ -301,7 +302,7 @@ func weatherObservationScan(s weatherUserCityScanner) (domain.WeatherObservation
 		hourlyRaw = []byte(*hourlyJSONStr)
 	}
 	if unmarshalErr := item.UnmarshalHourlyJSON(hourlyRaw); unmarshalErr != nil {
-		return domain.WeatherObservation{}, errors.Join(unmarshalErr, internal.NewTraceError())
+		return domain.WeatherObservation{}, errors.Join(unmarshalErr, loginjector.NewTraceError())
 	}
 	return item, nil
 }

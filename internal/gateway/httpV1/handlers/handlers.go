@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
 	"github.com/seilbekskindirov/beacon/internal/domain"
@@ -195,7 +196,7 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		h.logger.Print(errors.Join(
 			fmt.Errorf("encode health check response: %w", err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		))
 	}
 }
@@ -222,7 +223,7 @@ func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
 	if latestErr != nil {
 		log.Print(errors.Join(
 			fmt.Errorf("bulk latest execution: %w", latestErr),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		))
 		latest = map[string]domain.ExecutionHistory{}
 	}
@@ -861,7 +862,7 @@ func (h *Handler) CreateMeSubscription(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(dto.MeSubscriptionCreateResponse{ID: record.ID}); err != nil {
 		h.logger.Print(errors.Join(
 			fmt.Errorf("encode CreateMeSubscription response: %w", err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		))
 	}
 }
@@ -1306,7 +1307,7 @@ func (h *Handler) GetPublicRatesChart(w http.ResponseWriter, r *http.Request) {
 
 // internalError logs the underlying error with a trace and returns a generic 500 to the client.
 func (h *Handler) internalError(w http.ResponseWriter, err error) {
-	h.logger.Print(errors.Join(err, internal.NewTraceError()))
+	h.logger.Print(errors.Join(err, loginjector.NewTraceError()))
 	http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 }
 
@@ -1323,7 +1324,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		log.Print(errors.Join(
 			fmt.Errorf("encode response body: %w", err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		))
 	}
 }
@@ -1360,7 +1361,7 @@ func extractLimit(uri *url.URL) (int64, error) {
 	if v := uri.Query().Get("limit"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
-			return 0, errors.Join(err, internal.NewTraceError())
+			return 0, errors.Join(err, loginjector.NewTraceError())
 		}
 		if n > 0 {
 			result = n
@@ -1379,7 +1380,7 @@ func extractOffset(r *http.Request) (int64, error) {
 	if v := r.URL.Query().Get("offset"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
-			return 0, errors.Join(err, internal.NewTraceError())
+			return 0, errors.Join(err, loginjector.NewTraceError())
 		}
 		if n > 0 {
 			result = n

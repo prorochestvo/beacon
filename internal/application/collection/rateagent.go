@@ -9,7 +9,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/tools/rateextractor"
 )
@@ -114,7 +114,7 @@ func (a *RateAgent) Run(ctx context.Context) (err error) {
 
 	var sources []domain.RateSource
 	if s, errSource := a.rateSourceRepository.ObtainAllRateSources(ctx); errSource != nil {
-		errSource = errors.Join(errSource, internal.NewTraceError())
+		errSource = errors.Join(errSource, loginjector.NewTraceError())
 		return errSource
 	} else if len(s) > 0 {
 		now := time.Now().UTC()
@@ -126,7 +126,7 @@ func (a *RateAgent) Run(ctx context.Context) (err error) {
 			interval, errInterval := time.ParseDuration(source.Interval)
 			if errInterval != nil {
 				errInterval = fmt.Errorf("invalid interval %q, %s", source.Interval, errInterval.Error())
-				errInterval = errors.Join(errInterval, internal.NewTraceError())
+				errInterval = errors.Join(errInterval, loginjector.NewTraceError())
 				err = errors.Join(err, errInterval)
 				continue
 			}
@@ -170,7 +170,7 @@ func (a *RateAgent) execution(ctx context.Context, sources []domain.RateSource) 
 			chromedpBatch = append(chromedpBatch, s)
 		default:
 			err := fmt.Errorf("source %q: unsupported fetcher_kind %q", s.Name, s.FetcherKind)
-			sourceErrs[s.Name] = errors.Join(err, internal.NewTraceError())
+			sourceErrs[s.Name] = errors.Join(err, loginjector.NewTraceError())
 		}
 	}
 
@@ -197,13 +197,13 @@ func (a *RateAgent) execution(ctx context.Context, sources []domain.RateSource) 
 		runErr := sourceErrs[source.Name]
 		if runErr != nil {
 			h.Success = false
-			h.Error = errors.Join(runErr, internal.NewTraceError()).Error()
+			h.Error = errors.Join(runErr, loginjector.NewTraceError()).Error()
 		}
 
 		retainErr := a.executionHistoryRepository.RetainExecutionHistory(persistCtx, h)
 		combined := errors.Join(runErr, retainErr)
 		if combined != nil {
-			errs[source.Name] = errors.Join(errs[source.Name], errors.Join(combined, internal.NewTraceError()))
+			errs[source.Name] = errors.Join(errs[source.Name], errors.Join(combined, loginjector.NewTraceError()))
 		}
 	}
 

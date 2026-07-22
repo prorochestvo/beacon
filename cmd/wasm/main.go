@@ -1626,8 +1626,9 @@ func bindWeatherCurrentHandlers(app js.Value, scr *screen, alive *bool) {
 // "+ Add alert" buttons (.weather-add-alert-btn): read data-location-id; call
 // OpenAlertForm and redraw to show the form.
 // Alert kind select (#weather-alert-kind): fires "change", not "click"/"input";
-// calls SetAlertFormKind and redraws so the threshold input shows/hides per kind.
-// Alert threshold input (#weather-alert-value): calls SetAlertFormValue on every
+// calls SetAlertFormKind and redraws so the numeric input shows/hides and switches
+// meaning per kind (threshold for heat/frost/rain, 0–23 hour for morning_summary).
+// Alert value input (#weather-alert-value): calls SetAlertFormValue on every
 // keystroke without redrawing, so the input never loses focus mid-typing.
 // Alert save button (#weather-alert-save): calls SavePendingAlert in a goroutine;
 // redraw shows the result. Alert cancel button (#weather-alert-cancel): calls

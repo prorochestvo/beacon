@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
@@ -78,7 +79,7 @@ type weatherCheckObsRepository interface {
 func (a *WeatherCheckAgent) Run(ctx context.Context) error {
 	cities, err := a.cityRepo.ObtainDueWeatherUserCities(ctx, domain.WeatherNotifyMorningSummary)
 	if err != nil {
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 
 	now := time.Now().UTC()

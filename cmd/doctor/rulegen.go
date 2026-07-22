@@ -114,6 +114,10 @@ func runAll(ctx context.Context, gen ruleGenerator, srcs rateSourceLister, force
 		processed++
 		func() {
 			defer func() {
+				// Bare %v, not a full stack: this is a per-source batch failure
+				// line the operator (and cron) greps, not a process-level panic.
+				// A full stack here is noise; the process recover (cmd/collector)
+				// is where the expensive full-stack trace belongs.
 				if r := recover(); r != nil {
 					failed++
 					fmt.Fprintf(out, "FAIL source=%s reason=panic: %v\n", src.Name, r)

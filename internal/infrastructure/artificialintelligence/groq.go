@@ -27,7 +27,7 @@ import (
 	"net/url"
 
 	"github.com/prorochestvo/dsninjector"
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 )
 
 const groqDefaultModel = "openai/gpt-oss-20b"
@@ -40,12 +40,12 @@ const groqDefaultModel = "openai/gpt-oss-20b"
 func newGroqClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (*groqClient, error) {
 	apiKey, err := parseDSNKey(dns)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	baseURL, err := url.JoinPath(fmt.Sprintf("https://%s", dns.Addr()), dns.Database())
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	model := groqDefaultModel
@@ -55,12 +55,12 @@ func newGroqClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string
 
 	timeout, err := parseDSNTimeout(dns)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	httpClient, err := buildHTTPClient(timeout, proxyURL)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	return &groqClient{

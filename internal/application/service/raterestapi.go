@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
@@ -77,7 +78,7 @@ type rateUserEventRepository interface {
 func (h *RateRestApi) ObtainLastNExecutionHistoryBySourceName(ctx context.Context, name string, limit int64) ([]domain.ExecutionHistory, error) {
 	items, err := h.executionHistoryRepository.ObtainLastNExecutionHistoryBySourceName(ctx, name, limit, false)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	return items, nil
@@ -87,7 +88,7 @@ func (h *RateRestApi) ObtainLastNExecutionHistoryBySourceName(ctx context.Contex
 // Used by the /healthz endpoint.
 func (h *RateRestApi) CheckUP(ctx context.Context) error {
 	if err := h.rateSourceRepository.CheckUP(ctx); err != nil {
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	return nil
 }
@@ -98,7 +99,7 @@ func (h *RateRestApi) CheckUP(ctx context.Context) error {
 func (h *RateRestApi) ObtainLatestExecutionHistoryBySources(ctx context.Context, names []string) (map[string]domain.ExecutionHistory, error) {
 	items, err := h.executionHistoryRepository.ObtainLatestExecutionHistoryBySources(ctx, names)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	return items, nil
 }
@@ -108,7 +109,7 @@ func (h *RateRestApi) ObtainLatestExecutionHistoryBySources(ctx context.Context,
 func (h *RateRestApi) ObtainLastSuccessNExecutionHistoryBySourceName(ctx context.Context, name string, limit int64) ([]domain.ExecutionHistory, error) {
 	items, err := h.executionHistoryRepository.ObtainLastNExecutionHistoryBySourceName(ctx, name, limit, true)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	return items, nil
@@ -120,12 +121,12 @@ func (h *RateRestApi) ObtainLastSuccessNExecutionHistoryBySourceName(ctx context
 func (h *RateRestApi) UpdateRateSourceActive(ctx context.Context, name string, active bool) error {
 	src, err := h.rateSourceRepository.ObtainRateSourceByName(ctx, name)
 	if err != nil {
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	if src == nil {
 		return errors.Join(
 			fmt.Errorf("rate source %q: %w", name, internal.ErrNotFound),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -133,7 +134,7 @@ func (h *RateRestApi) UpdateRateSourceActive(ctx context.Context, name string, a
 
 	err = h.rateSourceRepository.RetainRateSource(ctx, src)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -144,7 +145,7 @@ func (h *RateRestApi) UpdateRateSourceActive(ctx context.Context, name string, a
 func (h *RateRestApi) ObtainAllRateSources(ctx context.Context) ([]domain.RateSource, error) {
 	items, err := h.rateSourceRepository.ObtainAllRateSources(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	return items, nil
@@ -158,7 +159,7 @@ func (h *RateRestApi) ObtainLastNRateValuesBySourceName(ctx context.Context, nam
 		limit,
 	)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	return items, nil
@@ -176,7 +177,7 @@ func (h *RateRestApi) ObtainListOfLastRateUserEvent(ctx context.Context, limit i
 		domain.RateUserEventStatusCanceled,
 	)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	return items, nil
@@ -191,7 +192,7 @@ func (h *RateRestApi) ObtainFailedListOfRateUserEvent(ctx context.Context, offse
 		domain.RateUserEventStatusFailed,
 	)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	return items, nil
@@ -203,7 +204,7 @@ func (h *RateRestApi) ObtainPendingRateUserEvents(ctx context.Context) ([]domain
 		ctx, 0, 1000, domain.RateUserEventStatusPending,
 	)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	return items, nil
 }
@@ -215,7 +216,7 @@ func (h *RateRestApi) ObtainFailedRateUserEventsBySourceName(ctx context.Context
 		ctx, sourceName, offset, pageSize, domain.RateUserEventStatusFailed,
 	)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	return items, nil
 }
@@ -224,7 +225,7 @@ func (h *RateRestApi) ObtainFailedRateUserEventsBySourceName(ctx context.Context
 func (h *RateRestApi) ObtainStats(ctx context.Context) (domain.StatsResult, error) {
 	sources, err := h.rateSourceRepository.ObtainAllRateSources(ctx)
 	if err != nil {
-		return domain.StatsResult{}, errors.Join(err, internal.NewTraceError())
+		return domain.StatsResult{}, errors.Join(err, loginjector.NewTraceError())
 	}
 	var active int64
 	for _, s := range sources {
@@ -234,7 +235,7 @@ func (h *RateRestApi) ObtainStats(ctx context.Context) (domain.StatsResult, erro
 	}
 	errCount, err := h.executionHistoryRepository.ObtainExecutionHistoryErrorCount(ctx)
 	if err != nil {
-		return domain.StatsResult{}, errors.Join(err, internal.NewTraceError())
+		return domain.StatsResult{}, errors.Join(err, loginjector.NewTraceError())
 	}
 	return domain.StatsResult{
 		SourcesTotal:  int64(len(sources)),
@@ -247,7 +248,7 @@ func (h *RateRestApi) ObtainStats(ctx context.Context) (domain.StatsResult, erro
 func (h *RateRestApi) ObtainRateUserSubscriptionsBySourcePaged(ctx context.Context, sourceName string, offset, limit int64) ([]domain.RateUserSubscriptionDetail, error) {
 	items, err := h.rateUserSubscriptionRepository.ObtainRateUserSubscriptionsBySourcePaged(ctx, sourceName, offset, limit)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	return items, nil
 }
@@ -256,7 +257,7 @@ func (h *RateRestApi) ObtainRateUserSubscriptionsBySourcePaged(ctx context.Conte
 func (h *RateRestApi) ObtainDailyEventSummaryBySource(ctx context.Context, sourceName string, offset, limit int64) ([]domain.RateUserEventDailySummary, error) {
 	items, err := h.rateUserEventRepository.ObtainDailyEventSummaryBySource(ctx, sourceName, offset, limit)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	return items, nil
 }
@@ -265,7 +266,7 @@ func (h *RateRestApi) ObtainDailyEventSummaryBySource(ctx context.Context, sourc
 func (h *RateRestApi) ObtainLastNExecutionHistoryErrors(ctx context.Context, offset, limit int64) ([]domain.ExecutionHistory, error) {
 	items, err := h.executionHistoryRepository.ObtainLastNExecutionHistoryErrors(ctx, offset, limit)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	return items, nil
 }
@@ -274,7 +275,7 @@ func (h *RateRestApi) ObtainLastNExecutionHistoryErrors(ctx context.Context, off
 func (h *RateRestApi) ObtainSubscriptionSummaryBySource(ctx context.Context, sourceName string) ([]domain.RateUserSubscriptionSummary, error) {
 	items, err := h.rateUserSubscriptionRepository.ObtainSubscriptionSummaryBySource(ctx, sourceName)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	return items, nil
 }

@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/tools/threadsafe"
 )
@@ -68,7 +68,7 @@ func NewRateExtractor(
 
 	extractor, err := NewRateExtractorWithHTTPClient(rateValueRepository, httpClient, logger)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
@@ -89,7 +89,7 @@ func NewRateExtractorWithHTTPClient(
 ) (*RateExtractor, error) {
 	if httpClient == nil {
 		err := errors.New("http client cannot be nil")
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
@@ -138,7 +138,7 @@ func (extractor *RateExtractor) Run(ctx context.Context, source *domain.RateSour
 			err = errors.New("page is nil")
 		}
 		err = fmt.Errorf("could not read html page %v: %w", source.URL, err)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -176,7 +176,7 @@ func (extractor *RateExtractor) fetchHtmlPage(ctx context.Context, rawURL string
 		_, _ = fmt.Fprintf(extractor.logger,
 			"rate_extractor: short-circuit url=%s prior_error=%v\n", rawURL, cached)
 		err := fmt.Errorf("short-circuit (tombstoned this run): %w", cached)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
@@ -195,7 +195,7 @@ func (extractor *RateExtractor) fetchHtmlPage(ctx context.Context, rawURL string
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		err = fmt.Errorf("create request: %w", err)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		extractor.recordFailedURL(rawURL, err)
 		return nil, err
 	}
@@ -211,7 +211,7 @@ func (extractor *RateExtractor) fetchHtmlPage(ctx context.Context, rawURL string
 	resp, err := extractor.httpClient.Do(req)
 	if err != nil {
 		err = fmt.Errorf("do request: %w", err)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		extractor.recordFailedURL(rawURL, err)
 		return nil, err
 	}
@@ -219,7 +219,7 @@ func (extractor *RateExtractor) fetchHtmlPage(ctx context.Context, rawURL string
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		err = fmt.Errorf("fetch %s: unexpected status %d (%s)", rawURL, resp.StatusCode, resp.Status)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		extractor.recordFailedURL(rawURL, err)
 		return nil, err
 	}
@@ -227,14 +227,14 @@ func (extractor *RateExtractor) fetchHtmlPage(ctx context.Context, rawURL string
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		err = fmt.Errorf("read response body: %w", err)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		extractor.recordFailedURL(rawURL, err)
 		return nil, err
 	}
 
 	if err = extractor.cache.Push(cacheKey, body); err != nil {
 		_, _ = extractor.cache.Pull(cacheKey) // ensure cache is clean if push failed
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		_, _ = fmt.Fprintf(extractor.logger, "rate_extractor: could not push response payload to cache: %v", err)
 	}
 
@@ -256,7 +256,7 @@ func applyRulesAndStore(ctx context.Context, source *domain.RateSource, payload 
 			f, err = strconv.ParseFloat(string(p), 10)
 			if err != nil {
 				err = fmt.Errorf("could not parse rate value %s: %s", string(payload), err.Error())
-				err = errors.Join(err, internal.NewTraceError())
+				err = errors.Join(err, loginjector.NewTraceError())
 				return err
 			}
 			payload = []byte(fmt.Sprintf("%.3f", f))
@@ -264,20 +264,20 @@ func applyRulesAndStore(ctx context.Context, source *domain.RateSource, payload 
 			payload, err = ApplyRegex(rule.Pattern, payload)
 			if err != nil {
 				err = errors.Join(err, fmt.Errorf("rule %d: apply regex pattern %q: %w", i, rule.Pattern, err))
-				err = errors.Join(err, internal.NewTraceError())
+				err = errors.Join(err, loginjector.NewTraceError())
 				return err
 			}
 		case domain.MethodJSONPath:
 			payload, err = ApplyJSONPath(rule.Pattern, payload)
 			if err != nil {
 				err = errors.Join(err, fmt.Errorf("rule %d: apply json_path %q: %w", i, rule.Pattern, err))
-				err = errors.Join(err, internal.NewTraceError())
+				err = errors.Join(err, loginjector.NewTraceError())
 				return err
 			}
 		case domain.MethodStoreToRate:
 		default:
 			err = fmt.Errorf("unsupported extraction method: %s", rule.Method)
-			err = errors.Join(err, internal.NewTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return err
 		}
 		payload = bytes.TrimSpace(payload)
@@ -289,19 +289,19 @@ func applyRulesAndStore(ctx context.Context, source *domain.RateSource, payload 
 	value, err := strconv.ParseFloat(string(payload), 64)
 	if err != nil {
 		err = fmt.Errorf("parse extracted value %q: %s", payload, err.Error())
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		err = fmt.Errorf("extracted value is NaN or Inf for source %s", source.Name)
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 
 	if value <= MinPlausibleRateValue || value > MaxPlausibleRateValue {
 		err = fmt.Errorf("invalid rate value: %s", string(payload))
 		err = fmt.Errorf("parse extracted value %q: %s", payload, err.Error())
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 
 	rateValue := &domain.RateValue{
@@ -315,7 +315,7 @@ func applyRulesAndStore(ctx context.Context, source *domain.RateSource, payload 
 	err = repo.RetainRateValue(ctx, rateValue)
 	if err != nil {
 		err = errors.Join(fmt.Errorf("could not keep the %f rate value of %s", value, source.Name), err)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 

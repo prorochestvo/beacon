@@ -62,6 +62,22 @@ func TestRenderMeWeatherCities(t *testing.T) {
 		require.NotContains(t, html, "weather-city-row")
 	})
 
+	t.Run("global thaw note shown when cities exist, absent when empty", func(t *testing.T) {
+		t.Parallel()
+		withCities := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities: []dto.WeatherCityRow{
+				{ID: "c1", LocationID: "loc1", DisplayName: "Almaty", Timezone: "Asia/Almaty",
+					NotifyKind: "morning_summary"},
+			},
+		})
+		require.Contains(t, withCities, "weather-thaw-note")
+
+		empty := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities: []dto.WeatherCityRow{},
+		})
+		require.NotContains(t, empty, "weather-thaw-note")
+	})
+
 	t.Run("city rows are rendered with delete button", func(t *testing.T) {
 		t.Parallel()
 		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
@@ -411,7 +427,7 @@ func TestRenderMeWeatherCities_AlertForm(t *testing.T) {
 		assert.NotContains(t, html, `value="alert_thaw"`)
 	})
 
-	t.Run("thaw alert row shows kind label, an always-on chip, and no delete button", func(t *testing.T) {
+	t.Run("thaw is not rendered as a per-city row; a single global note replaces it", func(t *testing.T) {
 		t.Parallel()
 		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
 			Cities: []dto.WeatherCityRow{
@@ -420,27 +436,39 @@ func TestRenderMeWeatherCities_AlertForm(t *testing.T) {
 					NotifyKind: "alert_thaw"},
 			},
 		})
-		assert.Contains(t, html, "Thaw alert")
-		assert.Contains(t, html, "weather-kind-locked")
-		assert.Contains(t, html, "always on")
-
-		// Scope the delete-button-absence check to the thaw row's own <li> so it cannot
-		// false-pass on the sibling non-thaw row's delete button rendered elsewhere in
-		// the same HTML string.
-		thawIdx := strings.Index(html, "Thaw alert")
-		require.NotEqual(t, -1, thawIdx, "thaw row label must be present")
-		liStart := strings.LastIndex(html[:thawIdx], "<li")
-		require.NotEqual(t, -1, liStart, "thaw row must be wrapped in an <li>")
-		liEndRel := strings.Index(html[liStart:], "</li>")
-		require.NotEqual(t, -1, liEndRel, "thaw row <li> must be closed")
-		thawRowHTML := html[liStart : liStart+liEndRel+len("</li>")]
-
-		assert.NotContains(t, thawRowHTML, `data-id="c2"`, "thaw row must not carry a delete data-id")
-		assert.NotContains(t, thawRowHTML, "weather-city-delete", "thaw row must render no delete button")
+		// The forced thaw subscription is surfaced once, globally — never as a
+		// per-city row with an "always on" chip.
+		assert.Contains(t, html, "weather-thaw-note")
+		assert.NotContains(t, html, "weather-kind-locked", "the per-row always-on chip is gone")
+		assert.NotContains(t, html, `data-id="c2"`, "the thaw row must not be rendered at all")
 
 		// The sibling non-thaw row must still keep its own delete button and data-id.
 		assert.Contains(t, html, `data-id="`+baseCity.ID+`"`, "non-thaw sibling row must keep its data-id")
 		assert.Contains(t, html, "weather-city-delete", "non-thaw sibling row must keep its delete button")
+	})
+
+	t.Run("morning_summary option appears in kind selector (re-addable after delete)", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities:              []dto.WeatherCityRow{baseCity},
+			AlertFormLocationID: "loc1",
+			AlertFormKind:       "alert_heat",
+		})
+		assert.Contains(t, html, `value="morning_summary"`)
+		assert.Contains(t, html, "Morning summary (daily)")
+	})
+
+	t.Run("morning_summary form shows an hour input, not a threshold", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities:              []dto.WeatherCityRow{baseCity},
+			AlertFormLocationID: "loc1",
+			AlertFormKind:       "morning_summary",
+			AlertFormValue:      "9",
+		})
+		assert.Contains(t, html, "weather-alert-value")
+		assert.Contains(t, html, `max="23"`, "morning summary input is a 0–23 hour picker")
+		assert.Contains(t, html, `value="9"`)
 	})
 
 	t.Run("each city group renders a Remove city control carrying data-location-id", func(t *testing.T) {

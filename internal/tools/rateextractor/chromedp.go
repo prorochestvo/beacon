@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
@@ -180,7 +180,7 @@ func (e *ChromedpRateExtractor) fetchRenderedPageInAllocator(allocCtx context.Co
 		_, _ = fmt.Fprintf(e.logger,
 			"chromedp_extractor: short-circuit url=%s prior_error=%v\n", source.URL, cached)
 		err := fmt.Errorf("short-circuit (tombstoned this run): %w", cached)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 

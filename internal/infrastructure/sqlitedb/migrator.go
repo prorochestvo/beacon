@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 )
 
 // Committer is the minimal DB interface required by NewMigrator.
@@ -28,7 +28,7 @@ func NewMigrator(db committer, fsys fs.FS, sources ...source) (*Migrator, error)
 		if err == nil {
 			err = errors.New("transaction is nil")
 		}
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	defer func() {
@@ -36,19 +36,19 @@ func NewMigrator(db committer, fsys fs.FS, sources ...source) (*Migrator, error)
 	}()
 
 	if _, err = tx.Exec(sqlCreateTable()); err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
 	if err = tx.Commit(); err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
 	items, err := newDefaultMigrations(fsys)
 	if err != nil {
 		err = fmt.Errorf("load default migrations: %w", err)
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
@@ -56,7 +56,7 @@ func NewMigrator(db committer, fsys fs.FS, sources ...source) (*Migrator, error)
 		m, e := src.Migration()
 		if e != nil {
 			err = fmt.Errorf("load migrations: %w", e)
-			err = errors.Join(err, internal.NewStackTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return nil, err
 		}
 
@@ -95,7 +95,7 @@ func (m *Migrator) Run(ctx context.Context) error {
 		if err == nil {
 			err = errors.New("transaction is nil")
 		}
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
@@ -109,7 +109,7 @@ func (m *Migrator) Run(ctx context.Context) error {
 		var exists bool
 		if err = tx.QueryRow(sqlLookupFileName(item.name)).Scan(&exists); err != nil {
 			err = fmt.Errorf("migrations[%d]: check of the %s is failed, reason: %s", i, item.name, err.Error())
-			err = errors.Join(err, internal.NewStackTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return err
 		}
 		if exists {
@@ -119,20 +119,20 @@ func (m *Migrator) Run(ctx context.Context) error {
 		log.Printf("migrator: applying %s", item.name)
 		if _, err = tx.ExecContext(ctx, item.content); err != nil {
 			err = fmt.Errorf("migrations[%d]: apply of the %s is failed, reason %s", i, item.name, err.Error())
-			err = errors.Join(err, internal.NewTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return err
 		}
 
 		if _, err = tx.ExecContext(ctx, sqlInsertFileName(item.name)); err != nil {
 			err = fmt.Errorf("migrations[%d]: insert of the %s is failed, reason %s", i, item.name, err.Error())
-			err = errors.Join(err, internal.NewTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return err
 		}
 		applied++
 	}
 
 	if err = tx.Commit(); err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -164,7 +164,7 @@ func RequireMigratedSchema(ctx context.Context, db Committer) error {
 		if err == nil {
 			err = errors.New("transaction is nil")
 		}
-		return errors.Join(err, internal.NewStackTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -172,7 +172,7 @@ func RequireMigratedSchema(ctx context.Context, db Committer) error {
 	if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+migrationTableName).Scan(&count); err != nil {
 		return errors.Join(
 			fmt.Errorf("schema not initialised: run cmd/migrator before starting the service: %w", err),
-			internal.NewStackTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 	if count == 0 {
@@ -198,7 +198,7 @@ func newDefaultMigrations(fsys fs.FS) ([]migration, error) {
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		err = fmt.Errorf("read migrations dir: %w", err)
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
@@ -215,7 +215,7 @@ func newDefaultMigrations(fsys fs.FS) ([]migration, error) {
 		content, err = fs.ReadFile(fsys, fileName)
 		if err != nil {
 			err = fmt.Errorf("read migration %s: %w", fileName, err)
-			err = errors.Join(err, internal.NewStackTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return nil, err
 		}
 

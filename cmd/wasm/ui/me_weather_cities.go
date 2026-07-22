@@ -181,6 +181,10 @@ func renderWeatherCityList(state application.WeatherCitiesState) string {
 	if len(groups) == 0 {
 		b.WriteString(`<p class="weather-cities-empty">No cities yet. Use the search above to add one.</p>`)
 	} else {
+		// Thaw alerts are forced always-on for every tracked city (see
+		// CreateMeWeatherCity). Surface that once here instead of repeating an
+		// "always on" row under each city.
+		b.WriteString(`<p class="weather-thaw-note">🫠 Thaw alerts are always on for every city.</p>`)
 		b.WriteString(`<ul class="weather-cities-list" id="weather-cities-list">`)
 		for _, g := range groups {
 			b.WriteString(renderWeatherCityGroupItem(g, state))
@@ -216,6 +220,11 @@ func renderWeatherCityGroupItem(g WeatherCityGroup, state application.WeatherCit
 	b.WriteString(`<ul class="weather-city-kinds">`)
 
 	for _, row := range g.Rows {
+		// alert_thaw is forced and system-managed: it is surfaced once globally in
+		// renderWeatherCityList, never as a per-city row.
+		if row.NotifyKind == "alert_thaw" {
+			continue
+		}
 		b.WriteString(renderWeatherKindRow(row))
 	}
 
@@ -236,20 +245,11 @@ func renderWeatherCityGroupItem(g WeatherCityGroup, state application.WeatherCit
 	return b.String()
 }
 
-// renderWeatherKindRow emits one subscription kind row. alert_thaw is forced and
-// system-managed: it renders an "always on" chip in place of the delete button —
-// the only way to remove it is the per-city "Remove city" control.
+// renderWeatherKindRow emits one deletable subscription kind row (morning_summary
+// or a user-added alert). alert_thaw is never passed here: it is forced,
+// system-managed, and surfaced once globally by renderWeatherCityList.
 func renderWeatherKindRow(row dto.WeatherCityRow) string {
 	label := alertKindLabel(row.NotifyKind, row.ConditionValue, row.NotifyHour)
-	if row.NotifyKind == "alert_thaw" {
-		return fmt.Sprintf(
-			`<li class="weather-kind-row">`+
-				`<span class="weather-kind-label">%s</span>`+
-				`<span class="weather-kind-locked">always on</span>`+
-				`</li>`,
-			dom.Escape(label),
-		)
-	}
 	return fmt.Sprintf(
 		`<li class="weather-kind-row">`+
 			`<span class="weather-kind-label">%s</span>`+
@@ -287,7 +287,11 @@ func renderWeatherAlertForm(state application.WeatherCitiesState) string {
 	b.WriteString(`<select class="weather-alert-kind" id="weather-alert-kind">`)
 	// alert_thaw is intentionally absent: it is forced onto every tracked city
 	// automatically (see CreateMeWeatherCity) and cannot be added manually.
+	// morning_summary IS listed so a user who deleted the auto-created daily
+	// summary can re-add it (and pick its hour); re-adding upserts the hour
+	// without resetting the fire cursor (see RetainWeatherUserCity).
 	kinds := []struct{ value, label string }{
+		{"morning_summary", "Morning summary (daily)"},
 		{"alert_heat", "Heat alert (°C)"},
 		{"alert_frost", "Frost alert (°C)"},
 		{"alert_thunderstorm", "Thunderstorm alert"},
@@ -302,8 +306,20 @@ func renderWeatherAlertForm(state application.WeatherCitiesState) string {
 	}
 	b.WriteString(`</select>`)
 
-	// Value input (hidden for thunderstorm and thaw — neither has a numeric threshold).
-	if state.AlertFormKind != "alert_thunderstorm" && state.AlertFormKind != "alert_thaw" {
+	// Numeric input; its meaning depends on the selected kind:
+	//   - morning_summary: a local hour 0–23 (blank → server default 07:00);
+	//   - heat/frost/rain: the numeric threshold;
+	//   - thunderstorm/thaw: no numeric input at all.
+	switch state.AlertFormKind {
+	case "alert_thunderstorm", "alert_thaw":
+		// No numeric input.
+	case "morning_summary":
+		fmt.Fprintf(&b,
+			`<input class="weather-alert-value" id="weather-alert-value" type="number" min="0" max="23" step="1" `+
+				`placeholder="hour 0–23 (default 7)" value="%s">`,
+			dom.Escape(state.AlertFormValue),
+		)
+	default:
 		fmt.Fprintf(&b,
 			`<input class="weather-alert-value" id="weather-alert-value" type="number" step="0.1" `+
 				`placeholder="threshold" value="%s">`,

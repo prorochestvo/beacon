@@ -12,7 +12,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 )
 
 // chatPingPrompt is the text sent in CheckUP probes. The model is instructed
@@ -64,7 +64,7 @@ func (c *openAICompatibleClient) complete(ctx context.Context, systemPrompt, use
 	urlPath, err := url.JoinPath(c.baseURL, chatPathCompletions)
 	if err != nil {
 		c.logger.Printf("op=complete stage=join_url err=%v", err)
-		return "", errors.Join(err, internal.NewTraceError())
+		return "", errors.Join(err, loginjector.NewTraceError())
 	}
 
 	messages := make([]chatMessage, 0, 2)
@@ -101,7 +101,7 @@ func (c *openAICompatibleClient) ping(ctx context.Context, model, prompt, expect
 	urlPath, err := url.JoinPath(c.baseURL, chatPathCompletions)
 	if err != nil {
 		c.logger.Printf("op=checkup stage=join_url err=%v", err)
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 
 	reqBody := chatRequest{
@@ -113,13 +113,13 @@ func (c *openAICompatibleClient) ping(ctx context.Context, model, prompt, expect
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		c.logger.Printf("op=checkup stage=marshal err=%v", err)
-		return errors.Join(fmt.Errorf("%s: checkup: marshal: %w", c.providerName, err), internal.NewTraceError())
+		return errors.Join(fmt.Errorf("%s: checkup: marshal: %w", c.providerName, err), loginjector.NewTraceError())
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlPath, bytes.NewReader(body))
 	if err != nil {
 		c.logger.Printf("op=checkup stage=new_request err=%v", err)
-		return errors.Join(fmt.Errorf("%s: checkup: new request: %w", c.providerName, err), internal.NewTraceError())
+		return errors.Join(fmt.Errorf("%s: checkup: new request: %w", c.providerName, err), loginjector.NewTraceError())
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -127,7 +127,7 @@ func (c *openAICompatibleClient) ping(ctx context.Context, model, prompt, expect
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		c.logger.Printf("[ERR] %s %s (model=%s err=%v)", req.Method, req.URL.Path, model, err)
-		return errors.Join(fmt.Errorf("%s: checkup: do: %w", c.providerName, err), internal.NewTraceError())
+		return errors.Join(fmt.Errorf("%s: checkup: do: %w", c.providerName, err), loginjector.NewTraceError())
 	}
 	defer resp.Body.Close()
 
@@ -138,7 +138,7 @@ func (c *openAICompatibleClient) ping(ctx context.Context, model, prompt, expect
 		c.logger.Printf("op=checkup stage=read_body http_status=%d err=%v", resp.StatusCode, err)
 		return errors.Join(
 			fmt.Errorf("%s: checkup: read body (status %d): %w", c.providerName, resp.StatusCode, err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -146,7 +146,7 @@ func (c *openAICompatibleClient) ping(ctx context.Context, model, prompt, expect
 		c.logger.Printf("op=checkup stage=non_2xx url=%s http_status=%d body=%s", urlPath, resp.StatusCode, string(rawBody))
 		return errors.Join(
 			fmt.Errorf("%s: checkup: unexpected status %d at %s: %s", c.providerName, resp.StatusCode, urlPath, string(rawBody)),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -155,7 +155,7 @@ func (c *openAICompatibleClient) ping(ctx context.Context, model, prompt, expect
 		c.logger.Printf("op=checkup stage=non_json_body url=%s http_status=%d body=%s", urlPath, resp.StatusCode, string(rawBody))
 		return errors.Join(
 			fmt.Errorf("%s: checkup: non-JSON body at %s (status %d): %s", c.providerName, urlPath, resp.StatusCode, string(rawBody)),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -168,7 +168,7 @@ func (c *openAICompatibleClient) ping(ctx context.Context, model, prompt, expect
 		c.logger.Printf("op=checkup stage=decode http_status=%d err=%v body=%s", resp.StatusCode, err, preview)
 		return errors.Join(
 			fmt.Errorf("%s: checkup: decode (status %d, body=%s): %w", c.providerName, resp.StatusCode, preview, err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -176,7 +176,7 @@ func (c *openAICompatibleClient) ping(ctx context.Context, model, prompt, expect
 		c.logger.Printf("op=checkup stage=empty_choices")
 		return errors.Join(
 			fmt.Errorf("%s: checkup: empty choices in response", c.providerName),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -185,7 +185,7 @@ func (c *openAICompatibleClient) ping(ctx context.Context, model, prompt, expect
 		c.logger.Printf("op=checkup stage=missing_expected_token expected=%s got=%s", expected, content)
 		return errors.Join(
 			fmt.Errorf("%s: checkup: response does not contain %q: %s", c.providerName, expected, content),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -198,13 +198,13 @@ func (c *openAICompatibleClient) doRequest(ctx context.Context, urlPath string, 
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		c.logger.Printf("op=%s stage=marshal err=%v", op, err)
-		return "", errors.Join(fmt.Errorf("%s: %s: marshal: %w", c.providerName, op, err), internal.NewTraceError())
+		return "", errors.Join(fmt.Errorf("%s: %s: marshal: %w", c.providerName, op, err), loginjector.NewTraceError())
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlPath, bytes.NewReader(body))
 	if err != nil {
 		c.logger.Printf("op=%s stage=new_request err=%v", op, err)
-		return "", errors.Join(fmt.Errorf("%s: %s: new request: %w", c.providerName, op, err), internal.NewTraceError())
+		return "", errors.Join(fmt.Errorf("%s: %s: new request: %w", c.providerName, op, err), loginjector.NewTraceError())
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -212,7 +212,7 @@ func (c *openAICompatibleClient) doRequest(ctx context.Context, urlPath string, 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		c.logger.Printf("[ERR] %s %s (model=%s err=%v)", req.Method, req.URL.Path, reqBody.Model, err)
-		return "", errors.Join(fmt.Errorf("%s: %s: do: %w", c.providerName, op, err), internal.NewTraceError())
+		return "", errors.Join(fmt.Errorf("%s: %s: do: %w", c.providerName, op, err), loginjector.NewTraceError())
 	}
 	defer resp.Body.Close()
 
@@ -223,7 +223,7 @@ func (c *openAICompatibleClient) doRequest(ctx context.Context, urlPath string, 
 		c.logger.Printf("op=%s stage=read_body http_status=%d err=%v", op, resp.StatusCode, err)
 		return "", errors.Join(
 			fmt.Errorf("%s: %s: read body (status %d): %w", c.providerName, op, resp.StatusCode, err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -231,7 +231,7 @@ func (c *openAICompatibleClient) doRequest(ctx context.Context, urlPath string, 
 		c.logger.Printf("op=%s stage=non_2xx url=%s http_status=%d body=%s", op, urlPath, resp.StatusCode, string(rawBody))
 		return "", errors.Join(
 			fmt.Errorf("%s: %s: unexpected status %d at %s: %s", c.providerName, op, resp.StatusCode, urlPath, string(rawBody)),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -240,7 +240,7 @@ func (c *openAICompatibleClient) doRequest(ctx context.Context, urlPath string, 
 		c.logger.Printf("op=%s stage=non_json_body url=%s http_status=%d body=%s", op, urlPath, resp.StatusCode, string(rawBody))
 		return "", errors.Join(
 			fmt.Errorf("%s: %s: non-JSON body at %s (status %d): %s", c.providerName, op, urlPath, resp.StatusCode, string(rawBody)),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -253,7 +253,7 @@ func (c *openAICompatibleClient) doRequest(ctx context.Context, urlPath string, 
 		c.logger.Printf("op=%s stage=decode http_status=%d err=%v body=%s", op, resp.StatusCode, err, preview)
 		return "", errors.Join(
 			fmt.Errorf("%s: %s: decode (status %d, body=%s): %w", c.providerName, op, resp.StatusCode, preview, err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -261,7 +261,7 @@ func (c *openAICompatibleClient) doRequest(ctx context.Context, urlPath string, 
 		c.logger.Printf("op=%s stage=empty_choices", op)
 		return "", errors.Join(
 			fmt.Errorf("%s: %s: empty choices in response", c.providerName, op),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 

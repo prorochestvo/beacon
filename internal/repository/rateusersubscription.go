@@ -9,6 +9,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/domain/identity"
@@ -31,20 +32,20 @@ func (r *RateUserSubscriptionRepository) Name() string { return rateUserSubscrip
 func (r *RateUserSubscriptionRepository) CheckUP(ctx context.Context) error {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
 
 	count, err := rateUserSubscriptionCount(tx, ctx, ";")
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if count < 0 {
 		err = errors.New("unexpected result")
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -56,7 +57,7 @@ func (r *RateUserSubscriptionRepository) CheckUP(ctx context.Context) error {
 func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.RateUserSubscription, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	defer printRollbackError(tx)
@@ -74,14 +75,14 @@ func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsByUserID(ctx
 func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsBySource(ctx context.Context, sourceName string) ([]domain.RateUserSubscription, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	defer printRollbackError(tx)
 
 	rows, err := rateUserSubscriptionQueryContext(tx, ctx, "WHERE "+rateUserSubscriptionSourceNameFieldName+" = ?;", sourceName)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
@@ -93,7 +94,7 @@ func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsBySource(ctx
 func (r *RateUserSubscriptionRepository) RetainRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error {
 	if record == nil {
 		err := errors.New("user subscription is nil")
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -109,14 +110,14 @@ func (r *RateUserSubscriptionRepository) RetainRateUserSubscription(ctx context.
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
 
 	count, err := rateUserSubscriptionCount(tx, ctx, "WHERE "+rateUserSubscriptionIdFieldName+" = ?;", record.ID)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -169,24 +170,24 @@ func (r *RateUserSubscriptionRepository) RetainRateUserSubscription(ctx context.
 		)
 	}
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	rows, err := res.RowsAffected()
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	if rows <= 0 {
 		err = errors.New("unexpected result: no rows affected")
 		err = errors.Join(err, internal.ErrNotFound)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if err = tx.Commit(); err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -210,13 +211,13 @@ func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsBySourcePage
 
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
 	rows, err := tx.QueryContext(ctx, query, sourceName, limit, offset)
 	if err != nil {
-		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), internal.NewTraceError())
+		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 
@@ -228,14 +229,14 @@ func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsBySourcePage
 			&item.ID, &item.UserType, &item.SourceName,
 			&item.ConditionType, &item.ConditionValue, &updatedAt,
 		); scanErr != nil {
-			return nil, errors.Join(scanErr, internal.NewTraceError())
+			return nil, errors.Join(scanErr, loginjector.NewTraceError())
 		}
 		var parseErr error
 		item.LatestNotifiedAt, parseErr = time.Parse(time.RFC3339, updatedAt)
 		if parseErr != nil {
 			log.Print(errors.Join(
 				fmt.Errorf("subscription %s has invalid updated_at %q: %w", item.ID, updatedAt, parseErr),
-				internal.NewTraceError(),
+				loginjector.NewTraceError(),
 			))
 		}
 		items = append(items, item)
@@ -292,13 +293,13 @@ GROUP BY s.%[2]s, s.%[3]s;`,
 
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
 	rows, err := tx.QueryContext(ctx, query, sourceName)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 
@@ -311,14 +312,14 @@ GROUP BY s.%[2]s, s.%[3]s;`,
 			&s.SubscriptionCount, &lastSentAt,
 			&s.SuccessCount, &s.FailedCount,
 		); scanErr != nil {
-			return nil, errors.Join(scanErr, internal.NewTraceError())
+			return nil, errors.Join(scanErr, loginjector.NewTraceError())
 		}
 		if lastSentAt != nil && *lastSentAt != "" {
 			parsed, parseErr := time.Parse(time.RFC3339, *lastSentAt)
 			if parseErr != nil {
 				log.Print(errors.Join(
 					fmt.Errorf("subscription summary for source %q has invalid last_sent_at %q: %w", s.SourceName, *lastSentAt, parseErr),
-					internal.NewTraceError(),
+					loginjector.NewTraceError(),
 				))
 			} else {
 				s.LastSentAt = parsed
@@ -336,7 +337,7 @@ GROUP BY s.%[2]s, s.%[3]s;`,
 func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionByID(ctx context.Context, id string) (*domain.RateUserSubscription, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -347,13 +348,13 @@ func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionByID(ctx cont
 func (r *RateUserSubscriptionRepository) RemoveRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error {
 	if record == nil {
 		err := errors.New("user subscription is nil")
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
@@ -362,12 +363,12 @@ func (r *RateUserSubscriptionRepository) RemoveRateUserSubscription(ctx context.
 	_, err = tx.ExecContext(ctx, cmd, record.ID)
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", cmd))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if err = tx.Commit(); err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -410,7 +411,7 @@ func rateUserSubscriptionCount(tx *sql.Tx, ctx context.Context, condition string
 		return 0, nil
 	} else if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return 0, err
 	}
 
@@ -420,7 +421,7 @@ func rateUserSubscriptionCount(tx *sql.Tx, ctx context.Context, condition string
 func rateUserSubscriptionQueryContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (items []domain.RateUserSubscription, err error) {
 	count, err := rateUserSubscriptionCount(tx, ctx, condition, args...)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return
 	}
 	if count == 0 {
@@ -433,7 +434,7 @@ func rateUserSubscriptionQueryContext(tx *sql.Tx, ctx context.Context, condition
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return
 	}
 	defer func(rows io.Closer) { err = errors.Join(err, rows.Close()) }(rows)
@@ -456,19 +457,19 @@ func rateUserSubscriptionQueryContext(tx *sql.Tx, ctx context.Context, condition
 			&createdAt,
 		)
 		if err != nil {
-			err = errors.Join(err, internal.NewTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return
 		}
 
 		item.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
 		if err != nil {
-			err = errors.Join(err, internal.NewTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return
 		}
 
 		item.UpdatedAt, err = time.Parse(time.RFC3339, updatedAt)
 		if err != nil {
-			err = errors.Join(err, internal.NewTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return nil, err
 		}
 
@@ -498,19 +499,19 @@ func rateUserSubscriptionQueryRowContext(tx *sql.Tx, ctx context.Context, condit
 		return nil, nil
 	} else if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
 	item.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
 	item.UpdatedAt, err = time.Parse(time.RFC3339, updatedAt)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
