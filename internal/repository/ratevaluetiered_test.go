@@ -33,6 +33,19 @@ type fakeTierReader struct {
 	pageArgs []int64
 	rowTotal int64
 	grouped  int64
+
+	// lastN answers the newest-first reads. lastNCalls records each (before, limit) the
+	// tier was asked for, so a test can assert the top-up cursor rather than only its result.
+	lastN      []domain.RateValue
+	lastNErr   error
+	lastNCalls []lastNCall
+}
+
+// lastNCall records one newest-first request, cursor included.
+type lastNCall struct {
+	before   time.Time
+	beforeID string
+	limit    int64
 }
 
 func (f *fakeTierReader) ObtainValuesForPairsBetween(
@@ -66,6 +79,37 @@ func (f *fakeTierReader) ObtainHistoryForPairsPaged(
 		return nil, 0, 0, f.pageErr
 	}
 	return f.rows, f.rowTotal, f.grouped, nil
+}
+
+func (f *fakeTierReader) ObtainLastNRateValuesBySourceName(
+	ctx context.Context, sourceName string, limit int64,
+) ([]domain.RateValue, error) {
+	return f.ObtainLastNRateValuesBySourceNameBefore(ctx, sourceName, time.Time{}, "", limit)
+}
+
+func (f *fakeTierReader) ObtainLastNRateValuesBySourceNameBefore(
+	_ context.Context, _ string, before time.Time, beforeID string, limit int64,
+) ([]domain.RateValue, error) {
+	f.lastNCalls = append(f.lastNCalls, lastNCall{before: before, beforeID: beforeID, limit: limit})
+	if f.lastNErr != nil {
+		return nil, f.lastNErr
+	}
+	out := make([]domain.RateValue, 0, limit)
+	for _, r := range f.lastN {
+		if !before.IsZero() {
+			if r.Timestamp.After(before) {
+				continue
+			}
+			if r.Timestamp.Equal(before) && r.ID >= beforeID {
+				continue
+			}
+		}
+		out = append(out, r)
+		if int64(len(out)) == limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 // tierRows builds n rows one day apart ending at end, oldest first — the order both
@@ -304,5 +348,122 @@ func TestTieredRateValueRepository_ObtainHistoryForPairsPaged(t *testing.T) {
 
 		_, _, _, err = r.ObtainHistoryForPairsPaged(t.Context(), pairs, 20, 0)
 		require.Error(t, err)
+	})
+}
+
+// newestFirst reverses tierRows' oldest-first output into the order the last-N reads use.
+func newestFirst(rows []domain.RateValue) []domain.RateValue {
+	out := make([]domain.RateValue, 0, len(rows))
+	for i := len(rows) - 1; i >= 0; i-- {
+		out = append(out, rows[i])
+	}
+	return out
+}
+
+func TestTieredRateValueRepository_ObtainLastNRateValuesBySourceName(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	horizon := 180 * 24 * time.Hour
+	cut := now.Add(-horizon)
+
+	newTiered := func(t *testing.T, hot, archive *fakeTierReader) *TieredRateValueRepository {
+		t.Helper()
+		r, err := NewTieredRateValueRepository(hot, archive, horizon, func() time.Time { return now })
+		require.NoError(t, err)
+		return r
+	}
+
+	t.Run("a limit the hot tier can fill never touches the archive", func(t *testing.T) {
+		t.Parallel()
+		hot := &fakeTierReader{lastN: newestFirst(tierRows("rv-", now, 300))}
+		archive := &fakeTierReader{lastN: newestFirst(tierRows("rv-", now, 360))}
+		r := newTiered(t, hot, archive)
+
+		got, err := r.ObtainLastNRateValuesBySourceName(t.Context(), "src", 100)
+		require.NoError(t, err)
+		assert.Len(t, got, 100)
+		assert.Empty(t, archive.lastNCalls, "the ordinary request costs exactly one query")
+	})
+
+	t.Run("a short hot answer is topped up from the archive", func(t *testing.T) {
+		t.Parallel()
+		// The state after pruning: ~4.7 rows a day per source means the API's maximum
+		// limit of 1000 reaches further back than a 180-day horizon holds.
+		all := tierRows("rv-", now, 360)
+		hot := &fakeTierReader{lastN: newestFirst(prunedTo(all, cut))}
+		archive := &fakeTierReader{lastN: newestFirst(all)}
+		r := newTiered(t, hot, archive)
+
+		got, err := r.ObtainLastNRateValuesBySourceName(t.Context(), "src", 300)
+		require.NoError(t, err)
+		require.Len(t, got, 300, "the caller asked in rows and must get that many rows")
+
+		seen := make(map[string]int, len(got))
+		for _, v := range got {
+			seen[v.ID]++
+		}
+		assert.Len(t, seen, 300, "the top-up must not repeat a row the hot tier returned")
+
+		for i := 1; i < len(got); i++ {
+			assert.False(t, got[i].Timestamp.After(got[i-1].Timestamp), "the result stays newest-first")
+		}
+	})
+
+	t.Run("the top-up resumes strictly after the last hot row", func(t *testing.T) {
+		t.Parallel()
+		hot := &fakeTierReader{lastN: newestFirst(tierRows("rv-", now, 5))}
+		archive := &fakeTierReader{lastN: newestFirst(tierRows("rv-", now, 20))}
+		r := newTiered(t, hot, archive)
+
+		got, err := r.ObtainLastNRateValuesBySourceName(t.Context(), "src", 12)
+		require.NoError(t, err)
+		require.Len(t, got, 12)
+
+		require.Len(t, archive.lastNCalls, 1)
+		call := archive.lastNCalls[0]
+		oldestHot := hot.lastN[len(hot.lastN)-1]
+		assert.Equal(t, oldestHot.Timestamp, call.before)
+		assert.Equal(t, oldestHot.ID, call.beforeID)
+		assert.Equal(t, int64(7), call.limit, "only the shortfall is requested")
+	})
+
+	t.Run("an empty hot tier lets the archive answer the whole request", func(t *testing.T) {
+		t.Parallel()
+		hot := &fakeTierReader{}
+		archive := &fakeTierReader{lastN: newestFirst(tierRows("rv-", now, 20))}
+		r := newTiered(t, hot, archive)
+
+		got, err := r.ObtainLastNRateValuesBySourceName(t.Context(), "src", 5)
+		require.NoError(t, err)
+		assert.Len(t, got, 5)
+		require.Len(t, archive.lastNCalls, 1)
+		assert.True(t, archive.lastNCalls[0].before.IsZero(), "no hot row means no cursor to resume from")
+	})
+
+	t.Run("both tiers short returns everything there is", func(t *testing.T) {
+		t.Parallel()
+		hot := &fakeTierReader{lastN: newestFirst(tierRows("rv-", now, 2))}
+		archive := &fakeTierReader{lastN: newestFirst(tierRows("rv-", now, 4))}
+		r := newTiered(t, hot, archive)
+
+		got, err := r.ObtainLastNRateValuesBySourceName(t.Context(), "src", 100)
+		require.NoError(t, err)
+		assert.Len(t, got, 4, "a short answer is correct when that is all the history there is")
+	})
+
+	t.Run("failures are attributed to the tier that produced them", func(t *testing.T) {
+		t.Parallel()
+		hotFail := &fakeTierReader{lastNErr: errors.New("db down")}
+		r := newTiered(t, hotFail, &fakeTierReader{})
+		_, err := r.ObtainLastNRateValuesBySourceName(t.Context(), "src", 10)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "hot tier")
+
+		archiveFail := &fakeTierReader{lastNErr: errors.New("archive unreadable")}
+		r = newTiered(t, &fakeTierReader{}, archiveFail)
+		_, err = r.ObtainLastNRateValuesBySourceName(t.Context(), "src", 10)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "archive tier")
 	})
 }

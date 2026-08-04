@@ -29,6 +29,10 @@ type tierReader interface {
 	ObtainHistoryForPairsPaged(
 		ctx context.Context, pairs []domain.SourcePairKey, limit, offset int64,
 	) (rows []domain.RateValue, rowTotal int64, groupedTotal int64, err error)
+	ObtainLastNRateValuesBySourceName(ctx context.Context, sourceName string, limit int64) ([]domain.RateValue, error)
+	ObtainLastNRateValuesBySourceNameBefore(
+		ctx context.Context, sourceName string, before time.Time, beforeID string, limit int64,
+	) ([]domain.RateValue, error)
 }
 
 // NewTieredRateValueRepository routes rate-value reads across the hot and archive
@@ -122,4 +126,47 @@ func (r *TieredRateValueRepository) ObtainHistoryForPairsPaged(
 	ctx context.Context, pairs []domain.SourcePairKey, limit, offset int64,
 ) (rows []domain.RateValue, rowTotal int64, groupedTotal int64, err error) {
 	return r.archive.ObtainHistoryForPairsPaged(ctx, pairs, limit, offset)
+}
+
+// ObtainLastNRateValuesBySourceName returns the newest limit rows for one source, asking
+// the hot tier first and topping up from the archive only when the hot tier came up short.
+//
+// A row count rather than a timestamp decides this one, because the caller asks in rows.
+// Production runs about 4.7 values per source per day, so the API's maximum limit of 1000
+// spans roughly 213 days — past a 180-day horizon. Once the hot tier is pruned it can
+// therefore answer a large limit short, and short is indistinguishable from "that is all
+// there is" to the caller.
+//
+// The top-up asks the archive for rows strictly older than the last one the hot tier
+// returned, so the two halves cannot overlap even though the archive holds both. When the
+// hot tier fills the limit — every ordinary request — the archive is not touched at all.
+func (r *TieredRateValueRepository) ObtainLastNRateValuesBySourceName(
+	ctx context.Context, sourceName string, limit int64,
+) ([]domain.RateValue, error) {
+	recent, err := r.hot.ObtainLastNRateValuesBySourceName(ctx, sourceName, limit)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("hot tier: %w", err), loginjector.NewTraceError())
+	}
+	if int64(len(recent)) >= limit {
+		return recent, nil
+	}
+
+	// A zero cursor when the hot tier returned nothing means the archive answers the
+	// whole request, which is the correct reading of "the newest N rows this source has".
+	var (
+		before   time.Time
+		beforeID string
+	)
+	if n := len(recent); n > 0 {
+		before, beforeID = recent[n-1].Timestamp, recent[n-1].ID
+	}
+
+	older, err := r.archive.ObtainLastNRateValuesBySourceNameBefore(
+		ctx, sourceName, before, beforeID, limit-int64(len(recent)),
+	)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("archive tier: %w", err), loginjector.NewTraceError())
+	}
+
+	return append(recent, older...), nil
 }

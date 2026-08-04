@@ -67,6 +67,27 @@ func (r *RateSourceArchiveRepository) RetainRateSources(ctx context.Context, rec
 		return 0, nil
 	}
 
+	// One statement per chunk. The driver's variable ceiling was measured at 32766, so
+	// at 12 columns a single statement stops accepting rows somewhere past 2730 sources;
+	// production runs 56. The chunk is not there for today's row count, it is there so
+	// crossing that line later fails nowhere — the mirror's failure mode is a grouped
+	// history count that silently drops to zero, not an error anyone would notice.
+	const chunkSize = 500
+	total := 0
+	for start := 0; start < len(records); start += chunkSize {
+		end := min(start+chunkSize, len(records))
+		affected, err := r.retainChunk(ctx, records[start:end], start)
+		if err != nil {
+			return total, err
+		}
+		total += affected
+	}
+	return total, nil
+}
+
+// retainChunk upserts one statement's worth of sources. offset is the index of the first
+// record within the caller's slice, so a validation error names the row the caller passed.
+func (r *RateSourceArchiveRepository) retainChunk(ctx context.Context, records []domain.RateSource, offset int) (int, error) {
 	const columns = 12
 
 	placeholders := make([]string, 0, len(records))
@@ -75,7 +96,7 @@ func (r *RateSourceArchiveRepository) RetainRateSources(ctx context.Context, rec
 		record := &records[i]
 		if record.Name == "" {
 			return 0, errors.Join(
-				fmt.Errorf("archive: rate source at index %d has an empty name", i),
+				fmt.Errorf("archive: rate source at index %d has an empty name", offset+i),
 				loginjector.NewTraceError(),
 			)
 		}

@@ -18,7 +18,7 @@ import (
 func NewRateRestAPI(
 	rExecutionHistory executionHistoryRepository,
 	rRateSource rateSourceRepository,
-	rRateValue rateValueRepository,
+	rRateValue RateValuesLoader,
 	rRateUserSubscription rateUserSubscriptionRepository,
 	rRateUserEvent rateUserEventRepository,
 ) (*RateRestApi, error) {
@@ -38,7 +38,7 @@ func NewRateRestAPI(
 type RateRestApi struct {
 	executionHistoryRepository     executionHistoryRepository
 	rateSourceRepository           rateSourceRepository
-	rateValueRepository            rateValueRepository
+	rateValueRepository            RateValuesLoader
 	rateUserSubscriptionRepository rateUserSubscriptionRepository
 	rateUserEventRepository        rateUserEventRepository
 }
@@ -57,7 +57,10 @@ type rateSourceRepository interface {
 	RetainRateSource(context.Context, *domain.RateSource) error
 }
 
-type rateValueRepository interface {
+// RateValuesLoader reads recent rate values for one source. Exported because the
+// composition root chooses between the hot repository and the tiered reader that spans
+// the hot and archive databases, and has to name the type it is choosing.
+type RateValuesLoader interface {
 	ObtainLastNRateValuesBySourceName(context.Context, string, int64) ([]domain.RateValue, error)
 }
 

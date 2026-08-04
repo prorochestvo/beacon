@@ -142,7 +142,8 @@ longer keeps returns a short answer with no error.
 | `ObtainValuesForPairsSince` (chart), `since >= now-180d` | hot alone — every period up to 180 days |
 | `ObtainValuesForPairsSince` (chart), `since < now-180d` | archive `[since, cut)` **+** hot `[cut, now]`, concatenated |
 | `ObtainHistoryForPairsPaged` (History view) | archive alone — its total is the only one that keeps describing how much history exists |
-| `ObtainLastNRateValuesBySourceName`, `ObtainLatestRateValuesBySourceNames` | hot — `limit` caps at 1000, ~5 days of rows |
+| `ObtainLastNRateValuesBySourceName` | hot, topped up from the archive when hot returns fewer than `limit` |
+| `ObtainLatestRateValuesBySourceNames` | hot — one row per source |
 
 The chart split uses `ObtainValuesForPairsBetween`'s half-open `[since, until)` window, so
 the same cut bounds one half above and the other below: no row lands in both or neither,
@@ -150,6 +151,15 @@ and the halves concatenate without deduplication. The recent half always comes f
 hot tier, so reconciliation lag can never affect the right edge of a chart. Paged history
 does lag by however long the archive pass takes — seconds, since collection and
 reconciliation run in that order in one collector process.
+
+**Row-count reads need the same treatment, and the arithmetic is not obvious.** Production
+writes ~200 `rate_values` a day *in total across 56 sources* — about **4.7 per source per
+day**. The REST `limit` caps at 1000, which is therefore roughly **213 days** for one
+source, past the horizon. `ObtainLastNRateValuesBySourceName` consequently asks the hot
+tier first and, only when it comes back short, tops up via
+`ObtainLastNRateValuesBySourceNameBefore` with the last hot row as a `(timestamp, id)`
+cursor — disjoint by construction, no archive query at all in the ordinary case. Do not
+reason about these limits from the aggregate write rate; divide by the source count first.
 
 `cmd/migrator` is the **only** thing that mutates schema. It embeds
 `migrations.MigrationsFS` at build time, opens the DB via `BEACON_SQLITEDB_DSN`, and

@@ -176,6 +176,45 @@ func (r *RateValueRepository) ObtainLastNRateValuesBySourceName(ctx context.Cont
 	return rates, nil
 }
 
+// ObtainLastNRateValuesBySourceNameBefore is ObtainLastNRateValuesBySourceName resumed
+// from a cursor: up to limit rows for the source, newest first, strictly older than the
+// (before, beforeID) pair. A zero before means no cursor, which makes it identical to
+// ObtainLastNRateValuesBySourceName.
+//
+// It exists so a tiered read can top up a short hot-tier answer from the archive without
+// re-reading or duplicating what the hot tier already returned. The cursor is a row-value
+// comparison on the same (timestamp, id) pair the ORDER BY uses, so it lands exactly on
+// the row after the last one handed back.
+func (r *RateValueRepository) ObtainLastNRateValuesBySourceNameBefore(
+	ctx context.Context, sourceName string, before time.Time, beforeID string, limit int64,
+) ([]domain.RateValue, error) {
+	if limit <= 0 {
+		return []domain.RateValue{}, nil
+	}
+
+	tx, err := r.db.ReadOnlyTransaction(ctx)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+	defer printRollbackError(tx)
+
+	condition := " WHERE " + rateValueSourceNameFieldName + " = ?"
+	args := []any{sourceName}
+	if !before.IsZero() {
+		condition += " AND (" + rateValueTimestampFieldName + ", " + rateValueIdFieldName + ") < (?, ?)"
+		args = append(args, before.UTC().Format(time.RFC3339), beforeID)
+	}
+	condition += " ORDER BY " + rateValueTimestampFieldName + " DESC, " + rateValueIdFieldName + " DESC LIMIT ?;"
+	args = append(args, limit)
+
+	rates, err := rateValueQueryContext(tx, ctx, condition, args...)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+
+	return rates, nil
+}
+
 // ObtainRateValuesAfter returns up to limit rate values ordered oldest-first, starting
 // strictly after the (timestamp, id) cursor. It is the read half of the archive
 // reconciliation pass: the archive reports how far it has copied, and this walks the

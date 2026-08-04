@@ -13,13 +13,13 @@ import (
 
 var _ executionHistoryRepository = &repository.ExecutionHistoryRepository{}
 var _ rateSourceRepository = &repository.RateSourceRepository{}
-var _ rateValueRepository = &repository.RateValueRepository{}
+var _ RateValuesLoader = &repository.RateValueRepository{}
 var _ rateUserSubscriptionRepository = &repository.RateUserSubscriptionRepository{}
 var _ rateUserEventRepository = &repository.RateUserEventRepository{}
 
 var _ executionHistoryRepository = (*mockExecutionHistoryRepository)(nil)
 var _ rateSourceRepository = (*mockRateSourceRepository)(nil)
-var _ rateValueRepository = (*mockRateValueRepository)(nil)
+var _ RateValuesLoader = (*mockRateValueRepository)(nil)
 var _ rateUserSubscriptionRepository = (*mockRateUserSubscriptionRepository)(nil)
 var _ rateUserEventRepository = (*mockRateUserEventRepository)(nil)
 
@@ -368,7 +368,7 @@ func newRateRestAPI(
 	t *testing.T,
 	eh executionHistoryRepository,
 	rs rateSourceRepository,
-	rv rateValueRepository,
+	rv RateValuesLoader,
 	rus rateUserSubscriptionRepository,
 	rue rateUserEventRepository,
 ) *RateRestApi {

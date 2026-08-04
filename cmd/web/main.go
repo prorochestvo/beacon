@@ -187,10 +187,31 @@ func main() {
 	}
 	log.Println("repositories: initiated")
 
+	// The archive is opened before any service is built, because the tiered reader it
+	// produces stands in for rateValueRepo wherever a query can reach past the horizon.
+	var (
+		restRateValues service.RateValuesLoader     = rateValueRepo
+		chartValues    appchart.ValuesLoader        = rateValueRepo
+		chartHistory   appchart.HistoryValuesLoader = rateValueRepo
+	)
+	tieredRepo, archiveCloser, err := openArchiveTier(rateValueRepo, l)
+	if err != nil {
+		log.Fatalf("dependencies: archive: %s", err.Error())
+	}
+	if archiveCloser != nil {
+		defer func(c io.Closer) {
+			if e := c.Close(); e != nil {
+				log.Printf("close archive sqlite client: %v", e)
+			}
+		}(archiveCloser)
+		restRateValues, chartValues, chartHistory = tieredRepo, tieredRepo, tieredRepo
+		log.Println("dependencies: archive tier attached, deep reads routed to the history database")
+	}
+
 	restAPI, err := service.NewRateRestAPI(
 		historyRepo,
 		sourceRepo,
-		rateValueRepo,
+		restRateValues,
 		subscriptionRepo,
 		eventRepo,
 	)
@@ -207,23 +228,8 @@ func main() {
 	}
 	// rateValueRepo satisfies both ValuesLoader (ObtainMeChart) and
 	// HistoryValuesLoader (ObtainMeHistory); sourceRepo also satisfies
-	// PublicSourcesLoader (ObtainPublicChart). With an archive configured, a tiered
-	// reader takes over both roles and answers deep windows from the history tier.
-	var chartValues appchart.ValuesLoader = rateValueRepo
-	var chartHistory appchart.HistoryValuesLoader = rateValueRepo
-	tieredRepo, archiveCloser, err := openArchiveTier(rateValueRepo, l)
-	if err != nil {
-		log.Fatalf("dependencies: archive: %s", err.Error())
-	}
-	if archiveCloser != nil {
-		defer func(c io.Closer) {
-			if e := c.Close(); e != nil {
-				log.Printf("close archive sqlite client: %v", e)
-			}
-		}(archiveCloser)
-		chartValues, chartHistory = tieredRepo, tieredRepo
-		log.Println("dependencies: archive tier attached, deep reads routed to the history database")
-	}
+	// PublicSourcesLoader (ObtainPublicChart). Both roles are taken over by the tiered
+	// reader above when an archive is configured.
 	chartSvc := appchart.NewService(subscriptionRepo, sourceRepo, chartValues, chartHistory, sourceRepo, time.Now)
 
 	// Open-Meteo geocoder for city search. cmd/web always uses a direct connection

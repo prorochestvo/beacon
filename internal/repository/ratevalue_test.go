@@ -948,3 +948,102 @@ func TestRateValueRepository_ObtainValuesForPairsBetween(t *testing.T) {
 		assert.Empty(t, got, "a zero-width half-open window holds nothing")
 	})
 }
+
+func TestRateValueRepository_ObtainLastNRateValuesBySourceNameBefore(t *testing.T) {
+	t.Parallel()
+
+	seedAt := func(t *testing.T, r *RateValueRepository, ts time.Time, price float64) {
+		t.Helper()
+		rv := domain.RateValue{SourceName: "src-cursor", BaseCurrency: "USD", QuoteCurrency: "KZT", Price: price}
+		require.NoError(t, r.RetainRateValue(t.Context(), &rv))
+		tx, err := r.db.Transaction(t.Context())
+		require.NoError(t, err)
+		_, err = tx.ExecContext(t.Context(),
+			"UPDATE "+rateValueTableName+" SET "+rateValueTimestampFieldName+" = ? WHERE "+rateValueIdFieldName+" = ?",
+			ts.UTC().Format(time.RFC3339), rv.ID,
+		)
+		require.NoError(t, err)
+		require.NoError(t, tx.Commit())
+	}
+
+	base := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+
+	newSeeded := func(t *testing.T, n int) *RateValueRepository {
+		t.Helper()
+		r, err := NewRateValueRepository(stubSQLiteDB(t, "src-cursor"))
+		require.NoError(t, err)
+		for i := 0; i < n; i++ {
+			seedAt(t, r, base.Add(time.Duration(i)*time.Hour), float64(i))
+		}
+		return r
+	}
+
+	t.Run("a zero cursor matches the uncursored query", func(t *testing.T) {
+		t.Parallel()
+		r := newSeeded(t, 6)
+
+		plain, err := r.ObtainLastNRateValuesBySourceName(t.Context(), "src-cursor", 4)
+		require.NoError(t, err)
+		cursored, err := r.ObtainLastNRateValuesBySourceNameBefore(t.Context(), "src-cursor", time.Time{}, "", 4)
+		require.NoError(t, err)
+		assert.Equal(t, plain, cursored)
+	})
+
+	t.Run("the cursor row itself is excluded", func(t *testing.T) {
+		t.Parallel()
+		r := newSeeded(t, 6)
+
+		first, err := r.ObtainLastNRateValuesBySourceName(t.Context(), "src-cursor", 3)
+		require.NoError(t, err)
+		require.Len(t, first, 3)
+
+		last := first[len(first)-1]
+		next, err := r.ObtainLastNRateValuesBySourceNameBefore(t.Context(), "src-cursor", last.Timestamp, last.ID, 3)
+		require.NoError(t, err)
+		require.Len(t, next, 3)
+
+		// The two pages together are the whole set, each row once — the property the
+		// tiered top-up relies on when it resumes in the archive.
+		seen := map[string]int{}
+		for _, v := range append(append([]domain.RateValue{}, first...), next...) {
+			seen[v.ID]++
+		}
+		assert.Len(t, seen, 6)
+		for id, n := range seen {
+			assert.Equal(t, 1, n, "row %s appeared on both pages", id)
+		}
+	})
+
+	t.Run("rows sharing a timestamp are separated by id", func(t *testing.T) {
+		t.Parallel()
+		r, err := NewRateValueRepository(stubSQLiteDB(t, "src-cursor"))
+		require.NoError(t, err)
+		// One collector tick writes several rows at the same second; a timestamp-only
+		// cursor would either skip or repeat them.
+		for i := 0; i < 4; i++ {
+			seedAt(t, r, base, float64(i))
+		}
+
+		first, err := r.ObtainLastNRateValuesBySourceName(t.Context(), "src-cursor", 2)
+		require.NoError(t, err)
+		require.Len(t, first, 2)
+
+		last := first[len(first)-1]
+		next, err := r.ObtainLastNRateValuesBySourceNameBefore(t.Context(), "src-cursor", last.Timestamp, last.ID, 10)
+		require.NoError(t, err)
+		assert.Len(t, next, 2, "the remaining rows at the same second, and no repeats")
+		for _, v := range next {
+			assert.Less(t, v.ID, last.ID)
+		}
+	})
+
+	t.Run("a non-positive limit never reaches the database", func(t *testing.T) {
+		t.Parallel()
+		r := newSeeded(t, 3)
+
+		got, err := r.ObtainLastNRateValuesBySourceNameBefore(t.Context(), "src-cursor", time.Time{}, "", 0)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Empty(t, got)
+	})
+}

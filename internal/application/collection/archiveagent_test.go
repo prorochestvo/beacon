@@ -329,14 +329,20 @@ func TestArchiveAgent_SyncSources(t *testing.T) {
 	t.Parallel()
 
 	base := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
-	sources := []domain.RateSource{
-		{Name: "src", Title: "Provider One", BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: domain.RateSourceKindBID},
-		{Name: "src2", Title: "Provider Two", BaseCurrency: "EUR", QuoteCurrency: "KZT", Kind: domain.RateSourceKindASK},
+
+	// A function, not a shared slice: newFakeHotSourceRepo(sources()...) forwards the
+	// caller's backing array rather than copying it, so a subtest that edits a title
+	// would be writing into every other parallel subtest's fixture.
+	sources := func() []domain.RateSource {
+		return []domain.RateSource{
+			{Name: "src", Title: "Provider One", BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: domain.RateSourceKindBID},
+			{Name: "src2", Title: "Provider Two", BaseCurrency: "EUR", QuoteCurrency: "KZT", Kind: domain.RateSourceKindASK},
+		}
 	}
 
 	t.Run("the source mirror is refreshed on every pass", func(t *testing.T) {
 		t.Parallel()
-		hotMeta := newFakeHotSourceRepo(sources...)
+		hotMeta := newFakeHotSourceRepo(sources()...)
 		archiveMeta := newFakeArchiveSourceRepo()
 		agent, err := NewArchiveAgent(
 			&fakeHotRepo{rows: hotRows(3, base)}, newFakeArchiveRepo(),
@@ -364,7 +370,7 @@ func TestArchiveAgent_SyncSources(t *testing.T) {
 		archive := newFakeArchiveRepo()
 		agent, err := NewArchiveAgent(
 			&fakeHotRepo{rows: hotRows(3, base)}, archive,
-			newFakeHotSourceRepo(sources...), archiveMeta, 100, io.Discard,
+			newFakeHotSourceRepo(sources()...), archiveMeta, 100, io.Discard,
 		)
 		require.NoError(t, err)
 
@@ -383,7 +389,7 @@ func TestArchiveAgent_SyncSources(t *testing.T) {
 		archive := newFakeArchiveRepo()
 		agent, err := NewArchiveAgent(
 			&fakeHotRepo{rows: hotRows(3, base)}, archive,
-			newFakeHotSourceRepo(sources...), archiveMeta, 100, io.Discard,
+			newFakeHotSourceRepo(sources()...), archiveMeta, 100, io.Discard,
 		)
 		require.NoError(t, err)
 
@@ -396,7 +402,7 @@ func TestArchiveAgent_SyncSources(t *testing.T) {
 
 	t.Run("an unreadable hot source table aborts the pass", func(t *testing.T) {
 		t.Parallel()
-		hotMeta := newFakeHotSourceRepo(sources...)
+		hotMeta := newFakeHotSourceRepo(sources()...)
 		hotMeta.err = errors.New("db down")
 		archive := newFakeArchiveRepo()
 		agent, err := NewArchiveAgent(
