@@ -145,9 +145,15 @@ failure (`OnFailure=`) to page on critical issues.
 The SQLite file is the entire persistent state of the service. Snapshot
 creation runs on the host via `configs/sqlite_dump.sh` (installed by
 `make init`): a daily online backup, safe under WAL, written to
-`/opt/beacon/backups/beacon.<YYYYMMDD>.sqlite` and mirrored to Google
+`/opt/beacon/backups/beacon.<YYYYMMDD>.sqlite.gz` and mirrored to Google
 Drive. See the project `README.md` for install, scheduling, and retention. The
 restore drill below is the operator-facing half not covered there.
+
+Snapshots are gzipped (~4× on real data: 8.1 MB → 2.1 MB). The retained set is
+what makes this matter — seven local dailies plus fourteen remote multiply every
+megabyte of database by twenty-one, against roughly 1.2 GB of free space on the
+host. Both extensions are handled everywhere: snapshots predating compression and
+the `cp` fallback's uncompressed set still restore, prune, and mirror normally.
 
 ### Reading the database without stopping anything
 
@@ -169,8 +175,17 @@ sqlite3 "file:/opt/beacon/backups/beacon.20260804.sqlite?immutable=1" \
   "SELECT filename, applied_at FROM __schema_migrations ORDER BY filename DESC LIMIT 5;"
 ```
 
-From a workstation, `make db-inspect` does this against the newest snapshot over SSH and
-reports its age before opening it; `make db-inspect ARGS="<sql>"` runs one query and exits.
+Current snapshots are gzipped, so decompress before opening — `immutable=1` still applies
+to the decompressed file:
+
+```bash
+gunzip -c /opt/beacon/backups/beacon.20260804.sqlite.gz > /tmp/inspect.sqlite
+sqlite3 "file:/tmp/inspect.sqlite?immutable=1" "SELECT COUNT(*) FROM rate_values;"
+```
+
+From a workstation, `make db-inspect` does all of that: it streams the newest snapshot down
+(decompressing on the fly), reports its age, and opens it locally, so the host needs neither
+a `sqlite3` binary nor scratch space. `make db-inspect ARGS="<sql>"` runs one query and exits.
 The age matters: snapshots are cut at 00:00 UTC, so immediately after a deploy the newest
 one predates the migration you are trying to confirm. `make db-snapshot` cuts a fresh one
 on demand (interactive `sudo` on the host).
@@ -202,7 +217,7 @@ DB="${DB#sqlite://}"
 mv "$DB" "$DB.before-restore"
 [[ -f "$DB-wal" ]] && mv "$DB-wal" "$DB-wal.before-restore"
 [[ -f "$DB-shm" ]] && mv "$DB-shm" "$DB-shm.before-restore"
-cp /opt/beacon/backups/beacon.<YYYYMMDD>.sqlite "$DB"
+gunzip -c /opt/beacon/backups/beacon.<YYYYMMDD>.sqlite.gz > "$DB"
 chown root:root "$DB"
 chmod 600 "$DB"
 ```

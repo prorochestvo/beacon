@@ -154,14 +154,39 @@ if [ ! -f "${src}" ]; then
 elif command -v sqlite3 >/dev/null 2>&1; then
     # Online backup: a consistent snapshot even while the services write (WAL mode).
     if sqlite3 "${src}" ".backup '${dst}'"; then
-        log "backup: ${dst}"
+        # Compress the finished snapshot. A SQLite file is mostly sparse pages and
+        # repeated text keys and gzips ~4x, which is the difference between the
+        # retained set fitting on this host's disk and not: seven dailies of a
+        # 200 MB database is 1.4 GB uncompressed against ~1.2 GB of headroom.
+        # Compression happens after .backup rather than through a pipe so the
+        # snapshot is proven complete on disk before it is rewritten, and so a
+        # gzip failure leaves a usable uncompressed snapshot behind.
+        # -f overwrites a same-day snapshot, matching what `sqlite3 .backup` already
+        # does to the uncompressed file. Without it a second run on the same date —
+        # which is exactly what an on-demand snapshot after a deploy is — fails on
+        # the existing .gz and leaves two disagreeing snapshots for one day.
+        if command -v gzip >/dev/null 2>&1; then
+            if gzip -6 -f "${dst}"; then
+                dst="${dst}.gz"
+                log "backup: ${dst}"
+            else
+                fail "gzip failed for ${dst} — keeping the uncompressed snapshot"
+                log "backup: ${dst} (uncompressed)"
+            fi
+        else
+            log "WARNING: gzip not found — keeping the uncompressed snapshot"
+            log "backup: ${dst}"
+        fi
         snapshot_made=1
     else
         fail "sqlite3 .backup failed for ${src}"
     fi
 else
     # Fallback when the sqlite3 CLI is absent: copy the main file plus its WAL/SHM
-    # sidecars so the snapshot can be replayed consistently.
+    # sidecars so the snapshot can be replayed consistently. Deliberately left
+    # uncompressed: the three files only restore as a set, and compressing them
+    # individually invites a partial restore where the db is unpacked and its WAL
+    # is not — silently replaying nothing, or worse, the wrong pages.
     if cp "${src}" "${dst}" \
         && { [ ! -f "${src}-wal" ] || cp "${src}-wal" "${dst}-wal"; } \
         && { [ ! -f "${src}-shm" ] || cp "${src}-shm" "${dst}-shm"; }; then
@@ -224,7 +249,9 @@ if [ "${NOTIFY_ON_SUCCESS}" = "1" ]; then
     kept_list=""
     kept_count=0
     kept_total=0
-    for f in "${BACKUP_DIR}"/beacon.*.sqlite; do
+    # Both extensions: snapshots taken before compression landed, and the cp
+    # fallback's uncompressed set, still count towards the retained inventory.
+    for f in "${BACKUP_DIR}"/beacon.*.sqlite "${BACKUP_DIR}"/beacon.*.sqlite.gz; do
         [ -f "${f}" ] || continue
         sz="$(file_size "${f}")"
         kept_count=$((kept_count + 1))

@@ -155,12 +155,15 @@ working form is a URI with `immutable=1`, which skips WAL setup entirely:
 sqlite3 "file:/opt/beacon/backups/beacon.<YYYYMMDD>.sqlite?immutable=1" "<query>"
 ```
 
-`make db-inspect` wraps that over SSH against the newest snapshot and prints the
-snapshot's age first — snapshots are cut at 00:00 UTC, so one older than the last
-deploy cannot confirm that deploy's migrations. `ARGS="<sql>"` runs a single query and
-exits; without it you get the interactive shell. `make db-snapshot` cuts a fresh
-snapshot on demand (`sudo` prompts on the TTY) when the nightly one is too old to
-answer the question.
+Snapshots are **gzipped** (`beacon.<YYYYMMDD>.sqlite.gz`, ~4× on real data), so decompress
+before applying the URI. `make db-inspect` does the whole dance: streams the newest
+snapshot down, decompresses on the fly, prints its age — snapshots are cut at 00:00 UTC,
+so one older than the last deploy cannot confirm that deploy's migrations — and opens it
+locally, so the host needs neither `sqlite3` nor scratch space. `ARGS="<sql>"` runs a
+single query and exits; without it you get the interactive shell. `make db-snapshot` cuts
+a fresh snapshot on demand (`sudo` prompts on the TTY) when the nightly one is too old to
+answer the question. Both extensions are handled throughout — snapshots predating
+compression, and the `cp` fallback's uncompressed WAL/SHM set, still prune and restore.
 
 ### Environment Variables
 
