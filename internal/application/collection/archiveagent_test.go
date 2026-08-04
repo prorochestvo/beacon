@@ -15,8 +15,10 @@ import (
 )
 
 var (
-	_ archiveSourceRepository = (*fakeHotRepo)(nil)
-	_ archiveTargetRepository = (*fakeArchiveRepo)(nil)
+	_ archiveSourceRepository     = (*fakeHotRepo)(nil)
+	_ archiveTargetRepository     = (*fakeArchiveRepo)(nil)
+	_ archiveMetaSourceRepository = (*fakeHotSourceRepo)(nil)
+	_ archiveMetaTargetRepository = (*fakeArchiveSourceRepo)(nil)
 )
 
 // fakeHotRepo is an in-memory stand-in for the hot tier that implements the same
@@ -107,6 +109,48 @@ func (f *fakeArchiveRepo) ObtainArchiveWatermark(context.Context) (time.Time, st
 	return bestTS, bestID, found, nil
 }
 
+// fakeHotSourceRepo stands in for the hot tier's rate_sources table.
+type fakeHotSourceRepo struct {
+	sources []domain.RateSource
+	err     error
+	calls   int
+}
+
+func newFakeHotSourceRepo(sources ...domain.RateSource) *fakeHotSourceRepo {
+	return &fakeHotSourceRepo{sources: sources}
+}
+
+func (f *fakeHotSourceRepo) ObtainAllRateSources(context.Context) ([]domain.RateSource, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	return append([]domain.RateSource(nil), f.sources...), nil
+}
+
+// fakeArchiveSourceRepo mimics the mirror's upsert: rows are inserted or overwritten,
+// never removed.
+type fakeArchiveSourceRepo struct {
+	stored map[string]domain.RateSource
+	err    error
+	calls  int
+}
+
+func newFakeArchiveSourceRepo() *fakeArchiveSourceRepo {
+	return &fakeArchiveSourceRepo{stored: map[string]domain.RateSource{}}
+}
+
+func (f *fakeArchiveSourceRepo) RetainRateSources(_ context.Context, records []domain.RateSource) (int, error) {
+	f.calls++
+	if f.err != nil {
+		return 0, f.err
+	}
+	for _, r := range records {
+		f.stored[r.Name] = r
+	}
+	return len(records), nil
+}
+
 func hotRows(n int, base time.Time) []domain.RateValue {
 	out := make([]domain.RateValue, 0, n)
 	for i := 0; i < n; i++ {
@@ -125,17 +169,21 @@ func hotRows(n int, base time.Time) []domain.RateValue {
 func TestNewArchiveAgent(t *testing.T) {
 	t.Parallel()
 
-	t.Run("both repositories are required", func(t *testing.T) {
+	t.Run("every repository is required", func(t *testing.T) {
 		t.Parallel()
-		_, err := NewArchiveAgent(nil, newFakeArchiveRepo(), 10, io.Discard)
+		_, err := NewArchiveAgent(nil, newFakeArchiveRepo(), newFakeHotSourceRepo(), newFakeArchiveSourceRepo(), 10, io.Discard)
 		require.Error(t, err)
-		_, err = NewArchiveAgent(&fakeHotRepo{}, nil, 10, io.Discard)
+		_, err = NewArchiveAgent(&fakeHotRepo{}, nil, newFakeHotSourceRepo(), newFakeArchiveSourceRepo(), 10, io.Discard)
+		require.Error(t, err)
+		_, err = NewArchiveAgent(&fakeHotRepo{}, newFakeArchiveRepo(), nil, newFakeArchiveSourceRepo(), 10, io.Discard)
+		require.Error(t, err)
+		_, err = NewArchiveAgent(&fakeHotRepo{}, newFakeArchiveRepo(), newFakeHotSourceRepo(), nil, 10, io.Discard)
 		require.Error(t, err)
 	})
 
 	t.Run("a non-positive batch size falls back to the default", func(t *testing.T) {
 		t.Parallel()
-		a, err := NewArchiveAgent(&fakeHotRepo{}, newFakeArchiveRepo(), 0, io.Discard)
+		a, err := NewArchiveAgent(&fakeHotRepo{}, newFakeArchiveRepo(), newFakeHotSourceRepo(), newFakeArchiveSourceRepo(), 0, io.Discard)
 		require.NoError(t, err)
 		assert.Equal(t, DefaultArchiveBatchSize, a.batchSize)
 	})
@@ -150,7 +198,7 @@ func TestArchiveAgent_Run(t *testing.T) {
 		t.Parallel()
 		hot := &fakeHotRepo{rows: hotRows(7, base)}
 		archive := newFakeArchiveRepo()
-		agent, err := NewArchiveAgent(hot, archive, 3, io.Discard)
+		agent, err := NewArchiveAgent(hot, archive, newFakeHotSourceRepo(), newFakeArchiveSourceRepo(), 3, io.Discard)
 		require.NoError(t, err)
 
 		copied, err := agent.Run(t.Context())
@@ -164,7 +212,7 @@ func TestArchiveAgent_Run(t *testing.T) {
 		t.Parallel()
 		hot := &fakeHotRepo{rows: hotRows(5, base)}
 		archive := newFakeArchiveRepo()
-		agent, err := NewArchiveAgent(hot, archive, 100, io.Discard)
+		agent, err := NewArchiveAgent(hot, archive, newFakeHotSourceRepo(), newFakeArchiveSourceRepo(), 100, io.Discard)
 		require.NoError(t, err)
 
 		_, err = agent.Run(t.Context())
@@ -182,7 +230,7 @@ func TestArchiveAgent_Run(t *testing.T) {
 		t.Parallel()
 		hot := &fakeHotRepo{rows: hotRows(4, base)}
 		archive := newFakeArchiveRepo()
-		agent, err := NewArchiveAgent(hot, archive, 100, io.Discard)
+		agent, err := NewArchiveAgent(hot, archive, newFakeHotSourceRepo(), newFakeArchiveSourceRepo(), 100, io.Discard)
 		require.NoError(t, err)
 		_, err = agent.Run(t.Context())
 		require.NoError(t, err)
@@ -207,7 +255,7 @@ func TestArchiveAgent_Run(t *testing.T) {
 			{ID: "rv-a", Timestamp: base}, {ID: "rv-b", Timestamp: base}, {ID: "rv-c", Timestamp: base},
 		}}
 		archive := newFakeArchiveRepo()
-		agent, err := NewArchiveAgent(hot, archive, 2, io.Discard)
+		agent, err := NewArchiveAgent(hot, archive, newFakeHotSourceRepo(), newFakeArchiveSourceRepo(), 2, io.Discard)
 		require.NoError(t, err)
 
 		copied, err := agent.Run(t.Context())
@@ -220,7 +268,7 @@ func TestArchiveAgent_Run(t *testing.T) {
 		t.Parallel()
 		hot := &fakeHotRepo{rows: hotRows(5, base)}
 		archive := newFakeArchiveRepo()
-		agent, err := NewArchiveAgent(hot, archive, 100, io.Discard)
+		agent, err := NewArchiveAgent(hot, archive, newFakeHotSourceRepo(), newFakeArchiveSourceRepo(), 100, io.Discard)
 		require.NoError(t, err)
 
 		archive.retainErr = errors.New("disk full")
@@ -240,7 +288,7 @@ func TestArchiveAgent_Run(t *testing.T) {
 	t.Run("a read failure is reported, not skipped past", func(t *testing.T) {
 		t.Parallel()
 		hot := &fakeHotRepo{err: errors.New("db down")}
-		agent, err := NewArchiveAgent(hot, newFakeArchiveRepo(), 100, io.Discard)
+		agent, err := NewArchiveAgent(hot, newFakeArchiveRepo(), newFakeHotSourceRepo(), newFakeArchiveSourceRepo(), 100, io.Discard)
 		require.NoError(t, err)
 
 		_, err = agent.Run(t.Context())
@@ -252,7 +300,7 @@ func TestArchiveAgent_Run(t *testing.T) {
 		t.Parallel()
 		archive := newFakeArchiveRepo()
 		archive.wmErr = errors.New("archive unreadable")
-		agent, err := NewArchiveAgent(&fakeHotRepo{rows: hotRows(3, base)}, archive, 100, io.Discard)
+		agent, err := NewArchiveAgent(&fakeHotRepo{rows: hotRows(3, base)}, archive, newFakeHotSourceRepo(), newFakeArchiveSourceRepo(), 100, io.Discard)
 		require.NoError(t, err)
 
 		_, err = agent.Run(t.Context())
@@ -265,7 +313,7 @@ func TestArchiveAgent_Run(t *testing.T) {
 		t.Parallel()
 		hot := &fakeHotRepo{rows: hotRows(10, base)}
 		archive := newFakeArchiveRepo()
-		agent, err := NewArchiveAgent(hot, archive, 100, io.Discard)
+		agent, err := NewArchiveAgent(hot, archive, newFakeHotSourceRepo(), newFakeArchiveSourceRepo(), 100, io.Discard)
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(t.Context())
@@ -274,5 +322,107 @@ func TestArchiveAgent_Run(t *testing.T) {
 		copied, err := agent.Run(ctx)
 		require.NoError(t, err, "a cancelled tick is not a failure")
 		assert.Zero(t, copied)
+	})
+}
+
+func TestArchiveAgent_SyncSources(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	sources := []domain.RateSource{
+		{Name: "src", Title: "Provider One", BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: domain.RateSourceKindBID},
+		{Name: "src2", Title: "Provider Two", BaseCurrency: "EUR", QuoteCurrency: "KZT", Kind: domain.RateSourceKindASK},
+	}
+
+	t.Run("the source mirror is refreshed on every pass", func(t *testing.T) {
+		t.Parallel()
+		hotMeta := newFakeHotSourceRepo(sources...)
+		archiveMeta := newFakeArchiveSourceRepo()
+		agent, err := NewArchiveAgent(
+			&fakeHotRepo{rows: hotRows(3, base)}, newFakeArchiveRepo(),
+			hotMeta, archiveMeta, 100, io.Discard,
+		)
+		require.NoError(t, err)
+
+		_, err = agent.Run(t.Context())
+		require.NoError(t, err)
+		assert.Len(t, archiveMeta.stored, 2)
+		assert.Equal(t, "Provider One", archiveMeta.stored["src"].Title)
+
+		// A second pass copies no new values but still refreshes the mirror, which is
+		// what repairs a title edited in the hot tier between ticks.
+		hotMeta.sources[0].Title = "Provider One Renamed"
+		_, err = agent.Run(t.Context())
+		require.NoError(t, err)
+		assert.Equal(t, 2, archiveMeta.calls)
+		assert.Equal(t, "Provider One Renamed", archiveMeta.stored["src"].Title)
+	})
+
+	t.Run("sources are mirrored before any value is copied", func(t *testing.T) {
+		t.Parallel()
+		archiveMeta := newFakeArchiveSourceRepo()
+		archive := newFakeArchiveRepo()
+		agent, err := NewArchiveAgent(
+			&fakeHotRepo{rows: hotRows(3, base)}, archive,
+			newFakeHotSourceRepo(sources...), archiveMeta, 100, io.Discard,
+		)
+		require.NoError(t, err)
+
+		// The mirror write must already have happened by the time the first value
+		// batch lands, or the history view's grouping join has nothing to resolve.
+		archive.retainErr = errors.New("value write refused")
+		_, err = agent.Run(t.Context())
+		require.Error(t, err)
+		assert.NotEmpty(t, archiveMeta.stored, "the mirror is written first, so it survives a failed value batch")
+	})
+
+	t.Run("a mirror failure aborts the pass before any value is copied", func(t *testing.T) {
+		t.Parallel()
+		archiveMeta := newFakeArchiveSourceRepo()
+		archiveMeta.err = errors.New("mirror unwritable")
+		archive := newFakeArchiveRepo()
+		agent, err := NewArchiveAgent(
+			&fakeHotRepo{rows: hotRows(3, base)}, archive,
+			newFakeHotSourceRepo(sources...), archiveMeta, 100, io.Discard,
+		)
+		require.NoError(t, err)
+
+		copied, err := agent.Run(t.Context())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "mirror sources")
+		assert.Zero(t, copied)
+		assert.Empty(t, archive.stored, "values must not outrun the sources that describe them")
+	})
+
+	t.Run("an unreadable hot source table aborts the pass", func(t *testing.T) {
+		t.Parallel()
+		hotMeta := newFakeHotSourceRepo(sources...)
+		hotMeta.err = errors.New("db down")
+		archive := newFakeArchiveRepo()
+		agent, err := NewArchiveAgent(
+			&fakeHotRepo{rows: hotRows(3, base)}, archive,
+			hotMeta, newFakeArchiveSourceRepo(), 100, io.Discard,
+		)
+		require.NoError(t, err)
+
+		_, err = agent.Run(t.Context())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "read hot sources")
+		assert.Empty(t, archive.stored)
+	})
+
+	t.Run("an empty source table is not an error", func(t *testing.T) {
+		t.Parallel()
+		archiveMeta := newFakeArchiveSourceRepo()
+		agent, err := NewArchiveAgent(
+			&fakeHotRepo{rows: hotRows(3, base)}, newFakeArchiveRepo(),
+			newFakeHotSourceRepo(), archiveMeta, 100, io.Discard,
+		)
+		require.NoError(t, err)
+
+		copied, err := agent.Run(t.Context())
+		require.NoError(t, err)
+		assert.Equal(t, 3, copied, "values still archive when there is no source metadata to mirror")
+		assert.Zero(t, archiveMeta.calls, "an empty set is not written")
 	})
 }

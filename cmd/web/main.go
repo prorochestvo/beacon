@@ -23,6 +23,7 @@ import (
 	_ "time/tzdata" // embedded IANA tzdata for time.LoadLocation in profile-upsert
 
 	"github.com/prorochestvo/dsninjector"
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
 	"github.com/seilbekskindirov/beacon/internal/application/inspector"
@@ -61,6 +62,10 @@ var (
 const (
 	envDsnTelegramBOT = "BEACON_TELEGRAMBOT_DSN"
 	envDsnSqliteDB    = "BEACON_SQLITEDB_DSN"
+	// envDsnSqliteDBArchive points at the history tier. It is optional: unset means
+	// every read is answered by the hot database, which is correct as long as nothing
+	// has pruned it. Set it before the hot tier starts dropping rows, not after.
+	envDsnSqliteDBArchive = "BEACON_SQLITEDB_ARCHIVE_DSN"
 )
 
 func main() {
@@ -202,8 +207,24 @@ func main() {
 	}
 	// rateValueRepo satisfies both ValuesLoader (ObtainMeChart) and
 	// HistoryValuesLoader (ObtainMeHistory); sourceRepo also satisfies
-	// PublicSourcesLoader (ObtainPublicChart).
-	chartSvc := appchart.NewService(subscriptionRepo, sourceRepo, rateValueRepo, rateValueRepo, sourceRepo, time.Now)
+	// PublicSourcesLoader (ObtainPublicChart). With an archive configured, a tiered
+	// reader takes over both roles and answers deep windows from the history tier.
+	var chartValues appchart.ValuesLoader = rateValueRepo
+	var chartHistory appchart.HistoryValuesLoader = rateValueRepo
+	tieredRepo, archiveCloser, err := openArchiveTier(rateValueRepo, l)
+	if err != nil {
+		log.Fatalf("dependencies: archive: %s", err.Error())
+	}
+	if archiveCloser != nil {
+		defer func(c io.Closer) {
+			if e := c.Close(); e != nil {
+				log.Printf("close archive sqlite client: %v", e)
+			}
+		}(archiveCloser)
+		chartValues, chartHistory = tieredRepo, tieredRepo
+		log.Println("dependencies: archive tier attached, deep reads routed to the history database")
+	}
+	chartSvc := appchart.NewService(subscriptionRepo, sourceRepo, chartValues, chartHistory, sourceRepo, time.Now)
 
 	// Open-Meteo geocoder for city search. cmd/web always uses a direct connection
 	// (no proxy) — Telegram traffic already bypasses the proxy, and geocoding calls
@@ -324,6 +345,54 @@ func main() {
 
 //go:embed static
 var staticFS embed.FS
+
+// openArchiveTier opens the history database and returns a reader that routes chart and
+// history queries across both tiers, together with the archive client's closer.
+//
+// It returns (nil, nil, nil) when BEACON_SQLITEDB_ARCHIVE_DSN is unset — a deployment
+// that has not adopted the archive keeps reading the hot database directly. Everything
+// after that point is fatal rather than degraded: a DSN that is set but unusable means
+// the operator intends the archive to be there, and silently falling back would serve
+// truncated history from a hot tier that may already be pruned.
+//
+// The archive is opened read-only from this process's point of view — cmd/web never
+// writes it. Reconciliation is the collector's job.
+func openArchiveTier(
+	hot *repository.RateValueRepository, logger *loginjector.Logger,
+) (*repository.TieredRateValueRepository, io.Closer, error) {
+	if os.Getenv(envDsnSqliteDBArchive) == "" {
+		return nil, nil, nil
+	}
+
+	dsn, err := dsninjector.Unmarshal(envDsnSqliteDBArchive)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", envDsnSqliteDBArchive, err)
+	}
+
+	archiveDB, err := sqlitedb.NewSQLiteClient(dsn, logger.WriterAs(internal.LogLevelInfo))
+	if err != nil {
+		return nil, nil, fmt.Errorf("open archive database: %w", err)
+	}
+	if err = sqlitedb.RequireMigratedSchema(context.Background(), archiveDB); err != nil {
+		return nil, nil, errors.Join(fmt.Errorf("archive schema check: %w", err), archiveDB.Close())
+	}
+
+	// The archive's rate_values and rate_sources carry the hot schema's columns, so the
+	// ordinary repository reads it without a second copy of the SQL.
+	archiveReader, err := repository.NewRateValueRepository(archiveDB)
+	if err != nil {
+		return nil, nil, errors.Join(fmt.Errorf("archive repository: %w", err), archiveDB.Close())
+	}
+
+	tiered, err := repository.NewTieredRateValueRepository(
+		hot, archiveReader, repository.DefaultHotHorizon, time.Now,
+	)
+	if err != nil {
+		return nil, nil, errors.Join(err, archiveDB.Close())
+	}
+
+	return tiered, archiveDB, nil
+}
 
 // openMeteoGeoAdapter adapts *weatherinfra.OpenMeteo to the gateway's
 // weatherGeocoder interface, which expects []dto.WeatherCitySearchItem rather

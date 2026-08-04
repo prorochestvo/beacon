@@ -200,3 +200,94 @@ func TestRateValueArchiveRepository_CheckUP(t *testing.T) {
 	require.NoError(t, repo.CheckUP(t.Context()))
 	assert.Equal(t, "rate_values_archive", repo.Name())
 }
+
+// TestArchiveSchemaServesTheHotRepository pins the property the whole tiering design
+// rests on: the archive's tables carry the hot schema's columns, so the ordinary
+// repository reads it with no second implementation of the queries.
+//
+// If this test fails, the tiered reader in cmd/web is handing archive-backed queries to
+// code that no longer fits the archive — which surfaces as a 500 on the deep-history
+// view, not as a compile error.
+func TestArchiveSchemaServesTheHotRepository(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+
+	seedArchive := func(t *testing.T) *sqlitedb.SQLiteClient {
+		t.Helper()
+		db := stubArchiveDB(t)
+
+		sources, err := NewRateSourceArchiveRepository(db)
+		require.NoError(t, err)
+		_, err = sources.RetainRateSources(t.Context(), []domain.RateSource{
+			archiveSource("src-a", "Provider A"),
+			archiveSource("src-b", "Provider B"),
+		})
+		require.NoError(t, err)
+
+		values, err := NewRateValueArchiveRepository(db)
+		require.NoError(t, err)
+		_, err = values.RetainRateValues(t.Context(), []domain.RateValue{
+			archiveValue("rv1", "src-a", base, 1.0),
+			archiveValue("rv2", "src-b", base, 2.0),
+			archiveValue("rv3", "src-a", base.Add(time.Hour), 3.0),
+		})
+		require.NoError(t, err)
+
+		return db
+	}
+
+	pairs := []domain.SourcePairKey{
+		{SourceName: "src-a", BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: domain.RateSourceKindBID},
+		{SourceName: "src-b", BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: domain.RateSourceKindBID},
+	}
+
+	t.Run("the paged history query resolves titles from the mirror", func(t *testing.T) {
+		t.Parallel()
+		reader, err := NewRateValueRepository(seedArchive(t))
+		require.NoError(t, err)
+
+		rows, rowTotal, groupedTotal, err := reader.ObtainHistoryForPairsPaged(t.Context(), pairs, 20, 0)
+		require.NoError(t, err)
+		assert.Len(t, rows, 3)
+		assert.Equal(t, int64(3), rowTotal)
+		// Three rows over two distinct (title, timestamp) tuples at base plus one at
+		// base+1h — the grouping the join exists to compute.
+		assert.Equal(t, int64(3), groupedTotal)
+	})
+
+	t.Run("a value whose source is missing from the mirror still pages", func(t *testing.T) {
+		t.Parallel()
+		db := stubArchiveDB(t)
+		values, err := NewRateValueArchiveRepository(db)
+		require.NoError(t, err)
+		_, err = values.RetainRateValues(t.Context(), []domain.RateValue{archiveValue("rv1", "src-a", base, 1.0)})
+		require.NoError(t, err)
+
+		// The archive has no foreign key, so a value can precede its source. The row
+		// count still reports it; only the grouped count, which joins, cannot see it.
+		// Reconciliation mirrors sources before values precisely so this stays a
+		// theoretical state rather than an observed one.
+		reader, err := NewRateValueRepository(db)
+		require.NoError(t, err)
+		rows, rowTotal, groupedTotal, err := reader.ObtainHistoryForPairsPaged(t.Context(), pairs, 20, 0)
+		require.NoError(t, err)
+		assert.Len(t, rows, 1)
+		assert.Equal(t, int64(1), rowTotal)
+		assert.Zero(t, groupedTotal)
+	})
+
+	t.Run("the windowed chart query runs against the archive", func(t *testing.T) {
+		t.Parallel()
+		reader, err := NewRateValueRepository(seedArchive(t))
+		require.NoError(t, err)
+
+		got, err := reader.ObtainValuesForPairsBetween(t.Context(), pairs, base, base.Add(time.Hour))
+		require.NoError(t, err)
+		assert.Len(t, got, 2, "the half-open window excludes the row at base+1h")
+
+		all, err := reader.ObtainValuesForPairsSince(t.Context(), pairs, base)
+		require.NoError(t, err)
+		assert.Len(t, all, 3)
+	})
+}

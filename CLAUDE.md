@@ -113,18 +113,43 @@ directory with `fs.ReadDir(fsys, ".")`, so a nested FS would silently apply noth
 The archive is the history tier: every rate value ever recorded, kept forever, with
 its own `__schema_migrations` ledger. Its `rate_values` deliberately carries **no
 foreign key** to `rate_sources` — history must outlive the source that produced it,
-and `ON DELETE CASCADE` would erase it.
+and `ON DELETE CASCADE` would erase it. It also holds a `rate_sources` **mirror** whose
+columns match the hot schema (secondary indexes and seeds are not mirrored); that is
+what lets the ordinary `RateValueRepository` and `RateSourceRepository` read the archive
+verbatim, with no second copy of the SQL. Rows are never deleted from the mirror — a
+source dropped from the hot tier still has archived values that need a title.
 
 `collection.ArchiveAgent` (run at the end of each collector tick) keeps the archive a
 **superset** of the hot database by copying forward from the archive's own watermark —
 a `(timestamp, id)` keyset cursor, because one tick writes many rows sharing a
-second-precision timestamp. Reconciliation rather than dual-write is deliberate:
-SQLite gives **no atomicity across attached databases under `journal_mode=WAL`**, so
-any single logical write spanning both tiers would have a crash window that loses
-rows. Copying a row the hot tier already committed has none, is idempotent
-(`INSERT OR IGNORE` on the id), and self-heals whatever a failed pass left behind.
-The superset property is what will make pruning the hot tier safe: a row may only be
-dropped once it is provably in the archive.
+second-precision timestamp. Sources are mirrored **before** values on every pass, so a
+value never precedes the source row the history grouping joins against. Reconciliation
+rather than dual-write is deliberate: SQLite gives **no atomicity across attached
+databases under `journal_mode=WAL`**, so any single logical write spanning both tiers
+would have a crash window that loses rows. Copying a row the hot tier already committed
+has none, is idempotent (`INSERT OR IGNORE` on the id), and self-heals whatever a failed
+pass left behind. The superset property is what will make pruning the hot tier safe: a
+row may only be dropped once it is provably in the archive.
+
+**Read routing** (`repository.TieredRateValueRepository`, wired in `cmd/web` only when
+`BEACON_SQLITEDB_ARCHIVE_DSN` is set — otherwise the hot repository is passed straight
+through). The horizon is `repository.DefaultHotHorizon` (180 days), and it must stay the
+same number pruning uses: a query routed to the hot tier for a window the hot tier no
+longer keeps returns a short answer with no error.
+
+| Query | Tier |
+|---|---|
+| `ObtainValuesForPairsSince` (chart), `since >= now-180d` | hot alone — every period up to 180 days |
+| `ObtainValuesForPairsSince` (chart), `since < now-180d` | archive `[since, cut)` **+** hot `[cut, now]`, concatenated |
+| `ObtainHistoryForPairsPaged` (History view) | archive alone — its total is the only one that keeps describing how much history exists |
+| `ObtainLastNRateValuesBySourceName`, `ObtainLatestRateValuesBySourceNames` | hot — `limit` caps at 1000, ~5 days of rows |
+
+The chart split uses `ObtainValuesForPairsBetween`'s half-open `[since, until)` window, so
+the same cut bounds one half above and the other below: no row lands in both or neither,
+and the halves concatenate without deduplication. The recent half always comes from the
+hot tier, so reconciliation lag can never affect the right edge of a chart. Paged history
+does lag by however long the archive pass takes — seconds, since collection and
+reconciliation run in that order in one collector process.
 
 `cmd/migrator` is the **only** thing that mutates schema. It embeds
 `migrations.MigrationsFS` at build time, opens the DB via `BEACON_SQLITEDB_DSN`, and
@@ -159,7 +184,7 @@ make run           # starts collector, notifier, web
 ### Environment Variables
 
 - `BEACON_SQLITEDB_DSN` — SQLite connection string, parsed via `dsninjector.Unmarshal`. Format: `sqlite://<path-to-db-file>`
-- `BEACON_SQLITEDB_ARCHIVE_DSN` — **optional** history-tier DSN, same format. Unset means the deployment has no archive: `cmd/migrator` skips the archive chain and `cmd/collector` skips the reconciliation pass, so the binaries can ship before the archive file exists. A malformed value is fatal — a typo must not read as "no archive configured".
+- `BEACON_SQLITEDB_ARCHIVE_DSN` — **optional** history-tier DSN, same format. Unset means the deployment has no archive: `cmd/migrator` skips the archive chain, `cmd/collector` skips the reconciliation pass, and `cmd/web` reads every window from the hot database, so the binaries can ship before the archive file exists. A malformed value is fatal in all three — a typo must not read as "no archive configured". `cmd/web` never writes the archive; reconciliation is the collector's job.
 - `BEACON_TELEGRAMBOT_DSN` — Telegram bot credentials parsed via `dsninjector.Unmarshal`. Format: `<adminChatID>:<botToken>@<host>` where `Addr()` returns the token and `Login()` returns the admin chat ID.
 - `BEACON_PROXY_URL` — optional outbound proxy URL, parsed via `dsninjector.Unmarshal`. Format: `<scheme>://<host>:<port>` (e.g. `http://127.0.0.1:7788`). When unset or empty all outbound traffic is direct. Used by `cmd/collector` (plain and chromedp rate sources) and `cmd/doctor` (AI provider calls and chromedp fetcher). Telegram Bot API traffic bypasses the proxy unconditionally — the bypass is enforced in code via a hardcoded `Proxy: nil` transport in `internal/infrastructure/telegrambot/tbotclient.go`. Do not configure `HTTPS_PROXY`, `HTTP_PROXY`, or `NO_PROXY` for proxy routing — they are not consulted by any component in this project.
 - `BEACON_CHROMIUM_PATH` — optional absolute path to the Chromium/Chrome binary for `fetcher_kind='chromedp'` sources. Read by `cmd/collector` and `cmd/doctor`. When unset, chromedp searches PATH (`chromium`, `chromium-browser`, `google-chrome`, `chrome`).

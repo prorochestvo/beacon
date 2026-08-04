@@ -28,11 +28,28 @@ type archiveTargetRepository interface {
 	ObtainArchiveWatermark(ctx context.Context) (time.Time, string, bool, error)
 }
 
-// NewArchiveAgent constructs an ArchiveAgent. hot and archive are required and must be
-// opened on different databases; batchSize falls back to DefaultArchiveBatchSize when
-// not positive.
-func NewArchiveAgent(hot archiveSourceRepository, archive archiveTargetRepository, batchSize int, logger io.Writer) (*ArchiveAgent, error) {
-	if hot == nil || archive == nil {
+// archiveMetaSourceRepository reads the hot tier's source definitions.
+type archiveMetaSourceRepository interface {
+	ObtainAllRateSources(ctx context.Context) ([]domain.RateSource, error)
+}
+
+// archiveMetaTargetRepository writes the archive tier's source mirror.
+type archiveMetaTargetRepository interface {
+	RetainRateSources(ctx context.Context, records []domain.RateSource) (int, error)
+}
+
+// NewArchiveAgent constructs an ArchiveAgent. All four repositories are required; the
+// hot pair and the archive pair must be opened on different databases. batchSize falls
+// back to DefaultArchiveBatchSize when not positive.
+func NewArchiveAgent(
+	hot archiveSourceRepository,
+	archive archiveTargetRepository,
+	hotMeta archiveMetaSourceRepository,
+	archiveMeta archiveMetaTargetRepository,
+	batchSize int,
+	logger io.Writer,
+) (*ArchiveAgent, error) {
+	if hot == nil || archive == nil || hotMeta == nil || archiveMeta == nil {
 		return nil, errors.New("archive agent: hot and archive repositories are both required")
 	}
 	if batchSize <= 0 {
@@ -41,7 +58,14 @@ func NewArchiveAgent(hot archiveSourceRepository, archive archiveTargetRepositor
 	if logger == nil {
 		logger = io.Discard
 	}
-	return &ArchiveAgent{hot: hot, archive: archive, batchSize: batchSize, logger: logger}, nil
+	return &ArchiveAgent{
+		hot:         hot,
+		archive:     archive,
+		hotMeta:     hotMeta,
+		archiveMeta: archiveMeta,
+		batchSize:   batchSize,
+		logger:      logger,
+	}, nil
 }
 
 // ArchiveAgent copies rate values from the hot tier into the archive so the archive is
@@ -64,10 +88,12 @@ func NewArchiveAgent(hot archiveSourceRepository, archive archiveTargetRepositor
 // The superset property is what makes pruning the hot tier safe later: a row may only
 // be dropped from the hot database once it is provably in the archive.
 type ArchiveAgent struct {
-	hot       archiveSourceRepository
-	archive   archiveTargetRepository
-	batchSize int
-	logger    io.Writer
+	hot         archiveSourceRepository
+	archive     archiveTargetRepository
+	hotMeta     archiveMetaSourceRepository
+	archiveMeta archiveMetaTargetRepository
+	batchSize   int
+	logger      io.Writer
 }
 
 // Run copies every hot rate value the archive does not yet hold and reports how many
@@ -80,6 +106,14 @@ type ArchiveAgent struct {
 // be complete. The already-copied prefix stays committed and the next run resumes from
 // it.
 func (a *ArchiveAgent) Run(ctx context.Context) (int, error) {
+	// Sources first, values second. The archive's history view groups rows by the
+	// provider title it reads from this mirror, so a value copied ahead of the source
+	// that produced it is a row the grouped count cannot see. Doing it in this order
+	// means the gap never exists rather than closing a tick later.
+	if err := a.syncSources(ctx); err != nil {
+		return 0, err
+	}
+
 	cursorTS, cursorID, _, err := a.archive.ObtainArchiveWatermark(ctx)
 	if err != nil {
 		return 0, errors.Join(fmt.Errorf("archive: read watermark: %w", err), loginjector.NewTraceError())
@@ -121,4 +155,28 @@ func (a *ArchiveAgent) Run(ctx context.Context) (int, error) {
 		fmt.Fprintf(a.logger, "archive: copied %d rate value(s) into the history tier\n", copied)
 	}
 	return copied, nil
+}
+
+// syncSources mirrors the hot tier's source definitions into the archive so archived
+// values stay interpretable — both for the history view's grouping and for reading the
+// archive on its own years from now.
+//
+// The whole set goes over on every pass. It is a table of a few dozen rows against a
+// value table that grows without bound, so there is nothing to gain from tracking what
+// changed, and an unconditional upsert also repairs a mirror that drifted for any
+// reason. Sources the hot tier has dropped stay in the mirror: their values are still
+// archived and still need a title.
+func (a *ArchiveAgent) syncSources(ctx context.Context) error {
+	sources, err := a.hotMeta.ObtainAllRateSources(ctx)
+	if err != nil {
+		return errors.Join(fmt.Errorf("archive: read hot sources: %w", err), loginjector.NewTraceError())
+	}
+	if len(sources) == 0 {
+		return nil
+	}
+
+	if _, err = a.archiveMeta.RetainRateSources(ctx, sources); err != nil {
+		return errors.Join(fmt.Errorf("archive: mirror sources: %w", err), loginjector.NewTraceError())
+	}
+	return nil
 }

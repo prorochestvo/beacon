@@ -144,8 +144,13 @@ func main() {
 		if archiveErr != nil {
 			log.Fatalf("repositories: archive: %s", archiveErr.Error())
 		}
+		archiveSourceRepo, archiveErr := repository.NewRateSourceArchiveRepository(archiveDB)
+		if archiveErr != nil {
+			log.Fatalf("repositories: archive sources: %s", archiveErr.Error())
+		}
 		archiveAgent, archiveErr = collection.NewArchiveAgent(
-			rateValueRepo, archiveRepo, collection.DefaultArchiveBatchSize,
+			rateValueRepo, archiveRepo, sourceRepo, archiveSourceRepo,
+			collection.DefaultArchiveBatchSize,
 			l.WriterAs(internal.LogLevelInfo),
 		)
 		if archiveErr != nil {

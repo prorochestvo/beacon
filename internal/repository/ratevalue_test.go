@@ -845,3 +845,106 @@ func TestRateValueRepository_ObtainRateValuesAfter(t *testing.T) {
 		assert.Empty(t, got)
 	})
 }
+
+func TestRateValueRepository_ObtainValuesForPairsBetween(t *testing.T) {
+	t.Parallel()
+
+	// seedAt inserts a row and rewrites its timestamp, since RetainRateValue always
+	// stamps now.
+	seedAt := func(t *testing.T, r *RateValueRepository, source string, ts time.Time, price float64) {
+		t.Helper()
+		rv := domain.RateValue{SourceName: source, BaseCurrency: "USD", QuoteCurrency: "KZT", Price: price}
+		require.NoError(t, r.RetainRateValue(t.Context(), &rv))
+		tx, err := r.db.Transaction(t.Context())
+		require.NoError(t, err)
+		_, err = tx.ExecContext(t.Context(),
+			"UPDATE "+rateValueTableName+" SET "+rateValueTimestampFieldName+" = ? WHERE "+rateValueIdFieldName+" = ?",
+			ts.UTC().Format(time.RFC3339), rv.ID,
+		)
+		require.NoError(t, err)
+		require.NoError(t, tx.Commit())
+	}
+
+	base := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	pairs := []domain.SourcePairKey{
+		{SourceName: "src-window", BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: "BID"},
+	}
+
+	newSeeded := func(t *testing.T) *RateValueRepository {
+		t.Helper()
+		r, err := NewRateValueRepository(stubSQLiteDB(t, "src-window"))
+		require.NoError(t, err)
+		for i := 0; i < 5; i++ {
+			seedAt(t, r, "src-window", base.Add(time.Duration(i)*time.Hour), float64(i))
+		}
+		return r
+	}
+
+	t.Run("the window is half-open: since is included, until is not", func(t *testing.T) {
+		t.Parallel()
+		r := newSeeded(t)
+
+		got, err := r.ObtainValuesForPairsBetween(t.Context(), pairs, base.Add(time.Hour), base.Add(3*time.Hour))
+		require.NoError(t, err)
+		require.Len(t, got, 2, "hours 1 and 2, not 3")
+		assert.Equal(t, 1.0, got[0].Price)
+		assert.Equal(t, 2.0, got[1].Price)
+	})
+
+	t.Run("adjacent windows partition the range exactly once", func(t *testing.T) {
+		t.Parallel()
+		r := newSeeded(t)
+		cut := base.Add(2 * time.Hour)
+
+		older, err := r.ObtainValuesForPairsBetween(t.Context(), pairs, base, cut)
+		require.NoError(t, err)
+		newer, err := r.ObtainValuesForPairsBetween(t.Context(), pairs, cut, time.Time{})
+		require.NoError(t, err)
+
+		// This is the property the tiered reader depends on: the same cut used as an
+		// upper bound on one side and a lower bound on the other loses nothing and
+		// duplicates nothing.
+		seen := make(map[string]int)
+		for _, v := range append(append([]domain.RateValue{}, older...), newer...) {
+			seen[v.ID]++
+		}
+		assert.Len(t, seen, 5)
+		for id, n := range seen {
+			assert.Equal(t, 1, n, "row %s appeared in both windows", id)
+		}
+	})
+
+	t.Run("a zero upper bound is unbounded", func(t *testing.T) {
+		t.Parallel()
+		r := newSeeded(t)
+
+		got, err := r.ObtainValuesForPairsBetween(t.Context(), pairs, base, time.Time{})
+		require.NoError(t, err)
+		assert.Len(t, got, 5)
+	})
+
+	t.Run("ObtainValuesForPairsSince is the unbounded case", func(t *testing.T) {
+		t.Parallel()
+		r := newSeeded(t)
+
+		since, err := r.ObtainValuesForPairsSince(t.Context(), pairs, base)
+		require.NoError(t, err)
+		between, err := r.ObtainValuesForPairsBetween(t.Context(), pairs, base, time.Time{})
+		require.NoError(t, err)
+		assert.Equal(t, since, between)
+	})
+
+	t.Run("an inverted or empty window never reaches the database", func(t *testing.T) {
+		t.Parallel()
+		r := newSeeded(t)
+
+		got, err := r.ObtainValuesForPairsBetween(t.Context(), pairs, base.Add(3*time.Hour), base.Add(time.Hour))
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Empty(t, got)
+
+		got, err = r.ObtainValuesForPairsBetween(t.Context(), pairs, base, base)
+		require.NoError(t, err)
+		assert.Empty(t, got, "a zero-width half-open window holds nothing")
+	})
+}

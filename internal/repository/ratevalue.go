@@ -461,7 +461,30 @@ func (r *RateValueRepository) ObtainHistoryForPairsPaged(
 // SQLite's expression-tree limit is ~1000 terms by default; users with very
 // many subscriptions may need chunking in a future iteration.
 func (r *RateValueRepository) ObtainValuesForPairsSince(ctx context.Context, pairs []domain.SourcePairKey, since time.Time) ([]domain.RateValue, error) {
+	return r.ObtainValuesForPairsBetween(ctx, pairs, since, time.Time{})
+}
+
+// ObtainValuesForPairsBetween is ObtainValuesForPairsSince over a half-open window
+// [since, until): rows at or after since and strictly before until. A zero until means
+// no upper bound, which is what ObtainValuesForPairsSince passes.
+//
+// The upper bound exists so a chart whose period reaches past the hot horizon can read
+// the old slice from the archive tier and the recent slice from the hot tier without the
+// two overlapping. Half-open is what makes that split exact: the same cut timestamp
+// bounds one query above and the other below, so no row can land in both halves or in
+// neither, and the caller needs no deduplication.
+//
+// The LIMIT applies per call, so a split read is capped at twice a single-tier read.
+// That is a ceiling on a query that would otherwise be unbounded, not a target — a
+// 360-day chart returns on the order of a thousand rows.
+func (r *RateValueRepository) ObtainValuesForPairsBetween(
+	ctx context.Context, pairs []domain.SourcePairKey, since, until time.Time,
+) ([]domain.RateValue, error) {
 	if len(pairs) == 0 {
+		return []domain.RateValue{}, nil
+	}
+	// An empty window has no rows to return and no reason to reach the database.
+	if !until.IsZero() && !since.Before(until) {
 		return []domain.RateValue{}, nil
 	}
 
@@ -474,12 +497,18 @@ func (r *RateValueRepository) ObtainValuesForPairsSince(ctx context.Context, pai
 	// WHERE (source_name, base_currency, quote_currency) IN ((?,?,?), ...) AND timestamp >= ?
 	// Each tuple contributes 3 placeholders.
 	tuples := make([]string, 0, len(pairs))
-	args := make([]any, 0, len(pairs)*3+2)
+	args := make([]any, 0, len(pairs)*3+3)
 	for _, p := range pairs {
 		tuples = append(tuples, "(?, ?, ?)")
 		args = append(args, p.SourceName, p.BaseCurrency, p.QuoteCurrency)
 	}
 	args = append(args, since.UTC().Format(time.RFC3339))
+
+	upperBound := ""
+	if !until.IsZero() {
+		upperBound = " AND " + rateValueTimestampFieldName + " < ?"
+		args = append(args, until.UTC().Format(time.RFC3339))
+	}
 
 	// LIMIT caps the result set to prevent an unbounded scan on large data sets.
 	// len(pairs)*2000 covers ~12 days of minute-grain data per pair and stays
@@ -492,7 +521,7 @@ func (r *RateValueRepository) ObtainValuesForPairsSince(ctx context.Context, pai
 		rateValueBaseCurrencyFieldName + ", " +
 		rateValueQuoteCurrencyFieldName + ") IN (" +
 		strings.Join(tuples, ", ") +
-		") AND " + rateValueTimestampFieldName + " >= ?" +
+		") AND " + rateValueTimestampFieldName + " >= ?" + upperBound +
 		" ORDER BY " + rateValueTimestampFieldName + " ASC, " + rateValueIdFieldName + " ASC LIMIT ?;"
 
 	rows, err := tx.QueryContext(ctx, query, args...)
