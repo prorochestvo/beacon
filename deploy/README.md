@@ -181,11 +181,14 @@ sqlite3 "file:/opt/beacon/backups/beacon.20260804.sqlite?immutable=1" \
   "SELECT filename, applied_at FROM __schema_migrations ORDER BY filename DESC LIMIT 5;"
 ```
 
-Current snapshots are gzipped, so decompress before opening — `immutable=1` still applies
-to the decompressed file:
+Compression changes nothing about that. A gzipped snapshot is not a database at all until
+it is expanded — SQLite answers `file is not a database (26)` for it, with or without
+`immutable=1` — and the expanded file is byte-identical to what the snapshot always was,
+`journal_mode=WAL` in its header included. So the `immutable=1` requirement belongs to the
+decompressed file, exactly as it did before, and it is the only wrinkle either way:
 
 ```bash
-gunzip -c /opt/beacon/backups/beacon.20260804.sqlite.gz > /tmp/inspect.sqlite
+gunzip -cf /opt/beacon/backups/beacon.20260804.sqlite* > /tmp/inspect.sqlite
 sqlite3 "file:/tmp/inspect.sqlite?immutable=1" "SELECT COUNT(*) FROM rate_values;"
 ```
 
@@ -223,7 +226,10 @@ DB="${DB#sqlite://}"
 mv "$DB" "$DB.before-restore"
 [[ -f "$DB-wal" ]] && mv "$DB-wal" "$DB-wal.before-restore"
 [[ -f "$DB-shm" ]] && mv "$DB-shm" "$DB-shm.before-restore"
-gunzip -c /opt/beacon/backups/beacon.<YYYYMMDD>.sqlite.gz > "$DB"
+# -f makes this work for either extension: gunzip decompresses a .sqlite.gz, and
+# copies an already-uncompressed .sqlite through unchanged. Both kinds coexist —
+# snapshots predating compression, and the cp fallback's set.
+gunzip -cf /opt/beacon/backups/beacon.<YYYYMMDD>.sqlite* > "$DB"
 chown root:root "$DB"
 chmod 600 "$DB"
 ```
