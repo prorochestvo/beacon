@@ -55,6 +55,9 @@ const (
 	// when unset, chromedp searches PATH for chromedp-kind sources.
 	envChromiumPath = "BEACON_CHROMIUM_PATH"
 	envDsnSqliteDB  = "BEACON_SQLITEDB_DSN"
+	// envDsnSqliteDBArchive points at the history tier. Optional: unset means this
+	// deployment has no archive and the reconciliation pass is skipped entirely.
+	envDsnSqliteDBArchive = "BEACON_SQLITEDB_ARCHIVE_DSN"
 )
 
 func main() {
@@ -113,6 +116,42 @@ func main() {
 	if err != nil {
 		log.Fatalf("repositories: %s", err.Error())
 	}
+
+	// The history tier is optional: an unset DSN is a deployment without an archive,
+	// and everything below simply skips the reconciliation pass. A malformed DSN is
+	// still fatal, so a typo cannot silently read as "no archive configured" and
+	// leave history quietly uncollected.
+	var archiveAgent *collection.ArchiveAgent
+	if env := os.Getenv(envDsnSqliteDBArchive); env != "" {
+		dsnArchive, archiveErr := dsninjector.Unmarshal(envDsnSqliteDBArchive)
+		if archiveErr != nil {
+			log.Fatalf("settings: %s, %s", envDsnSqliteDBArchive, archiveErr.Error())
+		}
+		archiveDB, archiveErr := sqlitedb.NewSQLiteClient(dsnArchive, l.WriterAs(internal.LogLevelInfo))
+		if archiveErr != nil {
+			log.Fatalf("dependencies: archive: %s", archiveErr.Error())
+		}
+		if archiveErr = sqlitedb.RequireMigratedSchema(context.Background(), archiveDB); archiveErr != nil {
+			log.Fatalf("dependencies: archive schema check: %s", archiveErr.Error())
+		}
+		defer func(c io.Closer) {
+			if e := c.Close(); e != nil {
+				log.Printf("close archive sqlite client: %v", e)
+			}
+		}(archiveDB)
+
+		archiveRepo, archiveErr := repository.NewRateValueArchiveRepository(archiveDB)
+		if archiveErr != nil {
+			log.Fatalf("repositories: archive: %s", archiveErr.Error())
+		}
+		archiveAgent, archiveErr = collection.NewArchiveAgent(
+			rateValueRepo, archiveRepo, collection.DefaultArchiveBatchSize,
+			l.WriterAs(internal.LogLevelInfo),
+		)
+		if archiveErr != nil {
+			log.Fatalf("runners: archive agent: %s", archiveErr.Error())
+		}
+	}
 	log.Println("repositories: initiated")
 
 	runners, err := buildRunners(
@@ -161,6 +200,19 @@ func main() {
 	// accumulates indefinitely. Non-fatal: a vacuum failure does not abort the run.
 	if vacuumErr := weatherObsRepo.RemoveWeatherObservationsOlderThan(context.Background(), 48*time.Hour); vacuumErr != nil {
 		log.Printf("execution: weather obs vacuum: %v", vacuumErr)
+	}
+
+	// Copy everything the archive does not yet hold. This runs after collection, on
+	// a background context rather than ctx, so a tick cut short by SIGTERM still
+	// archives what it just collected; the pass is idempotent and resumable either
+	// way. Non-fatal: a failing archive must never take collection down with it —
+	// the gap is simply picked up by the next tick.
+	if archiveAgent != nil {
+		if copied, archErr := archiveAgent.Run(context.Background()); archErr != nil {
+			log.Printf("execution: archive reconcile: %v", archErr)
+		} else if copied > 0 {
+			log.Printf("execution: archived %d rate value(s)", copied)
+		}
 	}
 
 	if ctx.Err() != nil {

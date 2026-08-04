@@ -176,6 +176,49 @@ func (r *RateValueRepository) ObtainLastNRateValuesBySourceName(ctx context.Cont
 	return rates, nil
 }
 
+// ObtainRateValuesAfter returns up to limit rate values ordered oldest-first, starting
+// strictly after the (timestamp, id) cursor. It is the read half of the archive
+// reconciliation pass: the archive reports how far it has copied, and this walks the
+// hot tier forward from there.
+//
+// The cursor is a pair rather than a timestamp because a collector tick writes many
+// rows sharing one second-precision timestamp. Resuming on the timestamp alone would
+// either re-read that tick forever or skip whatever of it followed the cursor row;
+// the row-value comparison advances through ties without either failure.
+//
+// Pass a zero cursor to start from the beginning. Always returns a non-nil slice on
+// success.
+func (r *RateValueRepository) ObtainRateValuesAfter(ctx context.Context, after time.Time, afterID string, limit int64) ([]domain.RateValue, error) {
+	tx, err := r.db.ReadOnlyTransaction(ctx)
+	if err != nil {
+		err = errors.Join(err, loginjector.NewTraceError())
+		return nil, err
+	}
+	defer printRollbackError(tx)
+
+	order := " ORDER BY " + rateValueTimestampFieldName + " ASC, " + rateValueIdFieldName + " ASC LIMIT ?;"
+
+	var (
+		condition string
+		args      []any
+	)
+	if after.IsZero() && afterID == "" {
+		condition = order
+		args = []any{limit}
+	} else {
+		condition = " WHERE (" + rateValueTimestampFieldName + ", " + rateValueIdFieldName + ") > (?, ?)" + order
+		args = []any{after.UTC().Format(time.RFC3339), afterID, limit}
+	}
+
+	rates, err := rateValueQueryContext(tx, ctx, condition, args...)
+	if err != nil {
+		err = errors.Join(err, loginjector.NewTraceError())
+		return nil, err
+	}
+
+	return rates, nil
+}
+
 // RetainRateValue inserts or updates the given rate value record; Timestamp is always set to now.
 func (r *RateValueRepository) RetainRateValue(ctx context.Context, record *domain.RateValue) error {
 	if record == nil {

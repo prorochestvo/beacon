@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/seilbekskindirov/beacon/internal/domain"
+	"github.com/seilbekskindirov/beacon/internal/infrastructure/sqlitedb"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
@@ -741,5 +743,105 @@ func TestRateValueRepository_ObtainHistoryForPairsPaged(t *testing.T) {
 		require.NoError(t, err)
 		require.EqualValues(t, 2, rowTotal)
 		require.EqualValues(t, 2, groupedTotal, "two distinct timestamps must count as 2 even when title contains '|'")
+	})
+}
+
+// TestRateValueRepository_ObtainRateValuesAfter covers the read half of the archive
+// reconciliation pass. The keyset cursor is the part worth pinning: a collector tick
+// writes many rows sharing one second-precision timestamp, and a cursor that cannot
+// advance through that tick either loops forever or skips the rest of it.
+func TestRateValueRepository_ObtainRateValuesAfter(t *testing.T) {
+	t.Parallel()
+
+	const source = "arch-src"
+	base := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+
+	// seed writes rows with explicit ids and timestamps, bypassing RetainRateValue,
+	// which always stamps Timestamp with time.Now and would make ordering untestable.
+	seed := func(t *testing.T, db *sqlitedb.SQLiteClient, rows []domain.RateValue) {
+		t.Helper()
+		tx, err := db.Transaction(t.Context())
+		require.NoError(t, err)
+		for _, r := range rows {
+			_, err = tx.ExecContext(t.Context(),
+				"INSERT INTO rate_values (id, source_name, base_currency, quote_currency, price, timestamp) VALUES (?,?,?,?,?,?);",
+				r.ID, r.SourceName, r.BaseCurrency, r.QuoteCurrency, r.Price, r.Timestamp.Format(time.RFC3339))
+			require.NoError(t, err)
+		}
+		require.NoError(t, tx.Commit())
+	}
+	row := func(id string, ts time.Time) domain.RateValue {
+		return domain.RateValue{ID: id, SourceName: source, BaseCurrency: "USD", QuoteCurrency: "KZT", Price: 1, Timestamp: ts}
+	}
+
+	t.Run("a zero cursor starts from the beginning, oldest first", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t, source)
+		repo, err := NewRateValueRepository(db)
+		require.NoError(t, err)
+		seed(t, db, []domain.RateValue{
+			row("rv-2", base.Add(time.Hour)),
+			row("rv-1", base),
+			row("rv-3", base.Add(2*time.Hour)),
+		})
+
+		got, err := repo.ObtainRateValuesAfter(t.Context(), time.Time{}, "", 10)
+		require.NoError(t, err)
+		require.Len(t, got, 3)
+		assert.Equal(t, []string{"rv-1", "rv-2", "rv-3"}, []string{got[0].ID, got[1].ID, got[2].ID})
+	})
+
+	t.Run("the cursor advances through rows sharing one timestamp", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t, source)
+		repo, err := NewRateValueRepository(db)
+		require.NoError(t, err)
+		// One tick, three sources, one timestamp — the shape that breaks a
+		// timestamp-only cursor.
+		seed(t, db, []domain.RateValue{
+			row("rv-a", base), row("rv-b", base), row("rv-c", base),
+		})
+
+		first, err := repo.ObtainRateValuesAfter(t.Context(), time.Time{}, "", 2)
+		require.NoError(t, err)
+		require.Len(t, first, 2)
+		assert.Equal(t, []string{"rv-a", "rv-b"}, []string{first[0].ID, first[1].ID})
+
+		last := first[len(first)-1]
+		second, err := repo.ObtainRateValuesAfter(t.Context(), last.Timestamp, last.ID, 2)
+		require.NoError(t, err)
+		require.Len(t, second, 1, "the rest of the tick must be reachable, not skipped or repeated")
+		assert.Equal(t, "rv-c", second[0].ID)
+
+		last = second[len(second)-1]
+		third, err := repo.ObtainRateValuesAfter(t.Context(), last.Timestamp, last.ID, 2)
+		require.NoError(t, err)
+		assert.Empty(t, third, "the walk must terminate")
+	})
+
+	t.Run("the cursor row itself is excluded", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t, source)
+		repo, err := NewRateValueRepository(db)
+		require.NoError(t, err)
+		seed(t, db, []domain.RateValue{row("rv-1", base), row("rv-2", base.Add(time.Hour))})
+
+		got, err := repo.ObtainRateValuesAfter(t.Context(), base, "rv-1", 10)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, "rv-2", got[0].ID)
+	})
+
+	t.Run("an exhausted cursor returns an empty non-nil slice", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t, source)
+		repo, err := NewRateValueRepository(db)
+		require.NoError(t, err)
+		seed(t, db, []domain.RateValue{row("rv-1", base)})
+
+		got, err := repo.ObtainRateValuesAfter(t.Context(), base, "rv-1", 10)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Empty(t, got)
 	})
 }
