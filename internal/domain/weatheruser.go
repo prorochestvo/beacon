@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 )
@@ -56,6 +57,51 @@ const alertMinusSign = "−"
 // later, switch condition_value to a compound "70@6h" encoding — that is exactly
 // why the column is TEXT, not a single REAL threshold.
 const weatherRainWindow = 6 * time.Hour
+
+// weatherRainClearMargin is the hysteresis dead band, in probability percentage points,
+// between the rain alert's fire threshold and its clear threshold: a latched rain alert
+// clears only once the window maximum falls to threshold−margin or below (floored at 0),
+// never on the threshold itself. Without a band, a forecast oscillating around the
+// threshold on consecutive hourly ticks would alternate "rain expected" and "rain cleared"
+// messages. The daily-metric kinds need no equivalent constant — their dead band is
+// emergent from the TempMin/TempMax split (see the fire/re-arm table in
+// plans/completed/260715.0002.weather-alert-edge-trigger-hysteresis.md).
+const weatherRainClearMargin = 20.0
+
+// AlertEdge is the latch transition a single alert evaluation produced. It exists so the
+// caller can distinguish the two notifiable directions — entering the condition and
+// leaving it — from the steady state, which notifies nothing.
+type AlertEdge uint8
+
+const (
+	// AlertEdgeNone means no notifiable transition: the latch either did not change or
+	// changed without a user-visible event (a re-arm on a kind that notifies one way only).
+	AlertEdgeNone AlertEdge = iota
+	// AlertEdgeEntered means the row transitioned into its alert condition.
+	AlertEdgeEntered
+	// AlertEdgeCleared means the row transitioned out of its alert condition. Only
+	// rain_alert produces it; the daily-metric kinds re-arm silently.
+	AlertEdgeCleared
+)
+
+// UsesForecastDateCap reports whether this kind is subject to the per-forecast_date fire
+// cap (at most one notification per forecast_date, tracked in LastNotifiedAt).
+//
+// The cap is the anti-jitter backstop for kinds whose metric is a daily aggregate that the
+// collector rewrites several times a day — a forecast TempMin/TempMax hovering near the
+// threshold can cross the fire/re-arm boundary twice within one day. rain_alert is
+// excluded: its metric is a rolling 6 h window recomputed on every tick, and both of its
+// transitions are legitimately expected to occur on the same day (rain starts in the
+// morning, clears in the evening). Its anti-spam guarantee comes from the latch plus the
+// weatherRainClearMargin dead band instead.
+func (k WeatherNotifyKind) UsesForecastDateCap() bool {
+	switch k {
+	case WeatherNotifyAlertHeat, WeatherNotifyAlertFrost, WeatherNotifyAlertThunderstorm, WeatherNotifyAlertThaw:
+		return true
+	default:
+		return false
+	}
+}
 
 // WeatherUserCity records a user's per-city weather subscription.
 // NotifyHour is the local-time hour (0–23) at which the daily summary fires, in Timezone.
@@ -196,26 +242,85 @@ func (c *WeatherUserCity) EvaluateAlert(obs WeatherObservation, now time.Time) (
 	return cond == alertConditionMet, reason, err
 }
 
-// EvaluateLatched applies edge-trigger semantics on top of the alert condition: fire is
-// true only on the transition into the condition (met && !prevLatched); nextLatched tracks
-// the condition, latched while met and re-armed once it clears. An unevaluable observation
-// (a data gap such as a nil TempMin/TempMax or an empty rain window) leaves the latch
-// unchanged and never fires — a data gap must not be mistaken for "condition cleared," or a
-// latched alert would spuriously re-arm and re-fire once data returns. On error the
-// previous latch is preserved. reason is non-empty only when fire is true.
-func (c *WeatherUserCity) EvaluateLatched(obs WeatherObservation, now time.Time, prevLatched bool) (fire, nextLatched bool, reason string, err error) {
+// EvaluateLatched applies edge-trigger semantics on top of the alert condition and reports
+// which transition, if any, the caller must notify about. nextLatched tracks the condition:
+// latched while met, re-armed once it clears. An unevaluable observation (a data gap such
+// as a nil TempMin/TempMax or an empty rain window) leaves the latch unchanged and reports
+// AlertEdgeNone — a data gap must not be mistaken for "condition cleared," or a latched
+// alert would spuriously re-arm and re-fire once data returns. On error the previous latch
+// is preserved. reason is non-empty only when edge is notifiable.
+//
+// The daily-metric kinds notify in one direction only: AlertEdgeEntered on the transition
+// into the condition, and a silent re-arm on the way out. rain_alert notifies both
+// directions and applies a hysteresis band — see evaluateRainLatched.
+func (c *WeatherUserCity) EvaluateLatched(obs WeatherObservation, now time.Time, prevLatched bool) (edge AlertEdge, nextLatched bool, reason string, err error) {
+	if c.NotifyKind == WeatherNotifyAlertRain {
+		return c.evaluateRainLatched(obs, now, prevLatched)
+	}
+
 	cond, reason, err := c.evaluateAlertCondition(obs, now)
 	if err != nil {
-		return false, prevLatched, "", err
+		return AlertEdgeNone, prevLatched, "", err
 	}
 	switch cond {
 	case alertConditionUnevaluable:
-		return false, prevLatched, "", nil // data gap: no state change, no fire
+		return AlertEdgeNone, prevLatched, "", nil // data gap: no state change, no fire
 	case alertConditionNotMet:
-		return false, false, "", nil // condition cleared: re-arm
+		return AlertEdgeNone, false, "", nil // condition cleared: silent re-arm
 	default: // alertConditionMet
-		return !prevLatched, true, reason, nil
+		if prevLatched {
+			return AlertEdgeNone, true, "", nil // already fired for this episode
+		}
+		return AlertEdgeEntered, true, reason, nil
 	}
+}
+
+// evaluateRainLatched is the rain_alert latch decorator. It differs from the daily-metric
+// path in two ways, both required by this alert's semantics:
+//
+//   - Both directions notify. The subscription is a rain/no-rain state tracker, so leaving
+//     the condition is as much an event as entering it (AlertEdgeCleared).
+//   - The clear side is offset by weatherRainClearMargin. Entering needs
+//     maxProb ≥ threshold; clearing needs maxProb ≤ threshold−margin (floored at 0). Inside
+//     the band the latch holds and nothing is emitted, so a forecast oscillating around the
+//     threshold cannot alternate messages on consecutive ticks.
+//
+// A window with no usable hourly point is a data gap: the latch holds and nothing is
+// emitted, identical to the daily-metric path.
+func (c *WeatherUserCity) evaluateRainLatched(obs WeatherObservation, now time.Time, prevLatched bool) (AlertEdge, bool, string, error) {
+	threshold, err := c.AlertThreshold()
+	if err != nil {
+		return AlertEdgeNone, prevLatched, "", err
+	}
+
+	maxProb, ok := maxRainProbability(obs, now)
+	if !ok {
+		return AlertEdgeNone, prevLatched, "", nil // data gap: no state change, no fire
+	}
+	windowHours := int(weatherRainWindow.Hours())
+
+	switch {
+	case float64(maxProb) >= threshold:
+		if prevLatched {
+			return AlertEdgeNone, true, "", nil
+		}
+		return AlertEdgeEntered, true, fmt.Sprintf("Rain likely (%d%%) within %dh", maxProb, windowHours), nil
+	case float64(maxProb) <= rainClearThreshold(threshold):
+		if !prevLatched {
+			return AlertEdgeNone, false, "", nil
+		}
+		return AlertEdgeCleared, false, fmt.Sprintf("No rain expected (%d%%) within %dh", maxProb, windowHours), nil
+	default:
+		return AlertEdgeNone, prevLatched, "", nil // inside the dead band: hold the latch
+	}
+}
+
+// rainClearThreshold returns the probability at or below which a latched rain alert clears.
+// The floor at 0 keeps small thresholds usable: at threshold 10 the offset alone would put
+// the clear point below zero, which no probability can reach, and the alert would stay
+// latched forever.
+func rainClearThreshold(threshold float64) float64 {
+	return math.Max(threshold-weatherRainClearMargin, 0)
 }
 
 // evaluateAlertCondition is the single tri-state evaluator every alert kind routes
@@ -314,8 +419,24 @@ func (c *WeatherUserCity) EvaluateRain(obs WeatherObservation, now time.Time) (b
 // Hourly, all points in the past, too far ahead, or all nil PrecipProb) — a data gap, not
 // a cleared condition.
 func evaluateRainCondition(obs WeatherObservation, now time.Time, threshold float64) (alertCondition, string) {
+	maxProb, ok := maxRainProbability(obs, now)
+	if !ok {
+		return alertConditionUnevaluable, ""
+	}
+	if float64(maxProb) < threshold {
+		return alertConditionNotMet, ""
+	}
+	return alertConditionMet, fmt.Sprintf("Rain likely (%d%%) within %dh", maxProb, int(weatherRainWindow.Hours()))
+}
+
+// maxRainProbability returns the highest hourly precipitation probability in
+// [now, now+weatherRainWindow). ok is false when the window holds no usable point (empty
+// Hourly, every point outside the window, or every in-window point carrying a nil
+// probability) — a data gap, which every caller must keep distinguishable from a genuine
+// "probability is low".
+func maxRainProbability(obs WeatherObservation, now time.Time) (maxProb int, ok bool) {
 	windowEnd := now.Add(weatherRainWindow)
-	maxProb := -1
+	maxProb = -1
 	for _, h := range obs.Hourly {
 		if h.Time.Before(now) || !h.Time.Before(windowEnd) {
 			continue
@@ -328,12 +449,9 @@ func evaluateRainCondition(obs WeatherObservation, now time.Time, threshold floa
 		}
 	}
 	if maxProb < 0 {
-		return alertConditionUnevaluable, ""
+		return 0, false
 	}
-	if float64(maxProb) < threshold {
-		return alertConditionNotMet, ""
-	}
-	return alertConditionMet, fmt.Sprintf("Rain likely (%d%%) within %dh", maxProb, int(weatherRainWindow.Hours()))
+	return maxProb, true
 }
 
 // formatAlertTemp formats a temperature as "+31.6°C" or "−5.2°C" using the

@@ -269,19 +269,50 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// alert_thaw is forced and system-managed: every tracked city carries exactly
-	// one, so any non-thaw add ensures one exists alongside it. Skipped when the
-	// requested kind already is thaw (nothing to add). Built from the already-
-	// validated body.* fields, not from record — RetainWeatherUserCity mutates
-	// record's ID/timestamps in place.
+	// alert_thaw and rain_alert are forced and system-managed: every tracked city carries
+	// exactly one of each, so any add ensures the ones this request did not itself create.
+	// Built from the already-validated body.* fields, not from record —
+	// RetainWeatherUserCity mutates record's ID/timestamps in place.
 	//
-	// AlertLatched starts true (pre-latched), matching the migration 202607.021
-	// backfill: thaw fires on TempMax > 0 alone, the default warm-season state, so an
-	// armed (false) new row would risk firing on the very first check tick for a city
-	// that is already past freezing. A genuinely still-frozen city simply re-arms to
-	// false on the next tick either way, with no notification.
-	if notifyKind != domain.WeatherNotifyAlertThaw {
-		thaw := &domain.WeatherUserCity{
+	// The AlertLatched seed differs per kind, and the asymmetry is deliberate:
+	//
+	//   - thaw starts pre-latched (true), matching migration 202607.021: it fires on
+	//     TempMax > 0 alone, the default warm-season state, so an armed row would risk
+	//     firing on the very first check tick for a city already past freezing. A
+	//     genuinely still-frozen city re-arms to false on the next tick with no
+	//     notification either way.
+	//   - rain starts armed (false), matching migration 202608.026: it notifies on BOTH
+	//     latch edges, so a pre-latched row would emit a spurious "rain cleared" on the
+	//     first tick, "no rain" being the normal state. Armed, the only first-tick message
+	//     it can produce is a truthful "rain expected".
+	//
+	// keepExisting rows are ensured only when absent, so re-adding any other alert kind for
+	// the same city cannot stomp a rain threshold the user retuned (the upsert does rewrite
+	// condition_value).
+	forced := []struct {
+		kind           domain.WeatherNotifyKind
+		conditionValue string
+		alertLatched   bool
+		keepExisting   bool
+	}{
+		{domain.WeatherNotifyAlertThaw, "", true, false},
+		{domain.WeatherNotifyAlertRain, weatherDefaultRainThreshold, false, true},
+	}
+	for _, f := range forced {
+		if notifyKind == f.kind {
+			continue // the request itself created this row
+		}
+		if f.keepExisting {
+			exists, existsErr := h.weatherKindExists(r.Context(), tgUserID, body.LocationID, f.kind)
+			if existsErr != nil {
+				h.internalError(w, fmt.Errorf("CreateMeWeatherCity ensure %s: %w", f.kind, existsErr))
+				return
+			}
+			if exists {
+				continue
+			}
+		}
+		row := &domain.WeatherUserCity{
 			UserType:       domain.UserTypeTelegram,
 			UserID:         tgUserID,
 			LocationID:     body.LocationID,
@@ -291,13 +322,13 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 			Timezone:       body.Timezone,
 			Country:        body.Country,
 			Admin1:         body.Admin1,
-			NotifyKind:     domain.WeatherNotifyAlertThaw,
+			NotifyKind:     f.kind,
 			NotifyHour:     weatherDefaultNotifyHour,
-			ConditionValue: "",
-			AlertLatched:   true,
+			ConditionValue: f.conditionValue,
+			AlertLatched:   f.alertLatched,
 		}
-		if err := h.meWeatherCityRepo.RetainWeatherUserCity(r.Context(), thaw); err != nil {
-			h.internalError(w, fmt.Errorf("CreateMeWeatherCity ensure thaw: %w", err))
+		if err := h.meWeatherCityRepo.RetainWeatherUserCity(r.Context(), row); err != nil {
+			h.internalError(w, fmt.Errorf("CreateMeWeatherCity ensure %s: %w", f.kind, err))
 			return
 		}
 	}
@@ -309,6 +340,38 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 			fmt.Errorf("encode CreateMeWeatherCity response: %w", err),
 			loginjector.NewTraceError(),
 		))
+	}
+}
+
+// weatherKindExists reports whether the caller already owns a subscription of the given
+// kind at the given location. Ensuring a forced kind that carries a user-tunable threshold
+// has to be skipped when the row is already there, because RetainWeatherUserCity's upsert
+// rewrites condition_value — without this check, adding any second alert to a city would
+// silently reset a rain threshold the user had retuned.
+func (h *Handler) weatherKindExists(ctx context.Context, userID, locationID string, kind domain.WeatherNotifyKind) (bool, error) {
+	rows, err := h.meWeatherCityRepo.ObtainWeatherUserCitiesByUserID(ctx, domain.UserTypeTelegram, userID)
+	if err != nil {
+		return false, err
+	}
+	for i := range rows {
+		if rows[i].LocationID == locationID && rows[i].NotifyKind == kind {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// forcedWeatherKindNotice returns the user-facing explanation for a forced,
+// system-managed subscription kind that cannot be deleted on its own, and ok=false for
+// every kind the user may delete freely.
+func forcedWeatherKindNotice(kind domain.WeatherNotifyKind) (notice string, ok bool) {
+	switch kind {
+	case domain.WeatherNotifyAlertThaw:
+		return "Thaw alerts stay on for every tracked city; remove the city to turn it off.", true
+	case domain.WeatherNotifyAlertRain:
+		return "Rain alerts stay on for every tracked city; remove the city to turn it off.", true
+	default:
+		return "", false
 	}
 }
 
@@ -346,15 +409,15 @@ func (h *Handler) DeleteMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if city.NotifyKind == domain.WeatherNotifyAlertThaw {
+	if notice, forced := forcedWeatherKindNotice(city.NotifyKind); forced {
 		// Forced, system-managed row: it can only be removed by removing the whole
 		// city (DELETE /api/me/weather/locations/{location_id}). Reached only via
-		// the API — the UI renders no delete control for thaw.
-		pub := internal.NewPublicError("Thaw alerts stay on for every tracked city; remove the city to turn it off.")
+		// the API — the UI renders no delete control for these kinds.
+		pub := internal.NewPublicError(notice)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		if encErr := json.NewEncoder(w).Encode(map[string]string{"error": pub.Details()}); encErr != nil {
-			h.logger.Print(errors.Join(fmt.Errorf("encode DeleteMeWeatherCity thaw-conflict response: %w", encErr), loginjector.NewTraceError()))
+			h.logger.Print(errors.Join(fmt.Errorf("encode DeleteMeWeatherCity forced-kind-conflict response: %w", encErr), loginjector.NewTraceError()))
 		}
 		return
 	}
@@ -559,4 +622,9 @@ const (
 	weatherSearchMaxResults = 5
 	// weatherDefaultNotifyHour is the local hour used when the client omits notify_hour.
 	weatherDefaultNotifyHour = 7
+	// weatherDefaultRainThreshold is the precipitation probability percent seeded into the
+	// forced rain_alert row of a newly tracked city. It matches the value the backfill
+	// migration (202608.026) writes for pre-existing cities. Users retune it by re-adding
+	// a rain alert with a different threshold, which upserts condition_value in place.
+	weatherDefaultRainThreshold = "60"
 )

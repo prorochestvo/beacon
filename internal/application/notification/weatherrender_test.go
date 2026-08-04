@@ -192,7 +192,7 @@ func TestRenderWeatherAlert(t *testing.T) {
 		t.Parallel()
 		city := baseCity
 		city.NotifyKind = domain.WeatherNotifyAlertHeat
-		result, err := RenderWeatherAlert(city, "High +38.2°C ≥ +35.0°C", obs)
+		result, err := RenderWeatherAlert(city, domain.AlertEdgeEntered, "High +38.2°C ≥ +35.0°C", obs)
 		require.NoError(t, err)
 		assert.Contains(t, result, "🔥")
 		assert.Contains(t, result, "Heat alert")
@@ -208,7 +208,7 @@ func TestRenderWeatherAlert(t *testing.T) {
 		negMin := -3.5
 		negObs := obs
 		negObs.TempMin = &negMin
-		result, err := RenderWeatherAlert(city, "Low −3.5°C ≤ +0.0°C", negObs)
+		result, err := RenderWeatherAlert(city, domain.AlertEdgeEntered, "Low −3.5°C ≤ +0.0°C", negObs)
 		require.NoError(t, err)
 		assert.Contains(t, result, "❄️")
 		assert.Contains(t, result, "Frost alert")
@@ -220,7 +220,7 @@ func TestRenderWeatherAlert(t *testing.T) {
 		t.Parallel()
 		city := baseCity
 		city.NotifyKind = domain.WeatherNotifyAlertThunderstorm
-		result, err := RenderWeatherAlert(city, "Thunderstorm", obs)
+		result, err := RenderWeatherAlert(city, domain.AlertEdgeEntered, "Thunderstorm", obs)
 		require.NoError(t, err)
 		assert.Contains(t, result, "⛈️")
 		assert.Contains(t, result, "Thunderstorm alert")
@@ -234,7 +234,7 @@ func TestRenderWeatherAlert(t *testing.T) {
 		city.NotifyKind = domain.WeatherNotifyAlertHeat
 		noMax := obs
 		noMax.TempMax = nil
-		result, err := RenderWeatherAlert(city, "reason", noMax)
+		result, err := RenderWeatherAlert(city, domain.AlertEdgeEntered, "reason", noMax)
 		require.NoError(t, err)
 		// temperature snapshot: max is "—" not zero
 		assert.Contains(t, result, "—")
@@ -247,7 +247,7 @@ func TestRenderWeatherAlert(t *testing.T) {
 		city.NotifyKind = domain.WeatherNotifyAlertFrost
 		noMin := obs
 		noMin.TempMin = nil
-		result, err := RenderWeatherAlert(city, "reason", noMin)
+		result, err := RenderWeatherAlert(city, domain.AlertEdgeEntered, "reason", noMin)
 		require.NoError(t, err)
 		assert.Contains(t, result, "—")
 	})
@@ -258,7 +258,7 @@ func TestRenderWeatherAlert(t *testing.T) {
 		city.NotifyKind = domain.WeatherNotifyAlertHeat
 		noCode := obs
 		noCode.WeatherCode = nil
-		result, err := RenderWeatherAlert(city, "reason", noCode)
+		result, err := RenderWeatherAlert(city, domain.AlertEdgeEntered, "reason", noCode)
 		require.NoError(t, err)
 		// no WMO emoji in the snapshot line
 		assert.NotContains(t, result, "⛈️")
@@ -270,7 +270,7 @@ func TestRenderWeatherAlert(t *testing.T) {
 		city := baseCity
 		city.NotifyKind = domain.WeatherNotifyAlertHeat
 		city.DisplayName = "<script>xss</script>"
-		result, err := RenderWeatherAlert(city, "reason", obs)
+		result, err := RenderWeatherAlert(city, domain.AlertEdgeEntered, "reason", obs)
 		require.NoError(t, err)
 		assert.NotContains(t, result, "<script>")
 		assert.Contains(t, result, "&lt;script&gt;")
@@ -280,16 +280,16 @@ func TestRenderWeatherAlert(t *testing.T) {
 		t.Parallel()
 		city := baseCity
 		city.NotifyKind = domain.WeatherNotifyMorningSummary
-		_, err := RenderWeatherAlert(city, "reason", obs)
+		_, err := RenderWeatherAlert(city, domain.AlertEdgeEntered, "reason", obs)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unrecognised alert kind")
+		assert.Contains(t, err.Error(), "unrenderable alert kind")
 	})
 
 	t.Run("rain alert renders emoji header and reason", func(t *testing.T) {
 		t.Parallel()
 		city := baseCity
 		city.NotifyKind = domain.WeatherNotifyAlertRain
-		result, err := RenderWeatherAlert(city, "Rain likely (82%) within 6h", obs)
+		result, err := RenderWeatherAlert(city, domain.AlertEdgeEntered, "Rain likely (82%) within 6h", obs)
 		require.NoError(t, err)
 		assert.Contains(t, result, "🌧️")
 		assert.Contains(t, result, "Rain alert")
@@ -305,7 +305,7 @@ func TestRenderWeatherAlert(t *testing.T) {
 		negMin := -3.0
 		thawObs := obs
 		thawObs.TempMin = &negMin
-		result, err := RenderWeatherAlert(city, "Thaw: −3.0°C → +2.0°C", thawObs)
+		result, err := RenderWeatherAlert(city, domain.AlertEdgeEntered, "Thaw: −3.0°C → +2.0°C", thawObs)
 		require.NoError(t, err)
 		assert.Contains(t, result, "🫠")
 		assert.Contains(t, result, "Thaw alert")
@@ -317,8 +317,76 @@ func TestRenderWeatherAlert(t *testing.T) {
 		t.Parallel()
 		city := baseCity
 		city.NotifyKind = "completely_unknown_kind"
-		_, err := RenderWeatherAlert(city, "reason", obs)
+		_, err := RenderWeatherAlert(city, domain.AlertEdgeEntered, "reason", obs)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unrecognised alert kind")
+		assert.Contains(t, err.Error(), "unrenderable alert kind")
+	})
+}
+
+// TestRenderWeatherAlertEdges pins the edge-aware header selection: rain_alert renders a
+// different message per direction, and every other kind may only ever render the entered
+// direction — a cleared edge reaching the renderer for them is a bug, not a message.
+func TestRenderWeatherAlertEdges(t *testing.T) {
+	t.Parallel()
+
+	tempMax := 18.0
+	tempMin := 9.0
+	code := 61
+	obs := domain.WeatherObservation{
+		TempMax:     &tempMax,
+		TempMin:     &tempMin,
+		WeatherCode: &code,
+	}
+	rainCity := domain.WeatherUserCity{
+		ID: "WUC-RAIN", DisplayName: "Astana",
+		NotifyKind: domain.WeatherNotifyAlertRain, ConditionValue: "60",
+	}
+
+	t.Run("rain entered renders the alert header", func(t *testing.T) {
+		t.Parallel()
+		result, err := RenderWeatherAlert(rainCity, domain.AlertEdgeEntered, "Rain likely (80%) within 6h", obs)
+		require.NoError(t, err)
+		assert.Contains(t, result, "Rain alert")
+		assert.Contains(t, result, "Astana")
+		assert.Contains(t, result, "Rain likely (80%) within 6h")
+		assert.NotContains(t, result, "Rain cleared")
+	})
+
+	t.Run("rain cleared renders a distinct header", func(t *testing.T) {
+		t.Parallel()
+		result, err := RenderWeatherAlert(rainCity, domain.AlertEdgeCleared, "No rain expected (30%) within 6h", obs)
+		require.NoError(t, err)
+		assert.Contains(t, result, "Rain cleared")
+		assert.Contains(t, result, "Astana")
+		assert.Contains(t, result, "No rain expected (30%) within 6h")
+		assert.NotContains(t, result, "Rain alert",
+			"the two directions must be visually distinguishable, not the same header")
+	})
+
+	t.Run("a cleared edge on a daily-metric kind is an error", func(t *testing.T) {
+		t.Parallel()
+		for _, kind := range []domain.WeatherNotifyKind{
+			domain.WeatherNotifyAlertHeat,
+			domain.WeatherNotifyAlertFrost,
+			domain.WeatherNotifyAlertThunderstorm,
+			domain.WeatherNotifyAlertThaw,
+		} {
+			city := domain.WeatherUserCity{ID: "WUC-X", NotifyKind: kind}
+			_, err := RenderWeatherAlert(city, domain.AlertEdgeCleared, "reason", obs)
+			require.Errorf(t, err, "%s re-arms silently and must never render a cleared message", kind)
+		}
+	})
+
+	t.Run("AlertEdgeNone is an error for every kind", func(t *testing.T) {
+		t.Parallel()
+		for _, kind := range []domain.WeatherNotifyKind{
+			domain.WeatherNotifyAlertRain,
+			domain.WeatherNotifyAlertHeat,
+			domain.WeatherNotifyAlertThaw,
+		} {
+			city := domain.WeatherUserCity{ID: "WUC-Y", NotifyKind: kind}
+			_, err := RenderWeatherAlert(city, domain.AlertEdgeNone, "reason", obs)
+			require.Errorf(t, err, "%s has nothing to render without a transition", kind)
+		}
 	})
 }

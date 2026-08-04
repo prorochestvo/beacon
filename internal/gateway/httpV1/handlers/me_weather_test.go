@@ -561,7 +561,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h.CreateMeWeatherCity(rr, req)
 
 		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 2, "requested morning_summary row plus the auto-created thaw row")
+		require.Len(t, cityRepo.retained, 3, "requested morning_summary row plus the auto-created thaw and rain rows")
 		stored := cityRepo.retained[0]
 		assert.Equal(t, callerIDStr, stored.UserID)
 		assert.Equal(t, domain.UserTypeTelegram, stored.UserType)
@@ -583,7 +583,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h.CreateMeWeatherCity(rr, req)
 
 		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 2, "requested morning_summary row plus the auto-created thaw row")
+		require.Len(t, cityRepo.retained, 3, "requested morning_summary row plus the auto-created thaw and rain rows")
 		assert.Equal(t, weatherDefaultNotifyHour, cityRepo.retained[0].NotifyHour)
 	})
 
@@ -601,7 +601,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h.CreateMeWeatherCity(rr, req)
 
 		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 2, "requested morning_summary row plus the auto-created thaw row")
+		require.Len(t, cityRepo.retained, 3, "requested morning_summary row plus the auto-created thaw and rain rows")
 		assert.Equal(t, 0, cityRepo.retained[0].NotifyHour)
 	})
 
@@ -619,7 +619,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h.CreateMeWeatherCity(rr, req)
 
 		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 2, "requested alert_heat row plus the auto-created thaw row")
+		require.Len(t, cityRepo.retained, 3, "requested alert_heat row plus the auto-created thaw and rain rows")
 		assert.Equal(t, domain.WeatherNotifyAlertHeat, cityRepo.retained[0].NotifyKind)
 		assert.Equal(t, "35", cityRepo.retained[0].ConditionValue)
 	})
@@ -638,7 +638,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h.CreateMeWeatherCity(rr, req)
 
 		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 2, "requested alert_frost row plus the auto-created thaw row")
+		require.Len(t, cityRepo.retained, 3, "requested alert_frost row plus the auto-created thaw and rain rows")
 		assert.Equal(t, domain.WeatherNotifyAlertFrost, cityRepo.retained[0].NotifyKind)
 		assert.Equal(t, "-5", cityRepo.retained[0].ConditionValue)
 	})
@@ -657,7 +657,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h.CreateMeWeatherCity(rr, req)
 
 		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 2, "requested alert_thunderstorm row plus the auto-created thaw row")
+		require.Len(t, cityRepo.retained, 3, "requested alert_thunderstorm row plus the auto-created thaw and rain rows")
 		assert.Equal(t, domain.WeatherNotifyAlertThunderstorm, cityRepo.retained[0].NotifyKind)
 		assert.Equal(t, "", cityRepo.retained[0].ConditionValue)
 	})
@@ -676,7 +676,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h.CreateMeWeatherCity(rr, req)
 
 		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 2, "requested rain_alert row plus the auto-created thaw row")
+		require.Len(t, cityRepo.retained, 2, "requested rain_alert row plus the auto-created thaw row; rain is not ensured twice")
 		assert.Equal(t, domain.WeatherNotifyAlertRain, cityRepo.retained[0].NotifyKind)
 		assert.Equal(t, "70", cityRepo.retained[0].ConditionValue)
 	})
@@ -731,7 +731,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h.CreateMeWeatherCity(rr, req)
 
 		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 1)
+		require.Len(t, cityRepo.retained, 2, "requested alert_thaw row plus the auto-created rain row")
 		assert.Equal(t, domain.WeatherNotifyAlertThaw, cityRepo.retained[0].NotifyKind)
 		assert.Equal(t, "", cityRepo.retained[0].ConditionValue, "condition_value must be blanked for alert_thaw")
 	})
@@ -799,7 +799,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h.CreateMeWeatherCity(rr, req)
 
 		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 2, "expected the requested row plus an auto-created thaw row")
+		require.Len(t, cityRepo.retained, 3, "expected the requested row plus auto-created thaw and rain rows")
 		assert.Equal(t, domain.WeatherNotifyMorningSummary, cityRepo.retained[0].NotifyKind)
 		thaw := cityRepo.retained[1]
 		assert.Equal(t, domain.WeatherNotifyAlertThaw, thaw.NotifyKind)
@@ -809,6 +809,14 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		assert.Equal(t, weatherDefaultNotifyHour, thaw.NotifyHour)
 		assert.Equal(t, callerIDStr, thaw.UserID)
 		assert.True(t, thaw.AlertLatched, "auto-created thaw row must seed pre-latched to avoid a spurious first-tick notification")
+
+		rain := cityRepo.retained[2]
+		assert.Equal(t, domain.WeatherNotifyAlertRain, rain.NotifyKind)
+		assert.Equal(t, "9999", rain.LocationID)
+		assert.Equal(t, weatherDefaultRainThreshold, rain.ConditionValue)
+		assert.Equal(t, callerIDStr, rain.UserID)
+		assert.False(t, rain.AlertLatched,
+			"auto-created rain row must seed armed: pre-latched would emit a spurious \"rain cleared\" on the first tick")
 	})
 
 	t.Run("requested alert_heat auto-creates a thaw row alongside it", func(t *testing.T) {
@@ -825,10 +833,12 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h.CreateMeWeatherCity(rr, req)
 
 		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 2)
+		require.Len(t, cityRepo.retained, 3)
 		assert.Equal(t, domain.WeatherNotifyAlertHeat, cityRepo.retained[0].NotifyKind)
 		assert.Equal(t, domain.WeatherNotifyAlertThaw, cityRepo.retained[1].NotifyKind)
 		assert.True(t, cityRepo.retained[1].AlertLatched, "auto-created thaw row must seed pre-latched")
+		assert.Equal(t, domain.WeatherNotifyAlertRain, cityRepo.retained[2].NotifyKind)
+		assert.False(t, cityRepo.retained[2].AlertLatched, "auto-created rain row must seed armed")
 	})
 
 	t.Run("requested alert_thaw does not trigger a second retain", func(t *testing.T) {
@@ -844,7 +854,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h.CreateMeWeatherCity(rr, req)
 
 		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 1, "requesting thaw directly must not trigger a second ensure-thaw retain")
+		require.Len(t, cityRepo.retained, 2, "requesting thaw directly must not re-ensure thaw, but the forced rain row is still added")
 		assert.Equal(t, domain.WeatherNotifyAlertThaw, cityRepo.retained[0].NotifyKind)
 	})
 
@@ -1393,5 +1403,141 @@ func TestHandler_GetMeWeatherCurrent(t *testing.T) {
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 		require.NotNil(t, resp.Items)
 		require.Empty(t, resp.Items)
+	})
+}
+
+// TestHandler_MeWeatherForcedRainAlert covers the half of issue #3 that no amount of
+// evaluator work would have fixed on its own: production held zero rain_alert rows, so
+// the alert was structurally incapable of firing. rain_alert is now forced and
+// system-managed per tracked city, exactly like alert_thaw.
+func TestHandler_MeWeatherForcedRainAlert(t *testing.T) {
+	t.Parallel()
+
+	const callerUserID int64 = 555001
+	const callerIDStr = "555001"
+	const otherIDStr = "555002"
+
+	bodyJSON := func(r dto.WeatherCityCreateRequest) io.Reader {
+		b, _ := json.Marshal(r)
+		return strings.NewReader(string(b))
+	}
+
+	validBody := dto.WeatherCityCreateRequest{
+		LocationID:  "7777",
+		DisplayName: "Astana",
+		Latitude:    51.16,
+		Longitude:   71.43,
+		Timezone:    "Asia/Almaty",
+		Country:     "Kazakhstan",
+		Admin1:      "Astana",
+	}
+
+	t.Run("an existing rain row is not re-ensured, so a tuned threshold survives", func(t *testing.T) {
+		t.Parallel()
+		cityRepo := &mockWeatherCityRepo{byUser: []domain.WeatherUserCity{{
+			ID: "existing-rain", UserType: domain.UserTypeTelegram, UserID: callerIDStr,
+			LocationID: "7777", NotifyKind: domain.WeatherNotifyAlertRain, ConditionValue: "85",
+		}}}
+		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
+		h.validateInitData = alwaysValidateInitData(callerUserID)
+
+		b := validBody
+		b.NotifyKind = "alert_heat"
+		b.ConditionValue = "35"
+		req := httptest.NewRequest(http.MethodPost, "/api/me/weather/cities", bodyJSON(b))
+		rr := httptest.NewRecorder()
+		h.CreateMeWeatherCity(rr, req)
+
+		require.Equal(t, http.StatusCreated, rr.Code)
+		require.Len(t, cityRepo.retained, 2, "the requested heat row plus thaw; rain already exists")
+		for _, r := range cityRepo.retained {
+			assert.NotEqual(t, domain.WeatherNotifyAlertRain, r.NotifyKind,
+				"re-ensuring rain would rewrite condition_value and silently reset the user's threshold")
+		}
+	})
+
+	t.Run("a rain row at a different location does not block the ensure", func(t *testing.T) {
+		t.Parallel()
+		cityRepo := &mockWeatherCityRepo{byUser: []domain.WeatherUserCity{{
+			ID: "rain-elsewhere", UserType: domain.UserTypeTelegram, UserID: callerIDStr,
+			LocationID: "0000", NotifyKind: domain.WeatherNotifyAlertRain, ConditionValue: "85",
+		}}}
+		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
+		h.validateInitData = alwaysValidateInitData(callerUserID)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/me/weather/cities", bodyJSON(validBody))
+		rr := httptest.NewRecorder()
+		h.CreateMeWeatherCity(rr, req)
+
+		require.Equal(t, http.StatusCreated, rr.Code)
+		require.Len(t, cityRepo.retained, 3, "the new location gets its own forced rain row")
+		assert.Equal(t, domain.WeatherNotifyAlertRain, cityRepo.retained[2].NotifyKind)
+		assert.Equal(t, "7777", cityRepo.retained[2].LocationID)
+	})
+
+	t.Run("a lookup failure while ensuring rain returns 500", func(t *testing.T) {
+		t.Parallel()
+		cityRepo := &mockWeatherCityRepo{listErr: errors.New("db down")}
+		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
+		h.validateInitData = alwaysValidateInitData(callerUserID)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/me/weather/cities", bodyJSON(validBody))
+		rr := httptest.NewRecorder()
+		h.CreateMeWeatherCity(rr, req)
+
+		require.Equal(t, http.StatusInternalServerError, rr.Code)
+		assert.Contains(t, rr.Body.String(), `{"error":"internal error"}`)
+	})
+
+	t.Run("deleting an owned rain row returns 409 and does not remove it", func(t *testing.T) {
+		t.Parallel()
+		rainCity := &domain.WeatherUserCity{
+			ID: "city-rain", UserType: domain.UserTypeTelegram, UserID: callerIDStr,
+			LocationID: "7777", DisplayName: "Astana", NotifyKind: domain.WeatherNotifyAlertRain,
+			ConditionValue: "60",
+		}
+		cityRepo := &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{"city-rain": rainCity}}
+		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
+		h.validateInitData = alwaysValidateInitData(callerUserID)
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/me/weather/cities/city-rain", nil)
+		req.SetPathValue("id", "city-rain")
+		rr := httptest.NewRecorder()
+		h.DeleteMeWeatherCity(rr, req)
+
+		require.Equal(t, http.StatusConflict, rr.Code)
+		pub := internal.NewPublicError("Rain alerts stay on for every tracked city; remove the city to turn it off.")
+		assert.Contains(t, rr.Body.String(), pub.Details())
+		assert.Empty(t, cityRepo.removed, "the rain row must not be removed")
+	})
+
+	t.Run("cross-user access to a rain row returns 404 not 409", func(t *testing.T) {
+		t.Parallel()
+		// Ownership is checked before the forced-kind guard: a 409 here would disclose
+		// both that the row exists and that it is rain_alert to a caller who does not own it.
+		otherRain := &domain.WeatherUserCity{
+			ID: "city-rain-other", UserType: domain.UserTypeTelegram, UserID: otherIDStr,
+			LocationID: "9012", DisplayName: "Tokyo", NotifyKind: domain.WeatherNotifyAlertRain,
+		}
+		cityRepo := &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{"city-rain-other": otherRain}}
+		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
+		h.validateInitData = alwaysValidateInitData(callerUserID)
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/me/weather/cities/city-rain-other", nil)
+		req.SetPathValue("id", "city-rain-other")
+		rr := httptest.NewRecorder()
+		h.DeleteMeWeatherCity(rr, req)
+
+		require.Equal(t, http.StatusNotFound, rr.Code)
+		assert.Empty(t, cityRepo.removed)
+	})
+
+	t.Run("the seeded default threshold passes domain validation", func(t *testing.T) {
+		t.Parallel()
+		seeded := domain.WeatherUserCity{
+			NotifyKind:     domain.WeatherNotifyAlertRain,
+			ConditionValue: weatherDefaultRainThreshold,
+		}
+		require.NoError(t, seeded.Validate())
 	})
 }

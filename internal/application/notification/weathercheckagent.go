@@ -22,6 +22,12 @@ import (
 // crosses the fire/re-arm boundary more than once within one calendar day as the
 // collector rewrites the observation. See the alert-phase loop below and
 // plans/262-weather-alert-edge-trigger-hysteresis.md for the full design.
+//
+// rain_alert is the one kind outside both of those generalisations: it notifies on
+// BOTH latch edges (rain expected / rain cleared) and is exempt from the fire cap,
+// because its metric is a rolling 6 h window whose two transitions routinely fall on
+// the same forecast_date. Its dead band lives in the domain evaluator instead
+// (domain.WeatherNotifyKind.UsesForecastDateCap gates the cap here).
 
 // NewWeatherCheckAgent constructs a WeatherCheckAgent. All arguments are required.
 func NewWeatherCheckAgent(
@@ -177,16 +183,16 @@ func (a *WeatherCheckAgent) Run(ctx context.Context) error {
 			}
 
 			prev := city.AlertLatched
-			fire, next, reason, evalErr := city.EvaluateLatched(*obs, now, prev)
+			edge, next, reason, evalErr := city.EvaluateLatched(*obs, now, prev)
 			if evalErr != nil {
 				errs = append(errs, fmt.Errorf("weather alert city=%s: evaluate: %w", city.ID, evalErr))
 				continue
 			}
 
-			if !fire {
-				// Re-arm (or any latch change without a fire) must still be persisted: this
-				// is the day-5 / day-7 transition that produces NO notification. Only write
-				// on a real change so steady state costs zero writes per tick.
+			if edge == domain.AlertEdgeNone {
+				// A latch change without a notification must still be persisted: this is the
+				// silent re-arm of a daily-metric kind. Only write on a real change so steady
+				// state costs zero writes per tick.
 				if next != prev {
 					if setErr := a.cityRepo.SetWeatherAlertLatched(ctx, city.ID, next); setErr != nil {
 						errs = append(errs, fmt.Errorf("weather alert city=%s: persist re-arm: %w", city.ID, setErr))
@@ -195,11 +201,14 @@ func (a *WeatherCheckAgent) Run(ctx context.Context) error {
 				continue
 			}
 
-			// fire == true ⇒ next == true and prev == false (guaranteed by EvaluateLatched).
-			// Second gate: cap to one fire per forecast_date (anti-jitter backstop). For
-			// alert kinds LastNotifiedAt holds the forecast_date of the last fire.
+			// Second gate: cap to one notification per forecast_date (anti-jitter backstop),
+			// for the daily-metric kinds only. For those kinds LastNotifiedAt holds the
+			// forecast_date of the last fire. rain_alert opts out — it is expected to notify
+			// both of its transitions within one forecast_date, and its anti-spam guarantee
+			// is the latch plus the hysteresis dead band (domain.WeatherNotifyKind.UsesForecastDateCap).
+			usesCap := city.NotifyKind.UsesForecastDateCap()
 			fdKey, keyErr := domain.ForecastDateKey(obs.ForecastDate)
-			if keyErr == nil && !city.LastNotifiedAt.IsZero() && city.LastNotifiedAt.Equal(fdKey) {
+			if usesCap && keyErr == nil && !city.LastNotifiedAt.IsZero() && city.LastNotifiedAt.Equal(fdKey) {
 				// Same forecast_date already fired — a within-day jitter re-cross. Record
 				// the latch edge (next == true) but do NOT notify again.
 				if next != prev {
@@ -210,14 +219,14 @@ func (a *WeatherCheckAgent) Run(ctx context.Context) error {
 				alertSuppressed++
 				continue
 			}
-			if keyErr != nil {
+			if usesCap && keyErr != nil {
 				// Malformed/empty forecast_date is an anomaly: log, allow the fire (never
 				// drop an alert), but the fire cap cannot be recorded — fall back to a
 				// latch-only write below.
 				fmt.Fprintf(a.logger, "weather alert: city %s: unparseable forecast_date %q: %v\n", city.ID, obs.ForecastDate, keyErr)
 			}
 
-			msg, renderErr := RenderWeatherAlert(city, reason, *obs)
+			msg, renderErr := RenderWeatherAlert(city, edge, reason, *obs)
 			if renderErr != nil {
 				errs = append(errs, fmt.Errorf("weather alert city=%s: render: %w", city.ID, renderErr))
 				continue
@@ -237,10 +246,15 @@ func (a *WeatherCheckAgent) Run(ctx context.Context) error {
 			alertQueued++
 
 			// Persist ONLY after a successful enqueue, so a queue failure re-fires next tick.
+			// Kinds outside the forecast_date cap (rain_alert) write the latch alone — in
+			// either direction, since their clear transition sets it back to false.
 			var persistErr error
-			if keyErr == nil {
+			switch {
+			case !usesCap:
+				persistErr = a.cityRepo.SetWeatherAlertLatched(ctx, city.ID, next)
+			case keyErr == nil:
 				persistErr = a.cityRepo.MarkWeatherAlertFired(ctx, city.ID, fdKey) // latch=1 + record forecast_date
-			} else {
+			default:
 				persistErr = a.cityRepo.SetWeatherAlertLatched(ctx, city.ID, true) // anomaly: latch only
 			}
 			if persistErr != nil {

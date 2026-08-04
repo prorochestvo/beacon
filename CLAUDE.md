@@ -37,6 +37,18 @@ Egress asymmetry: `cmd/collector` honours `BEACON_PROXY_URL`; the Open-Meteo ins
 in `cmd/web` probes **direct** (cmd/web ignores `BEACON_PROXY_URL`), so a false "down"
 there can't fail the deploy gate — the inspector is advisory.
 
+**Alert edge semantics** — every alert kind is edge-triggered through the per-row
+`alert_latched` boolean, and `domain.EvaluateLatched` reports the transition as a
+`domain.AlertEdge`. The four daily-metric kinds (`alert_heat`, `alert_frost`,
+`alert_thunderstorm`, `alert_thaw`) notify on entry only, re-arm silently, and are capped
+to one notification per `forecast_date` (`WeatherNotifyKind.UsesForecastDateCap`, cursor in
+`last_notified_at`). `rain_alert` is the exception on both counts: it notifies on **both**
+edges (distinct "Rain alert" / "Rain cleared" messages) and is exempt from the daily cap,
+because its metric is a rolling 6 h window whose two transitions routinely share one
+`forecast_date`. Its anti-flap guard is the hysteresis band instead — fires at
+`maxProb ≥ threshold`, clears only at `maxProb ≤ max(threshold − 20, 0)`, holds the latch
+in between.
+
 ### Layer Responsibilities
 
 | Layer | Location | Role |
@@ -65,8 +77,8 @@ Routes are registered in `internal/gateway/` (grep the path literals for the ful
 - **Auth** — the `/api/me/*` family is the only authenticated surface (HMAC algorithm in Key Patterns). The signed Telegram WebApp `initData` is accepted **only** in the `X-Telegram-Init-Data` header, never via query string (a signed payload in the URL leaks into access logs and `Referer`).
 - **Ownership → 404, not 403** — reading or mutating a `/api/me/*` resource (subscription, weather city) owned by another user returns **404**, never 403, to avoid existence disclosure. Deleting a subscription does **not** cascade-delete its `rate_user_events` rows.
 - **Chart endpoints** (`/api/me/rates/chart`, `/api/public/rates/chart`) — `period` is an integer-days whitelist `{7,30,90,180,360}` (default 7); anything else is 400 with a `PublicError` body. Equity (`kind=LAST`) pairs render under the `equity` category with an amber series (`#D98E04`).
-- **Weather city create** — server re-validates `timezone` via `time.LoadLocation`, `latitude in [-90,90]`, `longitude in [-180,180]`, `notify_hour in [0,23]` (default 7). Creating any city also auto-ensures a forced `alert_thaw` row for that location (idempotent second `RetainWeatherUserCity`) unless the requested kind already is thaw — thaw is system-managed and always-on for every tracked city. The Mini App's "+ Add alert" form also offers `morning_summary` with a 0–23 hour picker, so a deleted daily summary can be re-added and its hour changed; the upsert rewrites `notify_hour` but never `last_notified_at`, so re-adding cannot emit a second summary the same day.
-- **Weather alert delete** — `DELETE /api/me/weather/cities/{id}` removes one subscription row, but a direct delete of an `alert_thaw` row returns **409 + PublicError** (ownership check runs first, so cross-user/missing is still 404, never 409). To turn thaw off, remove the whole location via `DELETE /api/me/weather/locations/{location_id}`, which deletes every row (all kinds, including thaw) the caller owns there (204; 404 when the caller owns nothing at that location — no existence disclosure). The Mini App renders no per-city thaw row at all — the forced subscription is surfaced once as a single note above the city list — and offers a per-city "Remove city" control.
+- **Weather city create** — server re-validates `timezone` via `time.LoadLocation`, `latitude in [-90,90]`, `longitude in [-180,180]`, `notify_hour in [0,23]` (default 7). Creating any city also auto-ensures the two forced, system-managed rows for that location — `alert_thaw` (always upserted) and `rain_alert` at threshold `60` (inserted **only when absent**, so a user-tuned threshold is never stomped) — skipping whichever kind the request itself created. The Mini App's "+ Add alert" form also offers `morning_summary` with a 0–23 hour picker, so a deleted daily summary can be re-added and its hour changed; the upsert rewrites `notify_hour` but never `last_notified_at`, so re-adding cannot emit a second summary the same day. `rain_alert` stays in that form too: re-adding it with a new percentage is how its threshold is retuned (`alert_latched` is insert-only in the upsert, so retuning never re-fires).
+- **Weather alert delete** — `DELETE /api/me/weather/cities/{id}` removes one subscription row, but a direct delete of a forced row (`alert_thaw`, `rain_alert`) returns **409 + PublicError** (ownership check runs first, so cross-user/missing is still 404, never 409). To turn those off, remove the whole location via `DELETE /api/me/weather/locations/{location_id}`, which deletes every row (all kinds, including the forced ones) the caller owns there (204; 404 when the caller owns nothing at that location — no existence disclosure). The Mini App renders no per-city thaw row at all — the forced subscriptions are surfaced once as a single note above the city list — while the rain row IS listed (its threshold is user-tunable) but carries no delete control; each city offers a "Remove city" control.
 - **`GET /`** — dispatcher inline script routes on `window.Telegram.WebApp.initData`: non-empty → Mini App view, empty → public view.
 - **`GET /ping`** (alias `/healthz`) — liveness, always 200, touches no dependency, no auth.
 - **`GET /health/check`** — readiness; runs all inspectors under a 3s bound, per-component report. Critical (`sqlite`, `telegram`) flip `status=false` → HTTP 503; advisory (`open-meteo`) appears but never forces 503 (a weather outage must not fail the deploy gate). No auth.

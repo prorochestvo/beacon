@@ -181,10 +181,11 @@ func renderWeatherCityList(state application.WeatherCitiesState) string {
 	if len(groups) == 0 {
 		b.WriteString(`<p class="weather-cities-empty">No cities yet. Use the search above to add one.</p>`)
 	} else {
-		// Thaw alerts are forced always-on for every tracked city (see
+		// Thaw and rain alerts are forced always-on for every tracked city (see
 		// CreateMeWeatherCity). Surface that once here instead of repeating an
-		// "always on" row under each city.
-		b.WriteString(`<p class="weather-thaw-note">🫠 Thaw alerts are always on for every city.</p>`)
+		// "always on" row under each city. The rain row itself is still listed per city,
+		// because its threshold is user-tunable and therefore worth showing.
+		b.WriteString(`<p class="weather-thaw-note">🫠 Thaw and 🌧️ rain alerts are always on for every city.</p>`)
 		b.WriteString(`<ul class="weather-cities-list" id="weather-cities-list">`)
 		for _, g := range groups {
 			b.WriteString(renderWeatherCityGroupItem(g, state))
@@ -250,6 +251,18 @@ func renderWeatherCityGroupItem(g WeatherCityGroup, state application.WeatherCit
 // system-managed, and surfaced once globally by renderWeatherCityList.
 func renderWeatherKindRow(row dto.WeatherCityRow) string {
 	label := alertKindLabel(row.NotifyKind, row.ConditionValue, row.NotifyHour)
+
+	// rain_alert is forced and system-managed: DELETE on a single rain row answers 409, so
+	// no delete control is rendered — a button whose only possible outcome is an error is
+	// not a control. The row itself stays visible because its threshold is user-tunable:
+	// re-adding a rain alert with a new value upserts condition_value in place.
+	if row.NotifyKind == "rain_alert" {
+		return fmt.Sprintf(
+			`<li class="weather-kind-row"><span class="weather-kind-label">%s</span></li>`,
+			dom.Escape(label),
+		)
+	}
+
 	return fmt.Sprintf(
 		`<li class="weather-kind-row">`+
 			`<span class="weather-kind-label">%s</span>`+
@@ -290,6 +303,9 @@ func renderWeatherAlertForm(state application.WeatherCitiesState) string {
 	// morning_summary IS listed so a user who deleted the auto-created daily
 	// summary can re-add it (and pick its hour); re-adding upserts the hour
 	// without resetting the fire cursor (see RetainWeatherUserCity).
+	// rain_alert is forced too, but IS listed: re-adding it with a different percentage is
+	// how its threshold is retuned. alert_latched is insert-only in the upsert, so changing
+	// the threshold never resets the latch into a spurious notification.
 	kinds := []struct{ value, label string }{
 		{"morning_summary", "Morning summary (daily)"},
 		{"alert_heat", "Heat alert (°C)"},
