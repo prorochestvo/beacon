@@ -149,11 +149,17 @@ creation runs on the host via `configs/sqlite_dump.sh` (installed by
 Drive. See the project `README.md` for install, scheduling, and retention. The
 restore drill below is the operator-facing half not covered there.
 
-Snapshots are gzipped (~4× on real data: 8.1 MB → 2.1 MB). The retained set is
-what makes this matter — seven local dailies plus fourteen remote multiply every
-megabyte of database by twenty-one, against roughly 1.2 GB of free space on the
-host. Both extensions are handled everywhere: snapshots predating compression and
-the `cp` fallback's uncompressed set still restore, prune, and mirror normally.
+Snapshots are gzipped (~4× on real data: 8.1 MB → 2.1 MB), and local retention is
+**3 days** against 14 on Google Drive. Both numbers exist because the host disk is
+the scarce resource — roughly 1.2 GB free — while the remote is not: the local
+copies make a same-week restore fast, the remote mirror is the archive of record.
+The rclone sync always completes before the local prune, so shortening local
+retention can never drop a snapshot the remote has not already taken. Override
+either with `LOCAL_RETENTION_DAYS` / `REMOTE_RETENTION_DAYS` in
+`/opt/beacon/backups/.env`.
+
+Both extensions are handled everywhere: snapshots predating compression and the
+`cp` fallback's uncompressed set still restore, prune, and mirror normally.
 
 ### Reading the database without stopping anything
 

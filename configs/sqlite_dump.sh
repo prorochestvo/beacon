@@ -42,7 +42,12 @@ BEACON_DIR="/opt/beacon"
 BACKUP_DIR="${BEACON_DIR}/backups"
 MAIN_ENV="${MAIN_ENV:-${BEACON_DIR}/.env}"
 GDRIVE_REMOTE="${GDRIVE_REMOTE:-gdrive:backups/beacon}"
-LOCAL_RETENTION_DAYS="${LOCAL_RETENTION_DAYS:-7}"
+# Local retention is deliberately shorter than remote: the host disk is the scarce
+# resource (94% full at the time of writing), while Google Drive is not. The local
+# copies exist to make a same-week restore fast, not to be the archive of record —
+# anything older is pulled from the remote mirror, which the sync above always
+# completes before the local prune below runs.
+LOCAL_RETENTION_DAYS="${LOCAL_RETENTION_DAYS:-3}"
 REMOTE_RETENTION_DAYS="${REMOTE_RETENTION_DAYS:-14}"
 NOTIFY_ON_SUCCESS="${NOTIFY_ON_SUCCESS:-1}"
 SNAPSHOT_GLOB='beacon.*.sqlite*'
