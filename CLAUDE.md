@@ -111,6 +111,14 @@ Schema lives at the project root: `./migrations/*.sql`. The sibling Go file
 calls `sqlitedb.Migrator.Run(ctx)`. Idempotent: applied filenames are tracked in
 `__schema_migrations`.
 
+After applying, the migrator calls `Migrator.Verify(ctx)` and exits non-zero when the
+ledger does not account for every embedded migration, or when any migration file is
+empty (`Run` skips empty content silently, so a truncated `.sql` would otherwise be a
+permanent invisible no-op). The `beacon-migrate` unit is `Type=oneshot` with
+`RemainAfterExit=no`, so `systemctl start` propagates that exit code and the release
+job fails — schema drift surfaces at deploy time rather than at the first query
+against a missing column.
+
 Service binaries (`cmd/web`, `cmd/collector`, `cmd/notifier`) DO NOT migrate on
 startup. They call `sqlitedb.RequireMigratedSchema(ctx, db)` immediately after
 opening the DB; a missing or empty `__schema_migrations` table causes
@@ -135,6 +143,24 @@ make build         # builds all binaries including ./build/migrator
 make migrate       # applies any pending .sql files (no-op if up to date)
 make run           # starts collector, notifier, web
 ```
+
+**Reading production data.** The live DB is root-owned `0600`; the daily snapshots in
+`/opt/beacon/backups/` are world-readable, so inspection goes through those. `sqlite3
+-readonly <snapshot>` **fails** with `attempt to write a readonly database (8)`:
+`journal_mode=WAL` is persisted in the file header, so opening the file makes SQLite
+want `-shm`/`-wal` sidecars next to it, which the backup directory does not allow. The
+working form is a URI with `immutable=1`, which skips WAL setup entirely:
+
+```
+sqlite3 "file:/opt/beacon/backups/beacon.<YYYYMMDD>.sqlite?immutable=1" "<query>"
+```
+
+`make db-inspect` wraps that over SSH against the newest snapshot and prints the
+snapshot's age first — snapshots are cut at 00:00 UTC, so one older than the last
+deploy cannot confirm that deploy's migrations. `ARGS="<sql>"` runs a single query and
+exits; without it you get the interactive shell. `make db-snapshot` cuts a fresh
+snapshot on demand (`sudo` prompts on the TTY) when the nightly one is too old to
+answer the question.
 
 ### Environment Variables
 

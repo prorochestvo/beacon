@@ -149,6 +149,43 @@ creation runs on the host via `configs/sqlite_dump.sh` (installed by
 Drive. See the project `README.md` for install, scheduling, and retention. The
 restore drill below is the operator-facing half not covered there.
 
+### Reading the database without stopping anything
+
+The live DB is root-owned `0600`, so inspection goes through the snapshots, which are
+world-readable. A plain read-only open of one fails:
+
+```
+$ sqlite3 -readonly /opt/beacon/backups/beacon.20260804.sqlite "SELECT 1"
+Error: in prepare, attempt to write a readonly database (8)
+```
+
+`journal_mode=WAL` is persisted in the database file header, so SQLite wants to create
+`-shm`/`-wal` sidecars beside the file — impossible in a root-owned backup directory.
+Open it as a URI with `immutable=1` instead, which tells SQLite the file cannot change
+and skips WAL setup:
+
+```bash
+sqlite3 "file:/opt/beacon/backups/beacon.20260804.sqlite?immutable=1" \
+  "SELECT filename, applied_at FROM __schema_migrations ORDER BY filename DESC LIMIT 5;"
+```
+
+From a workstation, `make db-inspect` does this against the newest snapshot over SSH and
+reports its age before opening it; `make db-inspect ARGS="<sql>"` runs one query and exits.
+The age matters: snapshots are cut at 00:00 UTC, so immediately after a deploy the newest
+one predates the migration you are trying to confirm. `make db-snapshot` cuts a fresh one
+on demand (interactive `sudo` on the host).
+
+To make that snapshot non-interactive — for a scripted post-deploy check — add one narrow
+line to sudoers for the operator account, mirroring the CI grant in
+`configs/beacon-deploy.sudoers`:
+
+```
+<operator> ALL=(root) NOPASSWD: /opt/beacon/backups/sqlite_dump.sh
+```
+
+Not installed by `make init` on purpose: it widens what a compromised operator key can do,
+so it is an explicit decision rather than a default.
+
 ### Restore drill
 
 Stop the live service so no writer holds the destination path:
