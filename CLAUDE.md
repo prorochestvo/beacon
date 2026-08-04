@@ -154,6 +154,15 @@ Static assets live in `cmd/web/static/` (embedded via `//go:embed static`); the 
 
 The `webAppURL` BotFather setting must point to `https://<host>/` (trailing slash, no path suffix) — update it whenever the host changes.
 
+**Mini App navigation** — the four authenticated screens form a 2×2 matrix of a **section** (rates / weather) and a **mode** (view / manage):
+
+| | view (home) | manage (settings) |
+|---|---|---|
+| **Rates** | `RenderMeSubscriptions` | `RenderMeSubscriptionsEdit` |
+| **Weather** | `RenderMeWeatherCurrent` | `RenderMeWeatherCities` |
+
+The vertical section rail (`cmd/wasm/ui/section_rail.go`, wrapped around every screen via `RenderSectionShell`) changes the **section only**; the manage gear (home) and the ← Back button (settings) change the **mode only**, so entering or leaving settings always stays in the section the user was in. Each cell is its own screen mount, so the active tab is implied by which screen rendered the rail — there is no tab state anywhere. Rail clicks are delegated from the stable `#app` container, never bound to the rail node: the weather and editor screens replace `#app` innerHTML on every redraw. Auth failure short-circuits before the shell, so a screen with no content renders no rail.
+
 ### Deployment
 
 Standard release layout: immutable `/opt/beacon/artifacts/<VERSION_ID>/` build sets and a `bin/release` channel symlink the units run through. **Security boundary**: the CI deploy user may write only under `artifacts/` and `bin/`; `.env`, the DB, and the base dir are root-owned and out of reach. The `release.yml` job (on an `r_*` tag) uploads a new `artifacts/<VERSION_ID>/`, flips the symlink, runs migrations via the **`beacon-migrate` one-shot unit (root, so the deploy user never writes the DB)**, restarts `beacon`, and health-gates on `/health/check` with one-symlink rollback. Schema reconciliation is deploy-time, not startup-time — the service unit has no `ExecStartPre` migrator. `make init` provisions the layout, both units, the narrow `/etc/sudoers.d/beacon-deploy`, and the nginx vhost. See `deploy/README.md`.

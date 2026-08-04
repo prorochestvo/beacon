@@ -550,6 +550,62 @@ func callWebAppIfDefined() {
 	webApp.Call("expand")
 }
 
+// homeSectionRoutes and settingsSectionRoutes map a Mini App section to the _wasm
+// entry point of its screen in one mode. The section rail moves sideways within a
+// mode, so each screen binds the map matching its own mode; that is what leaves the
+// gear and the ← Back button as the only controls that change mode. See the matrix
+// in cmd/wasm/ui/section_rail.go.
+var (
+	homeSectionRoutes = map[ui.Section]string{
+		ui.SectionRates:   "renderMeSubscriptions",
+		ui.SectionWeather: "renderMeWeatherCurrent",
+	}
+	settingsSectionRoutes = map[ui.Section]string{
+		ui.SectionRates:   "renderMeSubscriptionsEdit",
+		ui.SectionWeather: "renderMeWeatherCities",
+	}
+)
+
+// bindSectionRail wires the vertical section rail of one mounted screen.
+//
+// The listener is delegated from the stable #app container rather than bound to the
+// rail node: the weather and editor screens replace #app innerHTML on every redraw,
+// which would destroy a listener attached to the rail itself. Element.closest walks
+// up from the event target, so a click landing on a tab's glyph or label still
+// resolves to the button.
+//
+// A tap on the already-active tab is ignored: remounting the screen the user is
+// already on would cancel its in-flight fetches and reset its scroll position for
+// no visible change.
+func bindSectionRail(app js.Value, scr *screen, active ui.Section, routes map[ui.Section]string) {
+	if app.IsNull() || app.IsUndefined() {
+		return
+	}
+	scr.addRelease(dom.On(app, "click", func(ev js.Value) {
+		target := ev.Get("target")
+		if target.IsNull() || target.IsUndefined() {
+			return
+		}
+		item := target.Call("closest", ".section-rail-item")
+		if item.IsNull() || item.IsUndefined() {
+			return
+		}
+		sectionAttr := item.Get("dataset").Get("section")
+		if sectionAttr.IsUndefined() {
+			return
+		}
+		section := ui.Section(sectionAttr.String())
+		if section == active {
+			return
+		}
+		entry, ok := routes[section]
+		if !ok {
+			return
+		}
+		js.Global().Get("_wasm").Call(entry)
+	}))
+}
+
 // runRenderMeSubscriptions is the entry point for the Telegram Mini App screen.
 // It reads initData once at mount, calls WebApp.ready/expand, renders the
 // skeleton, loads the first page of subscriptions in this goroutine, then
@@ -603,6 +659,10 @@ func runRenderMeSubscriptions(client *apiclient.Client) {
 
 	// Render the skeleton immediately for a responsive UI.
 	app.Set("innerHTML", ui.RenderMeSubscriptions(page.State()))
+
+	// Bind the rail before the data loads: switching sections must work while the
+	// chart is still fetching.
+	bindSectionRail(app, scr, ui.SectionRates, homeSectionRoutes)
 
 	redrawChart := func() {
 		if !alive {
@@ -712,20 +772,11 @@ func bindMeSubsHandlers(
 		chartDiv.Set("innerHTML", ui.RenderSparklineSlot(page.State()))
 	}
 
-	// Gear button: navigate to the subscription editor screen.
+	// Gear button: enter settings without leaving the rates section.
 	manageBtn := doc.Call("getElementById", "me-manage")
 	if !manageBtn.IsNull() && !manageBtn.IsUndefined() {
 		scr.addRelease(dom.On(manageBtn, "click", func(_ js.Value) {
 			js.Global().Get("_wasm").Call("renderMeSubscriptionsEdit")
-		}))
-	}
-
-	// Cloud button: navigate to the weather cities screen (its back button
-	// returns here via renderMeSubscriptions).
-	weatherBtn := doc.Call("getElementById", "me-weather")
-	if !weatherBtn.IsNull() && !weatherBtn.IsUndefined() {
-		scr.addRelease(dom.On(weatherBtn, "click", func(_ js.Value) {
-			js.Global().Get("_wasm").Call("renderMeWeatherCities")
 		}))
 	}
 
@@ -1259,6 +1310,10 @@ func runRenderMeSubscriptionsEdit(client *apiclient.Client) {
 	// Render skeleton immediately.
 	redraw()
 
+	// Bind the rail before the data loads: switching sections must work while the
+	// editor is still fetching.
+	bindSectionRail(app, scr, ui.SectionRates, settingsSectionRoutes)
+
 	// Load data in background so the skeleton shows right away.
 	go func() {
 		fetchCtx, fetchCancel := context.WithTimeout(screenCtx, 15*time.Second)
@@ -1533,6 +1588,10 @@ func runRenderMeWeatherCities(client *apiclient.Client) {
 	// Render skeleton immediately.
 	redraw()
 
+	// Bind the rail before the data loads: switching sections must work while the
+	// city list is still fetching.
+	bindSectionRail(app, scr, ui.SectionWeather, settingsSectionRoutes)
+
 	// Load saved cities in the background so the skeleton shows right away.
 	go func() {
 		fetchCtx, fetchCancel := context.WithTimeout(screenCtx, 15*time.Second)
@@ -1545,10 +1604,10 @@ func runRenderMeWeatherCities(client *apiclient.Client) {
 	}()
 }
 
-// runRenderMeWeatherCurrent is the entry point for the on-demand current-weather
-// screen. Reads initData once at mount, renders the skeleton, loads the latest
-// observations for the caller's cities in a background goroutine, then wires the
-// back button. Must run in a goroutine — never on the main goroutine.
+// runRenderMeWeatherCurrent is the entry point for the weather home tab. Reads
+// initData once at mount, wires the section rail and the gear, renders the
+// skeleton, then loads the latest observations for the caller's cities in a
+// background goroutine. Must run in a goroutine — never on the main goroutine.
 func runRenderMeWeatherCurrent(client *apiclient.Client) {
 	callWebAppIfDefined()
 
@@ -1576,6 +1635,12 @@ func runRenderMeWeatherCurrent(client *apiclient.Client) {
 	// Render skeleton immediately.
 	redraw()
 
+	// Both bindings are delegated from #app and must be live before the fetch
+	// finishes: navigating away from a slow-loading screen is exactly when a user
+	// reaches for them.
+	bindSectionRail(app, scr, ui.SectionWeather, homeSectionRoutes)
+	bindWeatherCurrentHandlers(app, scr, &alive)
+
 	// Load data in a background goroutine so the skeleton shows right away.
 	go func() {
 		fetchCtx, fetchCancel := context.WithTimeout(screenCtx, 15*time.Second)
@@ -1584,13 +1649,15 @@ func runRenderMeWeatherCurrent(client *apiclient.Client) {
 			js.Global().Get("console").Call("warn", "weather current Load:", err.Error())
 		}
 		redraw()
-		bindWeatherCurrentHandlers(app, scr, &alive)
 	}()
 }
 
-// bindWeatherCurrentHandlers wires the current-weather screen's event handlers.
-// Currently only the back button is interactive; the screen is read-only.
-// The back button navigates to the city-picker screen.
+// bindWeatherCurrentHandlers wires the weather home tab's event handlers. The
+// screen is read-only, so the gear is its only control: it enters the weather
+// settings screen, keeping the section (see the matrix in ui/section_rail.go).
+//
+// The listener is delegated from the stable #app container because redraw()
+// replaces its entire innerHTML when the observations arrive.
 func bindWeatherCurrentHandlers(app js.Value, scr *screen, alive *bool) {
 	scr.addRelease(dom.On(app, "click", func(ev js.Value) {
 		if !*alive {
@@ -1600,7 +1667,7 @@ func bindWeatherCurrentHandlers(app js.Value, scr *screen, alive *bool) {
 		if target.IsNull() || target.IsUndefined() {
 			return
 		}
-		if target.Get("id").String() == "weather-current-back" {
+		if target.Get("id").String() == "me-manage" {
 			js.Global().Get("_wasm").Call("renderMeWeatherCities")
 		}
 	}))
@@ -1612,8 +1679,8 @@ func bindWeatherCurrentHandlers(app js.Value, scr *screen, alive *bool) {
 // All interactions are delegated to the stable #app container so listeners
 // survive repeated innerHTML replacements performed by redraw().
 //
-// Back button (#weather-back): calls _wasm.renderMeSubscriptions() to return
-// to the main Mini App screen.
+// Back button (#weather-back): calls _wasm.renderMeWeatherCurrent() to leave
+// settings for the weather home tab, preserving the section.
 // Search input (#weather-search): fires a debounced geocoding request after
 // 400 ms of inactivity so the API is not called on every keystroke.
 // Search result clicks (.weather-search-item): read data-index and call
@@ -1664,9 +1731,8 @@ func bindWeatherCitiesHandlers(
 		id := target.Get("id").String()
 		switch id {
 		case "weather-back":
-			js.Global().Get("_wasm").Call("renderMeSubscriptions")
-			return
-		case "weather-view-current":
+			// Leaving settings keeps the section: back lands on the weather home
+			// tab, not on the rates one.
 			js.Global().Get("_wasm").Call("renderMeWeatherCurrent")
 			return
 		case "weather-save-btn":

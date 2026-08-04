@@ -27,23 +27,24 @@ func RenderMeWeatherCities(state application.WeatherCitiesState) string {
 
 	b.WriteString(renderWeatherTopbar())
 
-	if state.Loading {
+	switch {
+	case state.Loading:
 		b.WriteString(`<p class="weather-loading">Loading…</p>`)
-		return b.String()
-	}
-	if state.LoadError != nil {
+	case state.LoadError != nil:
 		b.WriteString(`<p class="error-msg">`)
 		b.WriteString(dom.Escape(state.LoadError.Error()))
 		b.WriteString(`</p>`)
-		return b.String()
+	default:
+		b.WriteString(renderWeatherSearchSection(state))
+		b.WriteString(renderWeatherCityList(state))
 	}
 
-	b.WriteString(renderWeatherSearchSection(state))
-	b.WriteString(renderWeatherCityList(state))
-	return b.String()
+	return RenderSectionShell(SectionWeather, b.String())
 }
 
-// renderWeatherTopbar emits the screen header with a back button.
+// renderWeatherTopbar emits the screen header. The back button leaves settings for
+// the weather home tab — it changes the mode, never the section, which is the
+// section rail's job (see section_rail.go).
 func renderWeatherTopbar() string {
 	return `<div class="weather-topbar">` +
 		`<button class="weather-back" id="weather-back" type="button">← Back</button>` +
@@ -170,7 +171,6 @@ func GroupWeatherCities(cities []dto.WeatherCityRow) []WeatherCityGroup {
 
 // renderWeatherCityList emits the caller's saved city subscription list grouped by
 // location_id, with per-kind delete controls and an "Add alert" form per city.
-// A "View current weather" button appears when at least one city is saved.
 func renderWeatherCityList(state application.WeatherCitiesState) string {
 	var b strings.Builder
 	b.WriteString(`<section class="weather-cities-section">`)
@@ -190,7 +190,6 @@ func renderWeatherCityList(state application.WeatherCitiesState) string {
 			b.WriteString(renderWeatherCityGroupItem(g, state))
 		}
 		b.WriteString(`</ul>`)
-		b.WriteString(`<button class="weather-current-btn" id="weather-view-current" type="button">View current weather</button>`)
 	}
 
 	b.WriteString(`</section>`)

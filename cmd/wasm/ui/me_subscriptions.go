@@ -1,14 +1,16 @@
 // Package ui provides HTML renderers for the WASM frontend. This file handles
-// the Mini App subscriptions screen: a sparkline-list chart slot followed by a
-// modal slot. Per-pair detail is surfaced through the modal overlay (the old
-// list section, search bar, and toggle button are gone).
+// the Mini App rates home tab: a sparkline-list chart slot followed by a modal
+// slot, wrapped in the section shell (see section_rail.go). Per-pair detail is
+// surfaced through the modal overlay (the old list section, search bar, and
+// toggle button are gone).
 //
 // The modal is text-only (no SVG). When state.HistoryOpen is true the modal
 // body swaps to the per-pair history view rendered by me_pair_history.go.
 //
 // Layout when AuthFailure is false:
-//  1. #me-sparkline-chart — sparkline-list chart (skeleton / empty / rendered).
-//  2. #me-pair-modal-slot — pair detail overlay (empty unless OpenPair is set).
+//  1. the vertical section rail (left column of the shell).
+//  2. #me-sparkline-chart — sparkline-list chart (skeleton / empty / rendered).
+//  3. #me-pair-modal-slot — pair detail overlay (empty unless OpenPair is set).
 //
 // AuthFailure short-circuits to just the error message.
 package ui
@@ -33,23 +35,30 @@ const meManageGearSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24
 	`<path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.01 7.01 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 2h-4c-.25 0-.46.18-.49.42l-.36 2.54a7.01 7.01 0 0 0-1.62.94l-2.39-.96a.48.48 0 0 0-.59.22L2.63 8.48a.48.48 0 0 0 .12.61l2.03 1.58A7.2 7.2 0 0 0 4.71 12c0 .32.03.63.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.36 1.04.67 1.62.94l.36 2.54c.05.24.26.42.49.42h4c.25 0 .46-.18.49-.42l.36-2.54a7.01 7.01 0 0 0 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 0 1 8.4 12 3.6 3.6 0 0 1 12 8.4a3.6 3.6 0 0 1 3.6 3.6 3.6 3.6 0 0 1-3.6 3.6z"/>` +
 	`</svg>`
 
-// meWeatherCloudSVG is the inline SVG cloud icon for the weather-cities
-// button. Viewbox 24×24 px; rendered at 20×20 px via CSS.
-const meWeatherCloudSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">` +
-	`<path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/>` +
-	`</svg>`
+// renderManageGearButton emits the settings entry point shared by both home tabs.
+// It is the Mini App's only way into the settings screens; each home tab wires it
+// to the settings screen of its own section, so entering settings never changes
+// which section the user is in (see the matrix in section_rail.go).
+//
+// The button is absolutely positioned top-right of #app via CSS, so it floats over
+// the empty space beside the screen header and adds nothing to the vertical flow.
+// The aria-label names the destination section, since the glyph alone cannot.
+func renderManageGearButton(ariaLabel string) string {
+	return `<button id="me-manage" class="me-manage-gear" type="button" aria-label="` + ariaLabel + `">` +
+		meManageGearSVG +
+		`</button>`
+}
 
-// RenderMeSubscriptions returns the full HTML for the Mini App subscriptions
-// screen. Default top-to-bottom layout:
+// RenderMeSubscriptions returns the full HTML for the Mini App rates home tab.
+// Default top-to-bottom layout inside the section shell:
 //  1. #me-sparkline-chart — sparkline-list chart (skeleton / empty / rendered).
 //  2. #me-pair-modal-slot — pair detail overlay (empty unless OpenPair is set).
 //
-// The manage-subscriptions gear and weather-cities cloud buttons are absolutely
-// positioned top-right of #app via CSS, so they float over the chart-card
-// header and add nothing to the vertical flow. Neither is rendered on the guest
-// screen or when AuthFailure is set (the weather screens sit behind /api/me/*
-// auth); AuthFailure short-circuits the whole screen to the auth-failure
-// message.
+// The screen is wrapped in RenderSectionShell so the vertical section rail sits to
+// its left, and carries the manage gear. Neither is rendered on the guest screen or
+// when AuthFailure is set (every /api/me/* screen sits behind auth); AuthFailure
+// short-circuits the whole screen to the auth-failure message, with no rail — a
+// screen with no content has nothing to navigate between.
 //
 // Every user-influenced field is passed through dom.Escape before interpolation.
 func RenderMeSubscriptions(state application.MeSubscriptionsState) string {
@@ -58,19 +67,14 @@ func RenderMeSubscriptions(state application.MeSubscriptionsState) string {
 	}
 
 	var b strings.Builder
-	b.WriteString(`<button id="me-weather" class="me-weather-cloud" type="button" aria-label="Weather">`)
-	b.WriteString(meWeatherCloudSVG)
-	b.WriteString(`</button>`)
-	b.WriteString(`<button id="me-manage" class="me-manage-gear" type="button" aria-label="Manage subscriptions">`)
-	b.WriteString(meManageGearSVG)
-	b.WriteString(`</button>`)
+	b.WriteString(renderManageGearButton("Manage subscriptions"))
 	b.WriteString(`<div id="me-sparkline-chart">`)
 	b.WriteString(renderSparklineSlot(state))
 	b.WriteString(`</div>`)
 	b.WriteString(`<div id="me-pair-modal-slot">`)
 	b.WriteString(RenderPairModal(state))
 	b.WriteString(`</div>`)
-	return b.String()
+	return RenderSectionShell(SectionRates, b.String())
 }
 
 // RenderSparklineSlot returns the HTML content for the #me-sparkline-chart div.

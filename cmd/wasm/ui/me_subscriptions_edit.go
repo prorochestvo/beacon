@@ -26,10 +26,13 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/dto"
 )
 
-// RenderMeSubscriptionsEdit returns the full HTML for the subscription editor
-// screen. Content is dispatched by state.ActiveView: list view shows the
-// paginated subscription list with search; form view shows the create form.
-// AuthFailure and load-error states short-circuit both.
+// RenderMeSubscriptionsEdit returns the full HTML for the rates settings screen.
+// Content is dispatched by state.ActiveView: list view shows the paginated
+// subscription list with search; form view shows the create form. AuthFailure and
+// load-error states short-circuit both.
+//
+// The screen is wrapped in RenderSectionShell so the vertical section rail sits to
+// its left: it is the manage-mode cell of the rates section (see section_rail.go).
 //
 // Every user-influenced field is escaped through dom.Escape before interpolation.
 func RenderMeSubscriptionsEdit(state application.MeSubscriptionsEditState) string {
@@ -40,27 +43,24 @@ func RenderMeSubscriptionsEdit(state application.MeSubscriptionsEditState) strin
 	var b strings.Builder
 	b.WriteString(renderEditTopbar(state))
 
-	if state.Loading {
+	switch {
+	case state.Loading:
 		b.WriteString(`<p class="me-edit-loading">Loading…</p>`)
-		return b.String()
-	}
-	if state.LoadError != nil {
+	case state.LoadError != nil:
 		b.WriteString(`<p class="error-msg">`)
 		b.WriteString(dom.Escape(state.LoadError.Error()))
 		b.WriteString(`</p>`)
-		return b.String()
-	}
-
 	// List view requires explicit opt-in via EditViewList; the zero-value
 	// falls through to the form view, keeping pre-split tests working with
 	// their zero-valued state literals. Production state is always built with
 	// EditViewList by NewMeSubscriptionsEditPage, so users land on the list.
-	if state.ActiveView == application.EditViewList {
+	case state.ActiveView == application.EditViewList:
 		b.WriteString(renderEditListView(state))
-	} else {
+	default:
 		b.WriteString(renderEditFormView(state))
 	}
-	return b.String()
+
+	return RenderSectionShell(SectionRates, b.String())
 }
 
 // renderEditTopbar emits the screen header. The Back button's destination
