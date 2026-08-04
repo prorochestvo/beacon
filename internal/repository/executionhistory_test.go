@@ -2,10 +2,12 @@ package repository
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/seilbekskindirov/beacon/internal/domain"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
@@ -402,4 +404,164 @@ func BenchmarkExecutionHistoryRepository_ObtainLastN(b *testing.B) {
 	for b.Loop() {
 		_, _ = r.ObtainLastNExecutionHistoryBySourceName(ctx, src, 10, true)
 	}
+}
+
+func TestExecutionHistoryRepository_ObtainExecutionHistoryAfter(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+
+	seed := func(t *testing.T, rows ...domain.ExecutionHistory) *ExecutionHistoryRepository {
+		t.Helper()
+		names := make([]string, 0, len(rows))
+		for _, r := range rows {
+			names = append(names, r.SourceName)
+		}
+		repo, err := NewExecutionHistoryRepository(stubSQLiteDB(t, names...))
+		require.NoError(t, err)
+		for i := range rows {
+			rec := rows[i]
+			require.NoError(t, repo.RetainExecutionHistory(t.Context(), &rec))
+		}
+		return repo
+	}
+
+	t.Run("a zero cursor walks from the beginning, oldest first", func(t *testing.T) {
+		t.Parallel()
+		repo := seed(t,
+			domain.ExecutionHistory{ID: "eh-b", SourceName: "src-walk", Success: true, Timestamp: base.Add(time.Minute)},
+			domain.ExecutionHistory{ID: "eh-a", SourceName: "src-walk", Success: true, Timestamp: base},
+			domain.ExecutionHistory{ID: "eh-c", SourceName: "src-walk", Success: false, Timestamp: base.Add(2 * time.Minute)},
+		)
+
+		got, err := repo.ObtainExecutionHistoryAfter(t.Context(), time.Time{}, "", 10)
+		require.NoError(t, err)
+		require.Len(t, got, 3)
+		assert.Equal(t, []string{"eh-a", "eh-b", "eh-c"}, []string{got[0].ID, got[1].ID, got[2].ID})
+	})
+
+	t.Run("the cursor advances through rows sharing one tick", func(t *testing.T) {
+		t.Parallel()
+		// The whole reason the cursor is a pair: a tick writes one row per source at the
+		// same second, and a timestamp-only cursor would loop on it or skip the rest.
+		repo := seed(t,
+			domain.ExecutionHistory{ID: "eh-a", SourceName: "src-tick", Success: true, Timestamp: base},
+			domain.ExecutionHistory{ID: "eh-b", SourceName: "src-tick", Success: true, Timestamp: base},
+			domain.ExecutionHistory{ID: "eh-c", SourceName: "src-tick", Success: true, Timestamp: base},
+		)
+
+		first, err := repo.ObtainExecutionHistoryAfter(t.Context(), time.Time{}, "", 2)
+		require.NoError(t, err)
+		require.Len(t, first, 2)
+
+		last := first[len(first)-1]
+		second, err := repo.ObtainExecutionHistoryAfter(t.Context(), last.Timestamp, last.ID, 2)
+		require.NoError(t, err)
+		require.Len(t, second, 1)
+		assert.Equal(t, "eh-c", second[0].ID)
+
+		final := second[len(second)-1]
+		empty, err := repo.ObtainExecutionHistoryAfter(t.Context(), final.Timestamp, final.ID, 2)
+		require.NoError(t, err)
+		assert.Empty(t, empty, "the walk terminates rather than repeating the tick")
+	})
+
+	t.Run("the timestamp survives the Unix-seconds round trip", func(t *testing.T) {
+		t.Parallel()
+		repo := seed(t, domain.ExecutionHistory{
+			ID: "eh-a", SourceName: "src-ts", Success: true, Timestamp: base,
+		})
+
+		got, err := repo.ObtainExecutionHistoryAfter(t.Context(), time.Time{}, "", 10)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.True(t, got[0].Timestamp.Equal(base))
+	})
+}
+
+func TestExecutionHistoryRepository_ObtainLastNExecutionHistoryBySourceNameBefore(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+
+	seed := func(t *testing.T, n int) *ExecutionHistoryRepository {
+		t.Helper()
+		repo, err := NewExecutionHistoryRepository(stubSQLiteDB(t, "src-cursor"))
+		require.NoError(t, err)
+		for i := 0; i < n; i++ {
+			rec := domain.ExecutionHistory{
+				ID:         fmt.Sprintf("eh-%03d", i),
+				SourceName: "src-cursor",
+				Success:    i%3 != 0,
+				Timestamp:  base.Add(time.Duration(i) * time.Minute),
+			}
+			require.NoError(t, repo.RetainExecutionHistory(t.Context(), &rec))
+		}
+		return repo
+	}
+
+	t.Run("a zero cursor matches the uncursored query", func(t *testing.T) {
+		t.Parallel()
+		repo := seed(t, 6)
+
+		plain, err := repo.ObtainLastNExecutionHistoryBySourceName(t.Context(), "src-cursor", 4, false)
+		require.NoError(t, err)
+		cursored, err := repo.ObtainLastNExecutionHistoryBySourceNameBefore(t.Context(), "src-cursor", time.Time{}, "", 4, false)
+		require.NoError(t, err)
+		assert.Equal(t, plain, cursored)
+	})
+
+	t.Run("the two pages partition the history exactly once", func(t *testing.T) {
+		t.Parallel()
+		repo := seed(t, 6)
+
+		first, err := repo.ObtainLastNExecutionHistoryBySourceName(t.Context(), "src-cursor", 3, false)
+		require.NoError(t, err)
+		require.Len(t, first, 3)
+
+		last := first[len(first)-1]
+		next, err := repo.ObtainLastNExecutionHistoryBySourceNameBefore(t.Context(), "src-cursor", last.Timestamp, last.ID, 3, false)
+		require.NoError(t, err)
+		require.Len(t, next, 3)
+
+		seen := map[string]int{}
+		for _, v := range append(append([]domain.ExecutionHistory{}, first...), next...) {
+			seen[v.ID]++
+		}
+		assert.Len(t, seen, 6)
+		for id, n := range seen {
+			assert.Equal(t, 1, n, "row %s appeared on both pages", id)
+		}
+	})
+
+	t.Run("successOnly filters both the page and its continuation", func(t *testing.T) {
+		t.Parallel()
+		repo := seed(t, 9)
+
+		first, err := repo.ObtainLastNExecutionHistoryBySourceName(t.Context(), "src-cursor", 2, true)
+		require.NoError(t, err)
+		require.Len(t, first, 2)
+		for _, v := range first {
+			assert.True(t, v.Success)
+		}
+
+		last := first[len(first)-1]
+		next, err := repo.ObtainLastNExecutionHistoryBySourceNameBefore(t.Context(), "src-cursor", last.Timestamp, last.ID, 10, true)
+		require.NoError(t, err)
+		require.NotEmpty(t, next)
+		for _, v := range next {
+			assert.True(t, v.Success, "the continuation must walk the same filtered sequence")
+			assert.Less(t, v.Timestamp.Unix(), last.Timestamp.Unix())
+		}
+	})
+
+	t.Run("a non-positive limit never reaches the database", func(t *testing.T) {
+		t.Parallel()
+		repo := seed(t, 3)
+
+		got, err := repo.ObtainLastNExecutionHistoryBySourceNameBefore(t.Context(), "src-cursor", time.Time{}, "", 0, false)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Empty(t, got)
+	})
 }

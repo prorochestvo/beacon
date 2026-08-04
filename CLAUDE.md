@@ -119,10 +119,20 @@ what lets the ordinary `RateValueRepository` and `RateSourceRepository` read the
 verbatim, with no second copy of the SQL. Rows are never deleted from the mirror — a
 source dropped from the hot tier still has archived values that need a title.
 
+`execution_history` is archived the same way and for the same reason: its failed-run view
+counts every failure since the beginning, which is exactly the number a pruned hot tier
+stops being able to produce. Its archive table mirrors the hot columns including the
+Unix-seconds `INT` timestamp — the two tiers must agree on the storage format or the
+reconciliation cursor drifts.
+
 `collection.ArchiveAgent` (run at the end of each collector tick) keeps the archive a
 **superset** of the hot database by copying forward from the archive's own watermark —
 a `(timestamp, id)` keyset cursor, because one tick writes many rows sharing a
-second-precision timestamp. Sources are mirrored **before** values on every pass, so a
+second-precision timestamp. Both tables go through the same generic `reconcile` loop
+(watermark → keyset walk → idempotent write → advance); that protocol is what pruning
+trusts, so it lives in one place rather than once per table. A failure in one table stops
+the pass, leaving the other for the next tick — neither table's completeness depends on
+the other's. Sources are mirrored **before** values on every pass, so a
 value never precedes the source row the history grouping joins against. Reconciliation
 rather than dual-write is deliberate: SQLite gives **no atomicity across attached
 databases under `journal_mode=WAL`**, so any single logical write spanning both tiers
@@ -152,14 +162,26 @@ hot tier, so reconciliation lag can never affect the right edge of a chart. Page
 does lag by however long the archive pass takes — seconds, since collection and
 reconciliation run in that order in one collector process.
 
-**Row-count reads need the same treatment, and the arithmetic is not obvious.** Production
-writes ~200 `rate_values` a day *in total across 56 sources* — about **4.7 per source per
-day**. The REST `limit` caps at 1000, which is therefore roughly **213 days** for one
-source, past the horizon. `ObtainLastNRateValuesBySourceName` consequently asks the hot
-tier first and, only when it comes back short, tops up via
-`ObtainLastNRateValuesBySourceNameBefore` with the last hot row as a `(timestamp, id)`
-cursor — disjoint by construction, no archive query at all in the ordinary case. Do not
-reason about these limits from the aggregate write rate; divide by the source count first.
+`execution_history` routes by the same principle, but there is no time window to split
+on — callers ask for a row count, the latest row per source, or every failure ever:
+
+| Query | Tier |
+|---|---|
+| `ObtainLatestExecutionHistoryBySources` | hot — the operator's live "did the last tick work" column, must not lag |
+| `ObtainLastNExecutionHistoryBySourceName` | hot, topped up from the archive when hot returns fewer than `limit` |
+| `ObtainExecutionHistoryErrorCount` | archive — unbounded by definition |
+| `ObtainLastNExecutionHistoryErrors` | archive — the count that sizes its pagination comes from there too |
+
+**Row-count reads need the same treatment as windowed ones, and the arithmetic is not
+obvious.** Production writes ~200 `rate_values` and ~200 execution records a day *in total
+across 56 sources* — about **4.7** and **4.4 per source per day**. The REST `limit` caps at
+1000, which is therefore roughly **213** and **227 days** for one source, past the horizon.
+Both `ObtainLastN*BySourceName` methods consequently ask the hot tier first and, only when
+it comes back short, top up via their `*Before` variant with the last hot row as a
+`(timestamp, id)` cursor — disjoint by construction, no archive query at all in the
+ordinary case. The execution-history variant carries `successOnly` into the continuation,
+since resuming under a different filter would skip rows. Do not reason about these limits
+from the aggregate write rate; divide by the source count first.
 
 `cmd/migrator` is the **only** thing that mutates schema. It embeds
 `migrations.MigrationsFS` at build time, opens the DB via `BEACON_SQLITEDB_DSN`, and

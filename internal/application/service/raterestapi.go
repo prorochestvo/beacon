@@ -16,7 +16,7 @@ import (
 
 // NewRateRestAPI returns a RateRestApi wired to the given repository implementations.
 func NewRateRestAPI(
-	rExecutionHistory executionHistoryRepository,
+	rExecutionHistory ExecutionHistoryLoader,
 	rRateSource rateSourceRepository,
 	rRateValue RateValuesLoader,
 	rRateUserSubscription rateUserSubscriptionRepository,
@@ -36,14 +36,17 @@ func NewRateRestAPI(
 
 // RateRestApi groups all v1 HTTP handlers and their repository dependencies.
 type RateRestApi struct {
-	executionHistoryRepository     executionHistoryRepository
+	executionHistoryRepository     ExecutionHistoryLoader
 	rateSourceRepository           rateSourceRepository
 	rateValueRepository            RateValuesLoader
 	rateUserSubscriptionRepository rateUserSubscriptionRepository
 	rateUserEventRepository        rateUserEventRepository
 }
 
-type executionHistoryRepository interface {
+// ExecutionHistoryLoader reads collector outcomes. Exported because the composition root
+// chooses between the hot repository and the tiered reader that spans the hot and archive
+// databases, and has to name the type it is choosing.
+type ExecutionHistoryLoader interface {
 	ObtainLastNExecutionHistoryBySourceName(context.Context, string, int64, bool) ([]domain.ExecutionHistory, error)
 	ObtainLatestExecutionHistoryBySources(context.Context, []string) (map[string]domain.ExecutionHistory, error)
 	ObtainExecutionHistoryErrorCount(context.Context) (int64, error)

@@ -68,10 +68,94 @@ func (r *ExecutionHistoryRepository) ObtainLastNExecutionHistoryBySourceName(ctx
 		whereClause += " AND " + executionHistorySuccessFieldName + " = 1"
 	}
 
-	rows, err := executionHistoryQueryContext(tx, ctx, "WHERE "+whereClause+" ORDER BY "+executionHistoryTimestampFieldName+" DESC LIMIT ?;", sourceName, limit)
+	rows, err := executionHistoryQueryContext(tx, ctx, "WHERE "+whereClause+" ORDER BY "+executionHistoryTimestampFieldName+" DESC, "+executionHistoryIdFieldName+" DESC LIMIT ?;", sourceName, limit)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
+	}
+
+	return rows, nil
+}
+
+// ObtainLastNExecutionHistoryBySourceNameBefore is
+// ObtainLastNExecutionHistoryBySourceName resumed from a cursor: up to limit rows for
+// the source, newest first, strictly older than the (before, beforeID) pair. A zero
+// before means no cursor, which makes it identical to the uncursored call.
+//
+// It exists so a tiered read can top up a short hot-tier answer from the archive without
+// re-reading or duplicating what the hot tier already returned. successOnly is carried
+// through because the cursor has to walk the same filtered sequence the first page did —
+// resuming an errors-included page inside a successes-only one would skip rows.
+func (r *ExecutionHistoryRepository) ObtainLastNExecutionHistoryBySourceNameBefore(
+	ctx context.Context, sourceName string, before time.Time, beforeID string, limit int64, successOnly bool,
+) ([]domain.ExecutionHistory, error) {
+	if limit <= 0 {
+		return []domain.ExecutionHistory{}, nil
+	}
+
+	tx, err := r.db.ReadOnlyTransaction(ctx)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+	defer printRollbackError(tx)
+
+	condition := "WHERE " + executionHistorySourceNameFieldName + " = ?"
+	args := []any{sourceName}
+	if successOnly {
+		condition += " AND " + executionHistorySuccessFieldName + " = 1"
+	}
+	if !before.IsZero() {
+		condition += " AND (" + executionHistoryTimestampFieldName + ", " + executionHistoryIdFieldName + ") < (?, ?)"
+		args = append(args, before.UTC().Unix(), beforeID)
+	}
+	condition += " ORDER BY " + executionHistoryTimestampFieldName + " DESC, " + executionHistoryIdFieldName + " DESC LIMIT ?;"
+	args = append(args, limit)
+
+	rows, err := executionHistoryQueryContext(tx, ctx, condition, args...)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+
+	return rows, nil
+}
+
+// ObtainExecutionHistoryAfter returns up to limit records ordered oldest-first, starting
+// strictly after the (timestamp, id) cursor. It is the read half of the archive
+// reconciliation pass: the archive reports how far it has copied, and this walks the hot
+// tier forward from there.
+//
+// The cursor is a pair rather than a timestamp because one collector tick writes a row
+// per source at the same second. Resuming on the timestamp alone would either re-read
+// that tick forever or skip whatever of it followed the cursor row.
+//
+// Pass a zero cursor to start from the beginning. Always returns a non-nil slice on
+// success.
+func (r *ExecutionHistoryRepository) ObtainExecutionHistoryAfter(
+	ctx context.Context, after time.Time, afterID string, limit int64,
+) ([]domain.ExecutionHistory, error) {
+	tx, err := r.db.ReadOnlyTransaction(ctx)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+	defer printRollbackError(tx)
+
+	order := " ORDER BY " + executionHistoryTimestampFieldName + " ASC, " + executionHistoryIdFieldName + " ASC LIMIT ?;"
+
+	var (
+		condition string
+		args      []any
+	)
+	if after.IsZero() && afterID == "" {
+		condition = order
+		args = []any{limit}
+	} else {
+		condition = "WHERE (" + executionHistoryTimestampFieldName + ", " + executionHistoryIdFieldName + ") > (?, ?)" + order
+		args = []any{after.UTC().Unix(), afterID, limit}
+	}
+
+	rows, err := executionHistoryQueryContext(tx, ctx, condition, args...)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	return rows, nil
@@ -169,9 +253,11 @@ func (r *ExecutionHistoryRepository) ObtainLastNExecutionHistoryErrors(ctx conte
 	}
 	defer printRollbackError(tx)
 
+	// The id breaks ties on timestamp. One collector tick fails several sources at the
+	// same second, so without it two adjacent pages can repeat a row and skip another.
 	query := executionHistorySqlSelect +
 		"\nWHERE " + executionHistorySuccessFieldName + " = 0" +
-		" ORDER BY " + executionHistoryTimestampFieldName + " DESC" +
+		" ORDER BY " + executionHistoryTimestampFieldName + " DESC, " + executionHistoryIdFieldName + " DESC" +
 		" LIMIT ? OFFSET ?;"
 
 	dbRows, err := tx.QueryContext(ctx, query, limit, offset)

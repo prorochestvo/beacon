@@ -11,13 +11,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var _ executionHistoryRepository = &repository.ExecutionHistoryRepository{}
+var _ ExecutionHistoryLoader = &repository.ExecutionHistoryRepository{}
 var _ rateSourceRepository = &repository.RateSourceRepository{}
 var _ RateValuesLoader = &repository.RateValueRepository{}
 var _ rateUserSubscriptionRepository = &repository.RateUserSubscriptionRepository{}
 var _ rateUserEventRepository = &repository.RateUserEventRepository{}
 
-var _ executionHistoryRepository = (*mockExecutionHistoryRepository)(nil)
+var _ ExecutionHistoryLoader = (*mockExecutionHistoryRepository)(nil)
 var _ rateSourceRepository = (*mockRateSourceRepository)(nil)
 var _ RateValuesLoader = (*mockRateValueRepository)(nil)
 var _ rateUserSubscriptionRepository = (*mockRateUserSubscriptionRepository)(nil)
@@ -366,7 +366,7 @@ func TestRateRestApi_ObtainSubscriptionSummaryBySource(t *testing.T) {
 
 func newRateRestAPI(
 	t *testing.T,
-	eh executionHistoryRepository,
+	eh ExecutionHistoryLoader,
 	rs rateSourceRepository,
 	rv RateValuesLoader,
 	rus rateUserSubscriptionRepository,

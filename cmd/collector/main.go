@@ -148,8 +148,13 @@ func main() {
 		if archiveErr != nil {
 			log.Fatalf("repositories: archive sources: %s", archiveErr.Error())
 		}
+		archiveHistoryRepo, archiveErr := repository.NewExecutionHistoryArchiveRepository(archiveDB)
+		if archiveErr != nil {
+			log.Fatalf("repositories: archive execution history: %s", archiveErr.Error())
+		}
 		archiveAgent, archiveErr = collection.NewArchiveAgent(
 			rateValueRepo, archiveRepo, sourceRepo, archiveSourceRepo,
+			historyRepo, archiveHistoryRepo,
 			collection.DefaultArchiveBatchSize,
 			l.WriterAs(internal.LogLevelInfo),
 		)
@@ -213,10 +218,11 @@ func main() {
 	// way. Non-fatal: a failing archive must never take collection down with it —
 	// the gap is simply picked up by the next tick.
 	if archiveAgent != nil {
-		if copied, archErr := archiveAgent.Run(context.Background()); archErr != nil {
+		if report, archErr := archiveAgent.Run(context.Background()); archErr != nil {
 			log.Printf("execution: archive reconcile: %v", archErr)
-		} else if copied > 0 {
-			log.Printf("execution: archived %d rate value(s)", copied)
+		} else if report.Total() > 0 {
+			log.Printf("execution: archived %d rate value(s) and %d execution record(s)",
+				report.RateValues, report.ExecutionHistory)
 		}
 	}
 

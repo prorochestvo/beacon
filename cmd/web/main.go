@@ -190,11 +190,12 @@ func main() {
 	// The archive is opened before any service is built, because the tiered reader it
 	// produces stands in for rateValueRepo wherever a query can reach past the horizon.
 	var (
-		restRateValues service.RateValuesLoader     = rateValueRepo
-		chartValues    appchart.ValuesLoader        = rateValueRepo
-		chartHistory   appchart.HistoryValuesLoader = rateValueRepo
+		restRateValues service.RateValuesLoader       = rateValueRepo
+		restHistory    service.ExecutionHistoryLoader = historyRepo
+		chartValues    appchart.ValuesLoader          = rateValueRepo
+		chartHistory   appchart.HistoryValuesLoader   = rateValueRepo
 	)
-	tieredRepo, archiveCloser, err := openArchiveTier(rateValueRepo, l)
+	archive, archiveCloser, err := openArchiveTier(rateValueRepo, historyRepo, l)
 	if err != nil {
 		log.Fatalf("dependencies: archive: %s", err.Error())
 	}
@@ -204,12 +205,14 @@ func main() {
 				log.Printf("close archive sqlite client: %v", e)
 			}
 		}(archiveCloser)
-		restRateValues, chartValues, chartHistory = tieredRepo, tieredRepo, tieredRepo
+		restRateValues = archive.rateValues
+		chartValues, chartHistory = archive.rateValues, archive.rateValues
+		restHistory = archive.executionHistory
 		log.Println("dependencies: archive tier attached, deep reads routed to the history database")
 	}
 
 	restAPI, err := service.NewRateRestAPI(
-		historyRepo,
+		restHistory,
 		sourceRepo,
 		restRateValues,
 		subscriptionRepo,
@@ -352,10 +355,17 @@ func main() {
 //go:embed static
 var staticFS embed.FS
 
-// openArchiveTier opens the history database and returns a reader that routes chart and
-// history queries across both tiers, together with the archive client's closer.
+// archiveTier groups the tiered readers cmd/web hands to its services when a history
+// database is configured.
+type archiveTier struct {
+	rateValues       *repository.TieredRateValueRepository
+	executionHistory *repository.TieredExecutionHistoryRepository
+}
+
+// openArchiveTier opens the history database and returns readers that route queries
+// across both tiers, together with the archive client's closer.
 //
-// It returns (nil, nil, nil) when BEACON_SQLITEDB_ARCHIVE_DSN is unset — a deployment
+// It returns (zero, nil, nil) when BEACON_SQLITEDB_ARCHIVE_DSN is unset — a deployment
 // that has not adopted the archive keeps reading the hot database directly. Everything
 // after that point is fatal rather than degraded: a DSN that is set but unusable means
 // the operator intends the archive to be there, and silently falling back would serve
@@ -364,40 +374,53 @@ var staticFS embed.FS
 // The archive is opened read-only from this process's point of view — cmd/web never
 // writes it. Reconciliation is the collector's job.
 func openArchiveTier(
-	hot *repository.RateValueRepository, logger *loginjector.Logger,
-) (*repository.TieredRateValueRepository, io.Closer, error) {
+	hotValues *repository.RateValueRepository,
+	hotHistory *repository.ExecutionHistoryRepository,
+	logger *loginjector.Logger,
+) (archiveTier, io.Closer, error) {
+	var tier archiveTier
+
 	if os.Getenv(envDsnSqliteDBArchive) == "" {
-		return nil, nil, nil
+		return tier, nil, nil
 	}
 
 	dsn, err := dsninjector.Unmarshal(envDsnSqliteDBArchive)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", envDsnSqliteDBArchive, err)
+		return tier, nil, fmt.Errorf("%s: %w", envDsnSqliteDBArchive, err)
 	}
 
 	archiveDB, err := sqlitedb.NewSQLiteClient(dsn, logger.WriterAs(internal.LogLevelInfo))
 	if err != nil {
-		return nil, nil, fmt.Errorf("open archive database: %w", err)
+		return tier, nil, fmt.Errorf("open archive database: %w", err)
 	}
 	if err = sqlitedb.RequireMigratedSchema(context.Background(), archiveDB); err != nil {
-		return nil, nil, errors.Join(fmt.Errorf("archive schema check: %w", err), archiveDB.Close())
+		return tier, nil, errors.Join(fmt.Errorf("archive schema check: %w", err), archiveDB.Close())
 	}
 
-	// The archive's rate_values and rate_sources carry the hot schema's columns, so the
-	// ordinary repository reads it without a second copy of the SQL.
-	archiveReader, err := repository.NewRateValueRepository(archiveDB)
+	// The archive's tables carry the hot schema's columns, so the ordinary repositories
+	// read it without a second copy of the SQL.
+	archiveValues, err := repository.NewRateValueRepository(archiveDB)
 	if err != nil {
-		return nil, nil, errors.Join(fmt.Errorf("archive repository: %w", err), archiveDB.Close())
+		return tier, nil, errors.Join(fmt.Errorf("archive rate value repository: %w", err), archiveDB.Close())
+	}
+	archiveHistory, err := repository.NewExecutionHistoryRepository(archiveDB)
+	if err != nil {
+		return tier, nil, errors.Join(fmt.Errorf("archive execution history repository: %w", err), archiveDB.Close())
 	}
 
-	tiered, err := repository.NewTieredRateValueRepository(
-		hot, archiveReader, repository.DefaultHotHorizon, time.Now,
+	tier.rateValues, err = repository.NewTieredRateValueRepository(
+		hotValues, archiveValues, repository.DefaultHotHorizon, time.Now,
 	)
 	if err != nil {
-		return nil, nil, errors.Join(err, archiveDB.Close())
+		return archiveTier{}, nil, errors.Join(err, archiveDB.Close())
 	}
 
-	return tiered, archiveDB, nil
+	tier.executionHistory, err = repository.NewTieredExecutionHistoryRepository(hotHistory, archiveHistory)
+	if err != nil {
+		return archiveTier{}, nil, errors.Join(err, archiveDB.Close())
+	}
+
+	return tier, archiveDB, nil
 }
 
 // openMeteoGeoAdapter adapts *weatherinfra.OpenMeteo to the gateway's
