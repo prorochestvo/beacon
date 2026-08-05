@@ -86,41 +86,39 @@ so cron one-shots running as `beacon` can read it. Then a leaked CI key tops out
 
 ## Outbound proxy
 
-All outbound HTTP/HTTPS traffic from `cmd/collector` (rate-source scrapes, chromedp
-browser connections) and `cmd/doctor` (AI provider calls, chromedp fetcher) is routed
-through the proxy configured by `BEACON_PROXY_URL`. Telegram Bot API traffic is **always
-direct** — the bypass is enforced in code via a hardcoded no-proxy transport in
-`internal/infrastructure/telegrambot/tbotclient.go`, so the bot continues to deliver
-notifications even when everything else is gated behind the proxy.
+**Collection does not use it.** `cmd/collector` reaches every rate source and Open-Meteo
+directly and does not read `BEACON_PROXY_URL`; a value left in `/opt/beacon/.env` is inert.
+Only `cmd/doctor` still honours it, for AI provider calls and its chromedp fetcher.
 
-To enable, add one line to `/opt/beacon/.env`:
+That was decided on measurement (issue #16), and the short version is that the tunnel cost
+more than it bought:
+
+| | direct | via proxy |
+|---|---|---|
+| origin seen by the target | Kazakhstani host in Astana | foreign datacenter, rotating daily |
+| `halykbank.kz` answers | `server: nginx` | `server: ddos-guard` |
+| latency | baseline | 2.9× to 12.6× slower |
+| availability | — | 207 `connection refused` in one outage window |
+
+Volume was never the issue: each host sees four requests a day, and `qazpost` reports
+`x-ratelimit-remaining: 199` against the one we spend.
+
+Telegram Bot API traffic is **always** direct regardless — the bypass is enforced in code
+via a hardcoded no-proxy transport in `internal/infrastructure/telegrambot/tbotclient.go`.
+`cmd/web` and `cmd/notifier` never parsed `BEACON_PROXY_URL` at all.
+
+To point `cmd/doctor` at a proxy, add one line to `/opt/beacon/.env`:
 
 ```
 BEACON_PROXY_URL=http://127.0.0.1:7788
 ```
 
-The same env file is sourced by the systemd unit and by the host-side cron
-wrappers, so the proxy setting applies to all relevant binaries: `cmd/collector`
-and any operator-invoked `cmd/doctor` run that inherits the same shell
-environment. (`cmd/web` and `cmd/notifier` do not parse `BEACON_PROXY_URL` — their only
-outbound target is Telegram, which is always direct.)
-
 Do **not** set `HTTPS_PROXY`, `HTTP_PROXY`, or `NO_PROXY` for proxy routing — they
 are not consulted by any component in this project.
 
-**Failure mode.** If the proxy process is down, every outbound rate-source
-scrape fails immediately with "connection refused" on `127.0.0.1:7788`.
-These errors are persisted to `execution_history` and surface via
-`GET /api/errors/execution`. The collector log emits
-`execution: completed with errors: …` for each affected source. Telegram
-notifications are unaffected because the Telegram bypass is hardcoded. To verify
-the proxy is active from the deploy host:
+To verify a proxy is reachable from the deploy host:
 
     curl -fs -x http://127.0.0.1:7788 https://api.ipify.org
-
-At startup `cmd/collector` and `cmd/doctor` each log one line confirming the proxy
-state (`proxy: BEACON_PROXY_URL=http://127.0.0.1:7788` or `proxy: not configured`); grep
-the log for `proxy:` to confirm.
 
 For interactive `cmd/doctor` invocations, source the env file first so the
 proxy applies:

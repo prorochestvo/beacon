@@ -23,20 +23,44 @@ func TestWireWeather(t *testing.T) {
 		obsRepo, err := repository.NewWeatherObservationRepository(nil)
 		require.NoError(t, err)
 
-		agent, err := wireWeather(cityRepo, obsRepo, "", nil)
+		agent, err := wireWeather(cityRepo, obsRepo, nil)
 		require.NoError(t, err)
 		assert.NotNil(t, agent, "Open-Meteo is hardcoded always-on and must always produce a weather runner")
 	})
 
-	t.Run("invalid proxy URL returns an error", func(t *testing.T) {
+	t.Run("weather collection is direct", func(t *testing.T) {
 		t.Parallel()
+		// This replaces a test that fed wireWeather a malformed proxy URL and asserted it
+		// errored. There is no proxy URL to malform any more: the collector reaches every
+		// upstream directly, which also makes it agree with cmd/web, whose Open-Meteo
+		// health probe has always been direct.
 		cityRepo, err := repository.NewWeatherUserCityRepository(nil)
 		require.NoError(t, err)
 		obsRepo, err := repository.NewWeatherObservationRepository(nil)
 		require.NoError(t, err)
 
-		agent, err := wireWeather(cityRepo, obsRepo, "://bad-url", nil)
-		require.Error(t, err)
-		assert.Nil(t, agent)
+		agent, err := wireWeather(cityRepo, obsRepo, nil)
+		require.NoError(t, err)
+		assert.NotNil(t, agent)
 	})
+
+}
+
+// TestCollectorIgnoresProxyEnv pins that a proxy setting left behind in the operator's env
+// file cannot quietly resume routing collection through a tunnel that was removed on the
+// evidence in issue #16.
+//
+// Not parallel, and deliberately its own test rather than a subtest: t.Setenv mutates
+// process state, which the testing package refuses to allow under a parallel parent.
+func TestCollectorIgnoresProxyEnv(t *testing.T) {
+	t.Setenv("BEACON_PROXY_URL", "http://127.0.0.1:9")
+
+	cityRepo, err := repository.NewWeatherUserCityRepository(nil)
+	require.NoError(t, err)
+	obsRepo, err := repository.NewWeatherObservationRepository(nil)
+	require.NoError(t, err)
+
+	agent, err := wireWeather(cityRepo, obsRepo, nil)
+	require.NoError(t, err, "a proxy setting left in the environment must be inert")
+	assert.NotNil(t, agent)
 }
