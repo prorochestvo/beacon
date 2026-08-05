@@ -1,11 +1,15 @@
 package weather
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	_ "time/tzdata" // embed IANA tzdata so LoadLocation works without system tzdata
@@ -283,7 +287,7 @@ func TestOpenMeteo_ProxyRouting(t *testing.T) {
 		}))
 		t.Cleanup(proxy.Close)
 
-		om, err := NewOpenMeteo(proxy.URL)
+		om, err := NewOpenMeteo(proxy.URL, io.Discard)
 		require.NoError(t, err)
 
 		// The upstream server is irrelevant; the proxy intercepts and returns 502.
@@ -295,7 +299,7 @@ func TestOpenMeteo_ProxyRouting(t *testing.T) {
 
 	t.Run("invalid proxyURL returns constructor error", func(t *testing.T) {
 		t.Parallel()
-		_, err := NewOpenMeteo("://bad-url")
+		_, err := NewOpenMeteo("://bad-url", io.Discard)
 		require.Error(t, err)
 	})
 }
@@ -319,6 +323,14 @@ func TestLocationKey(t *testing.T) {
 // newTestOpenMeteo returns an OpenMeteo configured to route all requests to
 // baseURL (which typically points at an httptest server). The transport rewrites
 // all host:port parts of the outgoing URL to baseURL so the test server receives them.
+// newTestOpenMeteoWithLogger is newTestOpenMeteo with the retry log captured.
+func newTestOpenMeteoWithLogger(t *testing.T, geocodeURL, forecastURL string, logger io.Writer) *OpenMeteo {
+	t.Helper()
+	om := newTestOpenMeteo(t, geocodeURL, forecastURL)
+	om.logger = logger
+	return om
+}
+
 func newTestOpenMeteo(t *testing.T, geocodeBase, forecastBase string) *OpenMeteo {
 	t.Helper()
 
@@ -331,7 +343,7 @@ func newTestOpenMeteo(t *testing.T, geocodeBase, forecastBase string) *OpenMeteo
 		geoHost:      geoURL.Host,
 		forecastHost: foreURL.Host,
 	}
-	return NewOpenMeteoWithClient(&http.Client{Transport: transport})
+	return NewOpenMeteoWithClient(&http.Client{Transport: transport}, io.Discard)
 }
 
 // redirectTransport rewrites the Host of each request so all calls go to the
@@ -349,4 +361,221 @@ func (rt *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error
 		cloned.URL.Scheme = "http"
 	}
 	return http.DefaultTransport.RoundTrip(cloned)
+}
+
+// TestOpenMeteo_Retry covers the transient-failure handling added for issue #15.
+//
+// Open-Meteo answers 5xx intermittently — 167 of them across one production log — and
+// without a retry each one dropped that location for the whole collection run. Attempts
+// are counted by how many times the test server was hit, so the assertions describe
+// observable behaviour rather than the client's internals.
+func TestOpenMeteo_Retry(t *testing.T) {
+	t.Parallel()
+
+	fixture := loadFixture(t, "forecast_almaty.json")
+
+	// countingServer answers with the given statuses in order, repeating the last one
+	// once the list runs out, and reports how many requests it received.
+	countingServer := func(t *testing.T, statuses ...int) (*httptest.Server, *atomic.Int64) {
+		t.Helper()
+		var hits atomic.Int64
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			n := int(hits.Add(1))
+			status := statuses[len(statuses)-1]
+			if n <= len(statuses) {
+				status = statuses[n-1]
+			}
+			if status == http.StatusOK {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(fixture)
+				return
+			}
+			http.Error(w, "upstream says no", status)
+		}))
+		t.Cleanup(srv.Close)
+		return srv, &hits
+	}
+
+	t.Run("a 503 followed by success is absorbed", func(t *testing.T) {
+		t.Parallel()
+		srv, hits := countingServer(t, http.StatusServiceUnavailable, http.StatusOK)
+		var log strings.Builder
+
+		om := newTestOpenMeteoWithLogger(t, srv.URL, srv.URL, &log)
+		obs, err := om.Forecast(t.Context(), 43.25249, 76.9115)
+		require.NoError(t, err, "the caller must never see a transient 503")
+		require.NotNil(t, obs)
+		assert.Equal(t, int64(2), hits.Load())
+
+		// The run recovered, but the upstream was flaky and the log has to say so —
+		// otherwise a degrading provider looks exactly like a healthy one.
+		assert.Contains(t, log.String(), "attempt 1 of 3 failed")
+		assert.Contains(t, log.String(), "recovered on attempt 2")
+	})
+
+	t.Run("a persistent 503 fails after exactly the attempt budget", func(t *testing.T) {
+		t.Parallel()
+		srv, hits := countingServer(t, http.StatusServiceUnavailable)
+		var log strings.Builder
+
+		om := newTestOpenMeteoWithLogger(t, srv.URL, srv.URL, &log)
+		_, err := om.Forecast(t.Context(), 43.25249, 76.9115)
+		require.Error(t, err)
+		assert.Equal(t, int64(3), hits.Load(), "three attempts, not four and not one")
+		assert.Contains(t, err.Error(), "503")
+		assert.Contains(t, err.Error(), "giving up after 3 attempt(s)",
+			"an outright failure must say how hard it tried, or it reads like one unlucky request")
+		assert.NotContains(t, log.String(), "recovered")
+	})
+
+	t.Run("every 5xx is treated as transient", func(t *testing.T) {
+		t.Parallel()
+		for _, status := range []int{
+			http.StatusInternalServerError,
+			http.StatusBadGateway,
+			http.StatusServiceUnavailable,
+			http.StatusGatewayTimeout,
+		} {
+			srv, hits := countingServer(t, status, http.StatusOK)
+			om := newTestOpenMeteoWithLogger(t, srv.URL, srv.URL, io.Discard)
+			_, err := om.Forecast(t.Context(), 43.25249, 76.9115)
+			require.NoError(t, err, "status %d", status)
+			assert.Equal(t, int64(2), hits.Load(), "status %d must be retried", status)
+		}
+	})
+
+	t.Run("4xx is answered once and never retried", func(t *testing.T) {
+		t.Parallel()
+		for _, status := range []int{http.StatusBadRequest, http.StatusNotFound} {
+			srv, hits := countingServer(t, status)
+			om := newTestOpenMeteoWithLogger(t, srv.URL, srv.URL, io.Discard)
+			_, err := om.Forecast(t.Context(), 43.25249, 76.9115)
+			require.Error(t, err, "status %d", status)
+			assert.Equal(t, int64(1), hits.Load(),
+				"status %d describes a request that will not become valid by being re-sent", status)
+			assert.Contains(t, err.Error(), "giving up after 1 attempt(s)")
+		}
+	})
+
+	t.Run("429 is not retried", func(t *testing.T) {
+		t.Parallel()
+		srv, hits := countingServer(t, http.StatusTooManyRequests)
+		om := newTestOpenMeteoWithLogger(t, srv.URL, srv.URL, io.Discard)
+
+		// Open-Meteo is keyless and limits by IP. Re-sending immediately asks for the
+		// same refusal and pushes the caller further into the limit.
+		_, err := om.Forecast(t.Context(), 43.25249, 76.9115)
+		require.Error(t, err)
+		assert.Equal(t, int64(1), hits.Load())
+	})
+
+	t.Run("a connection-level failure is retried", func(t *testing.T) {
+		t.Parallel()
+		// A server that closes the connection without answering is indistinguishable
+		// from a 5xx from the caller's side, and just as transient.
+		var hits atomic.Int64
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if hits.Add(1) == 1 {
+				hijacker, ok := w.(http.Hijacker)
+				require.True(t, ok)
+				conn, _, hijackErr := hijacker.Hijack()
+				require.NoError(t, hijackErr)
+				_ = conn.Close()
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(fixture)
+		}))
+		t.Cleanup(srv.Close)
+
+		om := newTestOpenMeteoWithLogger(t, srv.URL, srv.URL, io.Discard)
+		obs, err := om.Forecast(t.Context(), 43.25249, 76.9115)
+		require.NoError(t, err)
+		require.NotNil(t, obs)
+		assert.Equal(t, int64(2), hits.Load())
+	})
+
+	t.Run("a clean first attempt logs nothing", func(t *testing.T) {
+		t.Parallel()
+		srv, hits := countingServer(t, http.StatusOK)
+		var log strings.Builder
+
+		om := newTestOpenMeteoWithLogger(t, srv.URL, srv.URL, &log)
+		_, err := om.Forecast(t.Context(), 43.25249, 76.9115)
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), hits.Load())
+		assert.Empty(t, log.String(), "the healthy path must stay silent or the log becomes noise")
+	})
+
+	t.Run("a cancelled context stops instead of sleeping out the backoff", func(t *testing.T) {
+		t.Parallel()
+		srv, hits := countingServer(t, http.StatusServiceUnavailable)
+		om := newTestOpenMeteoWithLogger(t, srv.URL, srv.URL, io.Discard)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		// Cancel while the client is between attempts. The backoff must observe it
+		// rather than run its timer out, or a tick cut short by SIGTERM would hang.
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			cancel()
+		}()
+
+		start := time.Now()
+		_, err := om.Forecast(ctx, 43.25249, 76.9115)
+		elapsed := time.Since(start)
+
+		require.Error(t, err)
+		assert.Less(t, elapsed, openMeteoRetryBackoff*4,
+			"cancellation must cut the wait short, not merely be noticed after it")
+		assert.LessOrEqual(t, hits.Load(), int64(openMeteoMaxAttempts))
+	})
+
+	t.Run("geocode gets the same treatment as forecast", func(t *testing.T) {
+		t.Parallel()
+		// Both paths share one get(), so this pins that the retry sits at the seam
+		// rather than being bolted onto the forecast call.
+		var hits atomic.Int64
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if hits.Add(1) == 1 {
+				http.Error(w, "upstream says no", http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(loadFixture(t, "geocode_almaty.json"))
+		}))
+		t.Cleanup(srv.Close)
+
+		om := newTestOpenMeteoWithLogger(t, srv.URL, srv.URL, io.Discard)
+		results, err := om.Geocode(t.Context(), "Almaty", 3)
+		require.NoError(t, err)
+		assert.NotEmpty(t, results)
+		assert.Equal(t, int64(2), hits.Load())
+	})
+}
+
+func TestRetryBackoff(t *testing.T) {
+	t.Parallel()
+
+	t.Run("grows with each attempt and stays inside the jitter band", func(t *testing.T) {
+		t.Parallel()
+		for attempt := 1; attempt <= 3; attempt++ {
+			base := openMeteoRetryBackoff << (attempt - 1)
+			lo := time.Duration(float64(base) * (1 - openMeteoRetryJitter))
+			hi := time.Duration(float64(base) * (1 + openMeteoRetryJitter))
+			for i := 0; i < 50; i++ {
+				got := retryBackoff(attempt)
+				assert.GreaterOrEqual(t, got, lo, "attempt %d", attempt)
+				assert.LessOrEqual(t, got, hi, "attempt %d", attempt)
+			}
+		}
+	})
+
+	t.Run("is not constant, so concurrent callers do not re-send in lockstep", func(t *testing.T) {
+		t.Parallel()
+		seen := map[time.Duration]struct{}{}
+		for i := 0; i < 50; i++ {
+			seen[retryBackoff(1)] = struct{}{}
+		}
+		assert.Greater(t, len(seen), 1, "jitter must actually vary the wait")
+	})
 }

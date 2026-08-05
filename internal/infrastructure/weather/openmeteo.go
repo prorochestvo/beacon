@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"time"
@@ -27,6 +28,23 @@ const (
 	// openMeteoMaxResponseBytes caps the response body read to protect against
 	// runaway servers returning multi-megabyte payloads.
 	openMeteoMaxResponseBytes = 1 << 20 // 1 MiB
+
+	// openMeteoMaxAttempts is how many times one request may be sent, first try
+	// included. Open-Meteo returns 5xx intermittently — 167 of them across one
+	// production log — and a single re-send absorbs most of that. Three bounds the
+	// worst case at roughly 31s against an hourly collection tick, and a fault that
+	// survives three attempts is not the transient this is for.
+	openMeteoMaxAttempts = 3
+
+	// openMeteoRetryBackoff is the wait before the second attempt; it doubles for
+	// each attempt after that. Short on purpose: the failure being absorbed is an
+	// upstream hiccup answered in milliseconds, not a rate limit that needs to
+	// decay, and the whole collection run waits on this.
+	openMeteoRetryBackoff = 250 * time.Millisecond
+
+	// openMeteoRetryJitter is the fraction of each backoff that is randomised, so
+	// several locations failing on the same tick do not re-send in lockstep.
+	openMeteoRetryJitter = 0.2
 )
 
 // GeoResult holds the fields returned by Open-Meteo geocoding for a single match.
@@ -47,6 +65,7 @@ type GeoResult struct {
 // Construct with NewOpenMeteo; do not copy after first use.
 type OpenMeteo struct {
 	httpClient *http.Client
+	logger     io.Writer
 }
 
 // NewOpenMeteo creates an OpenMeteo client whose outbound requests are routed
@@ -56,7 +75,11 @@ type OpenMeteo struct {
 // triplet (HTTPS_PROXY, HTTP_PROXY, NO_PROXY) is intentionally NOT consulted —
 // proxy config is injected explicitly via BEACON_PROXY_URL, matching the rest
 // of the app.
-func NewOpenMeteo(proxyURL string) (*OpenMeteo, error) {
+//
+// logger receives one line per retry and one per recovery, so a run that survived a
+// flaky upstream still says so. A clean first attempt writes nothing. A nil logger
+// discards.
+func NewOpenMeteo(proxyURL string, logger io.Writer) (*OpenMeteo, error) {
 	transport := &http.Transport{}
 
 	if proxyURL != "" {
@@ -68,18 +91,27 @@ func NewOpenMeteo(proxyURL string) (*OpenMeteo, error) {
 		transport.Proxy = http.ProxyURL(parsed)
 	}
 
+	if logger == nil {
+		logger = io.Discard
+	}
+
 	return &OpenMeteo{
 		httpClient: &http.Client{
 			Timeout:   openMeteoTimeout,
 			Transport: transport,
 		},
+		logger: logger,
 	}, nil
 }
 
 // NewOpenMeteoWithClient creates an OpenMeteo client with a caller-supplied HTTP
 // client. Use this in tests to inject a custom transport or an httptest server.
-func NewOpenMeteoWithClient(client *http.Client) *OpenMeteo {
-	return &OpenMeteo{httpClient: client}
+// A nil logger discards.
+func NewOpenMeteoWithClient(client *http.Client, logger io.Writer) *OpenMeteo {
+	if logger == nil {
+		logger = io.Discard
+	}
+	return &OpenMeteo{httpClient: client, logger: logger}
 }
 
 // Geocode queries the Open-Meteo geocoding API for cities matching name and
@@ -345,42 +377,131 @@ func decodeOpenMeteoForecast(body []byte, lat, lng float64) (*domain.WeatherObse
 	return obs, nil
 }
 
+// get fetches rawURL, re-sending the request when the failure looks transient.
+//
+// Open-Meteo intermittently answers 5xx — one production log carried 167 of them across
+// two locations — and without a retry each one dropped that location for the whole run.
+// The request is a GET, so re-sending is safe by construction.
+//
+// Attempts are bounded by openMeteoMaxAttempts and the wait between them respects ctx, so
+// a tick cancelled mid-backoff stops immediately instead of sleeping out its schedule.
 func (o *OpenMeteo) get(ctx context.Context, rawURL string) ([]byte, error) {
+	var lastErr error
+
+	for attempt := 1; attempt <= openMeteoMaxAttempts; attempt++ {
+		body, err := o.attempt(ctx, rawURL)
+		if err == nil {
+			if attempt > 1 {
+				fmt.Fprintf(o.logger, "open-meteo: recovered on attempt %d of %d\n", attempt, openMeteoMaxAttempts)
+			}
+			return body, nil
+		}
+
+		lastErr = err
+		if !isRetryable(err) || attempt == openMeteoMaxAttempts {
+			break
+		}
+
+		fmt.Fprintf(o.logger, "open-meteo: attempt %d of %d failed, retrying: %v\n", attempt, openMeteoMaxAttempts, err)
+
+		if waitErr := sleepWithContext(ctx, retryBackoff(attempt)); waitErr != nil {
+			return nil, errors.Join(waitErr, lastErr, loginjector.NewTraceError())
+		}
+	}
+
+	// The attempt count rides in the message so an outright failure in the log says how
+	// hard it tried, rather than looking identical to a single unlucky request.
+	return nil, errors.Join(
+		fmt.Errorf("open-meteo: giving up after %d attempt(s): %w", attemptsMade(lastErr), lastErr),
+		loginjector.NewTraceError(),
+	)
+}
+
+// attempt performs exactly one request. Its errors are classified by retryableError so
+// get can tell an upstream hiccup from an answer that will not change.
+func (o *OpenMeteo) attempt(ctx context.Context, rawURL string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("open-meteo: create request: %w", err),
-			loginjector.NewTraceError(),
-		)
+		return nil, fmt.Errorf("open-meteo: create request: %w", err)
 	}
 	req.Header.Set("User-Agent", openMeteoUserAgent)
 
 	resp, err := o.httpClient.Do(req)
 	if err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("open-meteo: do request: %w", err),
-			loginjector.NewTraceError(),
-		)
+		// Transport-level failures — timeout, reset, refused — are indistinguishable
+		// from a 5xx from here and just as transient. A cancelled context is not: the
+		// caller asked to stop, and re-sending would ignore that.
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("open-meteo: do request: %w", err)
+		}
+		return nil, retryableError{err: fmt.Errorf("open-meteo: do request: %w", err)}
 	}
 	defer func(c io.Closer) { _ = c.Close() }(resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, errors.Join(
-			// Omit the query string from the error to avoid leaking latitude/longitude
-			// coordinates (forecast) or search terms (geocode) into logs.
-			fmt.Errorf("open-meteo: unexpected status %d for %s%s", resp.StatusCode, req.URL.Host, req.URL.Path),
-			loginjector.NewTraceError(),
-		)
+		// Omit the query string from the error to avoid leaking latitude/longitude
+		// coordinates (forecast) or search terms (geocode) into logs.
+		statusErr := fmt.Errorf("open-meteo: unexpected status %d for %s%s", resp.StatusCode, req.URL.Host, req.URL.Path)
+		if resp.StatusCode >= 500 {
+			return nil, retryableError{err: statusErr}
+		}
+		// Everything else in 4xx describes a request that will not become valid by being
+		// sent again. 429 is included deliberately: Open-Meteo is keyless and limits by
+		// IP, so an immediate re-send asks for the same refusal and pushes the caller
+		// further into the limit.
+		return nil, statusErr
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, openMeteoMaxResponseBytes))
 	if err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("open-meteo: read response body: %w", err),
-			loginjector.NewTraceError(),
-		)
+		// A body that died mid-read is the same class of upstream fault as a 5xx.
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("open-meteo: read response body: %w", err)
+		}
+		return nil, retryableError{err: fmt.Errorf("open-meteo: read response body: %w", err)}
 	}
 	return body, nil
+}
+
+// retryableError marks a failure as an upstream hiccup rather than an answer.
+type retryableError struct{ err error }
+
+func (e retryableError) Error() string { return e.err.Error() }
+func (e retryableError) Unwrap() error { return e.err }
+
+func isRetryable(err error) bool {
+	var r retryableError
+	return errors.As(err, &r)
+}
+
+// attemptsMade reports how many attempts a failure represents: a retryable one exhausted
+// the budget, anything else stopped on the first answer.
+func attemptsMade(err error) int {
+	if isRetryable(err) {
+		return openMeteoMaxAttempts
+	}
+	return 1
+}
+
+// retryBackoff is the wait before attempt+1, doubling each time and randomised within
+// openMeteoRetryJitter so concurrent callers do not re-send in lockstep.
+func retryBackoff(attempt int) time.Duration {
+	base := openMeteoRetryBackoff << (attempt - 1)
+	spread := float64(base) * openMeteoRetryJitter
+	// rand is fine here: this randomises timing, it does not protect anything.
+	return time.Duration(float64(base) - spread + rand.Float64()*2*spread)
+}
+
+// sleepWithContext waits for d, or returns ctx's error the moment it is cancelled.
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func float64Ptr(v float64) *float64 { return &v }

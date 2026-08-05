@@ -270,7 +270,7 @@ func wireWeather(
 	proxyURL string,
 	logger io.Writer,
 ) (runner, error) {
-	openMeteoProvider, err := weatherinfra.NewOpenMeteo(proxyURL)
+	openMeteoProvider, err := weatherinfra.NewOpenMeteo(proxyURL, logger)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("weather: open-meteo provider: %w", err), loginjector.NewTraceError())
 	}
