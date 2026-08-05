@@ -63,6 +63,40 @@ because its metric is a rolling 6 h window whose two transitions routinely share
 `maxProb ≥ threshold`, clears only at `maxProb ≤ max(threshold − 20, 0)`, holds the latch
 in between.
 
+### Collection health alerting
+
+`notification.SourceHealthAgent` (notifier, before the dispatch so a transition detected
+this tick is delivered this tick) tells the admin chat when a rate source stops producing
+data and when it starts again. Before it, a source could fail on every run for weeks in
+silence — the per-run tombstone that stops one dead source burning the whole run also
+stopped anyone hearing about it.
+
+- **Health is measured as silence, not as a failure count.** A source that runs and fails
+  writes failure rows a counter would catch; a source that stops being attempted at all
+  writes nothing, so its counter stays at zero while it is equally dead. `now -
+  lastSuccessAt` catches both. The failure count still rides in the message — it is what
+  separates "failing loudly" from "no longer running".
+- **The window is relative to the source's own `interval`**: `max(DefaultSourceStaleFloor,
+  DefaultSourceStaleFactor × interval)` — 18 h at production's uniform 6 h. A fixed run
+  count would mean different things per source the moment intervals diverge; the floor
+  exists because the collector is cron-driven and cannot attempt anything more often than
+  it runs.
+- **Edge-triggered via `rate_source_health`** — one message down, one message up, nothing
+  in between. Repeating every run would swap an unnoticed silence for an ignored alarm.
+  The latch is a **separate table, not a column on `rate_sources`**, because
+  `RetainRateSource` rewrites source rows wholesale (`cmd/doctor rulegen` does exactly
+  that), and runtime state living there is destroyed by an unrelated config write.
+- **Delivery reuses the notification pool**: the event is addressed to
+  `tbot.AdminChatID()` and `RateDispatchAgent` already parses `UserID` as a chat id, so an
+  operator alert gets the same persistence, retry and failure audit as a user's. Nothing
+  gains a Telegram client — least of all the collector, which would be the component
+  reporting on its own failure.
+- `ObtainSourceCollectionHealth` reads the **hot tier only**, unlike every other query in
+  that repository: health is a question about the last few hours against a tier bounded at
+  180 days.
+- Weather locations are **not** covered: they write no `execution_history`, so there is no
+  persisted per-location outcome to measure a gap against.
+
 ### Layer Responsibilities
 
 | Layer | Location | Role |
