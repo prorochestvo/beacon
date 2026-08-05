@@ -110,6 +110,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("repositories: %s", err.Error())
 	}
+	historyRepo, err := repository.NewExecutionHistoryRepository(db)
+	if err != nil {
+		log.Fatalf("repositories: %s", err.Error())
+	}
+	sourceHealthRepo, err := repository.NewRateSourceHealthRepository(db)
+	if err != nil {
+		log.Fatalf("repositories: %s", err.Error())
+	}
 	log.Println("repositories: initiated")
 
 	// SIGTERM/SIGINT cancel ctx mid-run so an in-flight tick aborts the next
@@ -140,6 +148,23 @@ func main() {
 		log.Fatalf("runners: weather check agent build is failed: %s", err)
 	}
 
+	// Collection health is reported from here rather than from the collector: the
+	// collector holds no Telegram client, and the component that just failed to collect
+	// is the wrong one to be responsible for saying so.
+	sourceHealthAgent, err := notification.NewSourceHealthAgent(
+		sourceRepo,
+		historyRepo,
+		sourceHealthRepo,
+		eventRepo,
+		tbot.AdminChatID(),
+		notification.DefaultSourceStaleFactor,
+		notification.DefaultSourceStaleFloor,
+		l.WriterAs(internal.LogLevelWarning),
+	)
+	if err != nil {
+		log.Fatalf("runners: source health agent build is failed: %s", err)
+	}
+
 	dispatchAgent, err := notification.NewRateDispatchAgent(tbot, eventRepo)
 	if err != nil {
 		log.Fatalf("runners: dispatch agent build is failed: %s", err)
@@ -161,6 +186,13 @@ func main() {
 	}
 	if err = weatherCheckAgent.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		errs = append(errs, err)
+	}
+	// Before the dispatch, so a transition detected on this tick is delivered on this
+	// tick rather than waiting for the next one.
+	if report, healthErr := sourceHealthAgent.Run(ctx); healthErr != nil && !errors.Is(healthErr, context.Canceled) {
+		errs = append(errs, healthErr)
+	} else if len(report.Alerted)+len(report.Recovered) > 0 {
+		log.Printf("execution: source health: %d down, %d recovered", len(report.Alerted), len(report.Recovered))
 	}
 	if err = dispatchAgent.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		errs = append(errs, err)

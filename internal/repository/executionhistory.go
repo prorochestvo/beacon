@@ -210,6 +210,81 @@ func (r *ExecutionHistoryRepository) ObtainLastNExecutionHistoryErrors(ctx conte
 	return items, nil
 }
 
+// ObtainSourceCollectionHealth summarises every source that has ever run: when it last
+// succeeded, when it last ran at all, how many attempts have failed since that success,
+// and the most recent error message.
+//
+// Sources with no history at all are absent from the result rather than present with zero
+// values — a source that has never been attempted has not failed, and the caller must be
+// able to tell the two apart.
+//
+// This one reads the hot tier alone, unlike every other query here. Collection health is a
+// question about the last few hours against a tier bounded at 180 days; a source whose
+// last success predates that has a problem no alert threshold addresses, and unioning the
+// archive would make the correlated sub-selects below scan history that cannot change the
+// answer.
+func (r *ExecutionHistoryRepository) ObtainSourceCollectionHealth(ctx context.Context) ([]domain.SourceCollectionHealth, error) {
+	tx, err := r.db.ReadOnlyTransaction(ctx)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+	defer printRollbackError(tx)
+
+	// The aggregate establishes each source's last success and last run; the correlated
+	// sub-selects then answer "since that success" questions that an aggregate alone
+	// cannot, because they depend on the aggregate's own result.
+	//
+	// COALESCE on last_success makes the never-succeeded case fall out naturally: with no
+	// success to be after, every failure counts and the newest error is the newest error.
+	query := "SELECT s." + executionHistorySourceNameFieldName + ", s.last_success, s.last_run,\n" +
+		"  (SELECT COUNT(*) FROM " + executionHistoryTableName + " f\n" +
+		"    WHERE f." + executionHistorySourceNameFieldName + " = s." + executionHistorySourceNameFieldName + "\n" +
+		"      AND f." + executionHistorySuccessFieldName + " = 0\n" +
+		"      AND f." + executionHistoryTimestampFieldName + " > COALESCE(s.last_success, 0)) AS consecutive_failures,\n" +
+		"  COALESCE((SELECT e." + executionHistoryErrorFieldName + " FROM " + executionHistoryTableName + " e\n" +
+		"    WHERE e." + executionHistorySourceNameFieldName + " = s." + executionHistorySourceNameFieldName + "\n" +
+		"      AND e." + executionHistorySuccessFieldName + " = 0\n" +
+		"      AND e." + executionHistoryTimestampFieldName + " > COALESCE(s.last_success, 0)\n" +
+		"    ORDER BY e." + executionHistoryTimestampFieldName + " DESC, e." + executionHistoryIdFieldName + " DESC\n" +
+		"    LIMIT 1), '') AS last_error\n" +
+		"FROM (\n" +
+		"  SELECT " + executionHistorySourceNameFieldName + ",\n" +
+		"    MAX(CASE WHEN " + executionHistorySuccessFieldName + " = 1 THEN " + executionHistoryTimestampFieldName + " END) AS last_success,\n" +
+		"    MAX(" + executionHistoryTimestampFieldName + ") AS last_run\n" +
+		"  FROM " + executionHistoryTableName + "\n" +
+		"  GROUP BY " + executionHistorySourceNameFieldName + "\n" +
+		") AS s;"
+
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+
+	result := make([]domain.SourceCollectionHealth, 0, 64)
+	for rows.Next() {
+		var (
+			item        domain.SourceCollectionHealth
+			lastSuccess *int64
+			lastRun     *int64
+		)
+		if scanErr := rows.Scan(&item.SourceName, &lastSuccess, &lastRun, &item.ConsecutiveFailures, &item.LastError); scanErr != nil {
+			return nil, errors.Join(scanErr, loginjector.NewTraceError())
+		}
+		if lastSuccess != nil {
+			item.LastSuccessAt = time.Unix(*lastSuccess, 0).UTC()
+		}
+		if lastRun != nil {
+			item.LastRunAt = time.Unix(*lastRun, 0).UTC()
+		}
+		result = append(result, item)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+	return result, nil
+}
+
 // RetainExecutionHistory inserts or updates the given execution history record.
 func (r *ExecutionHistoryRepository) RetainExecutionHistory(ctx context.Context, record *domain.ExecutionHistory) error {
 	if record == nil {
