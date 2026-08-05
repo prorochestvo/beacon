@@ -1,8 +1,6 @@
 package internal
 
 import (
-	"bytes"
-	"fmt"
 	"log"
 	"os"
 	"path"
@@ -53,7 +51,17 @@ func NewLogger(logsDir, name string, printerMinLevel loginjector.LogLevel) (*log
 	// file opened O_APPEND keeps its prior mode until the next rotation.
 	fHNDL := loginjector.RotatingFileHandler(folder, name, loginjector.WithMaxFileSize(defaultFileSize), loginjector.WithMaxFiles(7), loginjector.WithFileMode(0o600))
 
-	l := loginjector.NewLogger(LogLevelWarning, fHNDL)
+	// The file is the sink that survives — it rotates, outlives the process, and is what
+	// gets read weeks later. Without a timestamp on it, an incident can only be located
+	// by line number, never dated or correlated with a deploy, a restart or a snapshot.
+	// Every issue investigated in this project so far cites line ranges for exactly that
+	// reason.
+	//
+	// RFC3339 rather than a bare clock time: it sorts lexicographically, matches how
+	// timestamps are stored everywhere else in this project, and carries its own UTC
+	// offset — so a host whose timezone changes says so in the log instead of quietly
+	// renumbering history.
+	l := loginjector.NewLogger(LogLevelWarning, loginjector.TimestampedHandler(fHNDL, loginjector.WithTimeLayout(time.RFC3339)))
 
 	var printerLevels []loginjector.LogLevel
 	for _, lvl := range []loginjector.LogLevel{LogLevelDebug, LogLevelInfo, LogLevelWarning, LogLevelError, LogLevelSevere, LogLevelCritical} {
@@ -62,13 +70,15 @@ func NewLogger(logsDir, name string, printerMinLevel loginjector.LogLevel) (*log
 		}
 	}
 	if len(printerLevels) > 0 {
-		_ = l.Hook(&printer{}, printerLevels[0], printerLevels[1:]...)
+		_ = l.Hook(loginjector.TimestampedPrintHandler(loginjector.WithTimeLayout(time.RFC3339)), printerLevels[0], printerLevels[1:]...)
 	}
 
 	SetRuntimeDetailsProvider()
 
 	log.SetOutput(l.WriterAs(LogLevelWarning))
-	log.SetFlags(0) // timestamp is added by printer; avoid duplicating it
+	// Both sinks now timestamp at the handler, so the standard logger must not add its
+	// own or every line carries two.
+	log.SetFlags(0)
 
 	return l, nil
 }
@@ -91,17 +101,4 @@ func ParseLogLevel(s string) loginjector.LogLevel {
 	default:
 		return LogLevelInfo
 	}
-}
-
-type printer struct{}
-
-func (p *printer) Write(msg []byte) (n int, err error) {
-	s := string(bytes.TrimSpace(msg))
-	if len(s) == 0 {
-		return 0, nil
-	}
-	items := strings.Split(s, "\n")
-	s = strings.Join(items, "\n                    ")
-	_, _ = fmt.Fprintf(os.Stdout, "%s %s\n", time.Now().Format("2006/01/02 15:04:05"), s)
-	return len(msg), nil
 }

@@ -68,7 +68,6 @@ func main() {
 	flag.Parse()
 	initFlags()
 
-	log.Printf("build: %s (%s) at %s\n", BuildVersion, BuildHash, BuildTime)
 	if StaticDir != "" {
 		log.Printf("static directory (override): %s\n", StaticDir)
 	} else {
@@ -79,6 +78,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("logger: %v", err)
 	}
+	// First line of every run in the log file: which build wrote everything below.
+	// Logged after the logger exists — before it, this went to a stderr the cron
+	// wrappers discard, so no line in the file could be attributed to a release.
+	log.Printf("build: %s (%s) at %s\n", BuildVersion, BuildHash, BuildTime)
 	log.Println("logger: initiated")
 
 	// web only calls Telegram (bot polling/webhook), and Telegram traffic bypasses
