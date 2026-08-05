@@ -11,7 +11,7 @@ TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 BUILD_OPTIONS := "-s -w -X main.BuildVersion=${BRANCH} -X main.BuildTime=${TIME} -X main.BuildHash=${BUILD}"
 
-.PHONY: all run build build-collector build-notifier build-web build-wasm build-migrator migrate test lint format audit audit-help doctor-help swagger clean init backups db-inspect
+.PHONY: all run build build-collector build-notifier build-web build-wasm build-migrator migrate test lint format audit audit-help doctor-help swagger clean init backups db-inspect config-drift
 
 
 
@@ -162,6 +162,10 @@ backups:
 	fi; \
 	rm -rf $$tmpdir
 
+
+## config-drift: report which host config files no longer match configs/ (read-only, no changes)
+config-drift:
+	@SSH_CMD="ssh be-happy.kz" ./configs/config_drift.sh Makefile
 
 ## db-inspect: pull the newest host snapshot and open it READ-ONLY; one-shot query with ARGS="SELECT ..."
 db-inspect:
