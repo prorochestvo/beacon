@@ -44,6 +44,35 @@ symlink. Old versions are pruned to the newest 5 not referenced by any channel.
   `/opt/beacon/.env`; the public origin is baked into the unit's `--api-dsn`,
   never the env file. `make init` provisions all of the above.
 
+### Config drift
+
+**`make init` is the only thing that installs `configs/`, and the release pipeline never
+touches them.** A change to a systemd unit, an nginx snippet or the backup script therefore
+ships in the repository, passes CI, appears in a release, and silently does not take
+effect. That is not hypothetical: snapshot compression sat in git for three weeks while the
+host kept writing uncompressed backups, and was found by reading the output of a manual
+command rather than by anything checking.
+
+`make config-drift` compares each installed file against its repository copy and reports
+`same` / `DIFFERS` / `MISSING` / `UNKNOWN`. It is read-only and needs no privileges. The
+same check runs on every release as a non-fatal step, writing to the job summary and
+raising a workflow warning when anything has fallen behind.
+
+`UNKNOWN` is its own state on purpose: `/etc/sudoers.d/beacon-deploy` is `0440 root:root`
+and cannot be read by the SSH account, so the check has no opinion about it. Reporting that
+as `same` would be a false negative and as `DIFFERS` a false alarm — both worse than saying
+so.
+
+The file list is parsed out of the `init` recipe rather than kept in a manifest beside it,
+so the check covers whatever init installs by construction; a manifest would be a second
+place to forget. `/opt/beacon/backups/.env` is excluded because it is a template the
+operator edits after installation and is *supposed* to diverge.
+
+The check reports; it never fixes and never fails a deploy. Shipping binaries is not made
+unsafe by a stale nginx snippet, and a blocking check here would create pressure to widen
+the CI user's privileges so it could install configs automatically — the boundary the whole
+release layout exists to hold.
+
 ## Hardening (recommended follow-up)
 
 The service currently runs as **root** (`User=root`), so a build shipped by a

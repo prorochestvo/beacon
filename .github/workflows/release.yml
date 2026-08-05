@@ -144,6 +144,41 @@ jobs:
             exit 1
           fi
 
+      # Nothing in this pipeline deploys configs/ — `make init` does, by hand, with root.
+      # A change to a systemd unit, an nginx snippet or the backup script therefore ships,
+      # passes CI, releases, and silently does not take effect. Snapshot compression lived
+      # in git for three weeks that way while the host kept writing uncompressed backups.
+      #
+      # Reporting is all this does. It never fails the deploy: shipping binaries is not
+      # made unsafe by a stale nginx snippet, and a blocking check here would create
+      # pressure to widen the CI user's privileges to fix it automatically — which is the
+      # boundary the whole release layout exists to hold.
+      - name: Report host config drift
+        if: always()
+        continue-on-error: true
+        run: |
+          # GitHub runs `run:` under `bash -e`, so a non-zero exit would abort the step
+          # before the status could be read. `|| status=$?` keeps the pipeline alive and
+          # lets drift be reported rather than swallowed.
+          status=0
+          SSH_CMD="ssh -p $SSH_HOSTPORT -i /tmp/deploy_key $SSH_USERNAME@$SSH_HOSTNAME" \
+            ./configs/config_drift.sh Makefile > "$RUNNER_TEMP/drift.txt" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/drift.txt"
+
+          {
+            echo "### Host configuration drift"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/drift.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$status" -eq 1 ]; then
+            echo "::warning title=Host config drift::The host is running configuration older than this repository. See the job summary; run 'make init' or copy the file across by hand."
+          elif [ "$status" -ne 0 ]; then
+            echo "::warning title=Config drift check failed::The drift check could not run. See the job summary."
+          fi
+
       - name: Prune old artifacts
         if: success()
         run: |
