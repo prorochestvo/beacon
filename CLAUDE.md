@@ -23,6 +23,23 @@ operator tooling (LLM rule generation and source auditing). Sources use a `kind`
 `User-Agent` or other header overrides store them in `RateSourceOptions.Headers` (the
 `options` JSON column), applied per-request by the plain fetcher.
 
+**Batched sources share one fetch.** `rateextractor` caches responses by URL for 30
+minutes, so several sources pointing at the *same* URL cost one outbound request between
+them, each picking its own value out of the shared payload with its own rule. The 20 Yahoo
+sources use this: they all fetch `/v8/finance/spark?symbols=<all 20>` and select
+`<TICKER>.close[-1]`, turning 20 requests a tick into one — 80 a day into four, matching
+every other host. (`/v7/finance/quote` would be the tidier endpoint but answers 401 without
+a crumb.)
+
+Two consequences worth knowing before touching those rows. The symbol list lives in the
+URL and the URLs must be **identical** to share a fetch, so adding a Yahoo source means
+rewriting all of them, not adding a row — getting it wrong degrades rather than breaks (the
+odd one out simply fetches separately) but silently gives the saving back. And the rule
+addresses the series by its end (`close[-1]`, negative indices count backwards) because the
+array grows through the session; a literal index would name a different moment on every
+request. `ApplyJSONPath` accepts hyphens in keys for the same reason — `BTC-USD` is a key,
+not a subtraction.
+
 ### Weather providers
 
 Open-Meteo (`domain.ProviderOpenMeteo`) is the sole weather provider: global, keyless

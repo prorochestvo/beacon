@@ -67,11 +67,42 @@ func TestParseJSONPath(t *testing.T) {
 		require.Error(t, err)
 		require.Nil(t, segs)
 	})
-	t.Run("negative-like index", func(t *testing.T) {
+	t.Run("a negative index parses and is carried through", func(t *testing.T) {
 		t.Parallel()
 
+		// This used to be an error. It is now the only way to address the newest point
+		// of a series whose length changes between requests, which is what Yahoo's
+		// batched quote response returns. Resolution against the real length happens in
+		// ApplyJSONPath, where the length is known.
 		segs, err := parseJSONPath("foo[-1]")
-		require.Error(t, err)
-		require.Nil(t, segs)
+		require.NoError(t, err)
+		require.Len(t, segs, 1)
+		require.True(t, segs[0].HasIndex)
+		require.Equal(t, -1, segs[0].Index)
+		require.Equal(t, "foo", segs[0].Key)
+	})
+
+	t.Run("a hyphenated key parses", func(t *testing.T) {
+		t.Parallel()
+
+		// Upstream keys its batched response by ticker, so "BTC-USD" is an object key.
+		segs, err := parseJSONPath("BTC-USD.close[-1]")
+		require.NoError(t, err)
+		require.Len(t, segs, 2)
+		require.Equal(t, "BTC-USD", segs[0].Key)
+		require.False(t, segs[0].HasIndex)
+		require.Equal(t, "close", segs[1].Key)
+		require.Equal(t, -1, segs[1].Index)
+	})
+
+	t.Run("nonsense inside the brackets is still rejected", func(t *testing.T) {
+		t.Parallel()
+
+		// Widening the charset must not turn a typo into a silently missing key.
+		for _, bad := range []string{"foo[--1]", "foo[1-]", "foo[]", "foo[1.5]", "foo[ 1]"} {
+			segs, err := parseJSONPath(bad)
+			require.Error(t, err, "pattern %q must not parse", bad)
+			require.Nil(t, segs)
+		}
 	})
 }

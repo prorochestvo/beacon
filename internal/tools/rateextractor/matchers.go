@@ -62,10 +62,18 @@ func ApplyJSONPath(pattern string, payload []byte) ([]byte, error) {
 			if !ok {
 				return nil, fmt.Errorf("json_path: key %q is not an array", seg.Key)
 			}
-			if seg.Index >= len(arr) {
+			// A negative index counts back from the end, so -1 addresses the newest point
+			// of a series whose length is not fixed. Yahoo's batched quote response grows
+			// its close array as the session goes on; a literal index would name a
+			// different moment on every request, and eventually a missing one.
+			idx := seg.Index
+			if idx < 0 {
+				idx += len(arr)
+			}
+			if idx < 0 || idx >= len(arr) {
 				return nil, fmt.Errorf("json_path: index %d out of range for key %q (len %d)", seg.Index, seg.Key, len(arr))
 			}
-			current = arr[seg.Index]
+			current = arr[idx]
 		} else {
 			current = val
 		}
