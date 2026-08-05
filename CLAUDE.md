@@ -217,10 +217,19 @@ before applying the URI. `make db-inspect` does the whole dance: streams the new
 snapshot down, decompresses on the fly, prints its age — snapshots are cut at 00:00 UTC,
 so one older than the last deploy cannot confirm that deploy's migrations — and opens it
 locally, so the host needs neither `sqlite3` nor scratch space. `ARGS="<sql>"` runs a
-single query and exits; without it you get the interactive shell. `make db-snapshot` cuts
-a fresh snapshot on demand (`sudo` prompts on the TTY) when the nightly one is too old to
-answer the question. Both extensions are handled throughout — snapshots predating
+single query and exits; without it you get the interactive shell. `make backups` pulls the
+same snapshot plus the service logs into `./backups/beacon.<stamp>.tar.gz` and reports the
+snapshot's age — that archive is the off-host restore point, and its age is what says
+whether it is one. Both extensions are handled throughout — snapshots predating
 compression, and the `cp` fallback's uncompressed WAL/SHM set, still prune and restore.
+
+**Cutting a snapshot on demand needs root on the host and cannot be driven from a
+workstation.** The live database is `0600 root:root` and so is `sqlite_dump.sh`; the SSH
+account (`pi5_aide`) has no passwordless sudo, so there is deliberately no Make target for
+it — one that always failed on a `sudo` prompt used to exist and was removed. Run
+`/opt/beacon/backups/sqlite_dump.sh` as root on the host, then `make backups` locally. The
+narrow `NOPASSWD` sudoers line that would automate it is documented in `deploy/README.md`
+and is not installed on purpose.
 
 ### Environment Variables
 

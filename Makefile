@@ -11,7 +11,7 @@ TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 BUILD_OPTIONS := "-s -w -X main.BuildVersion=${BRANCH} -X main.BuildTime=${TIME} -X main.BuildHash=${BUILD}"
 
-.PHONY: all run build build-collector build-notifier build-web build-wasm build-migrator migrate test lint format audit audit-help doctor-help swagger clean init backups db-inspect db-snapshot
+.PHONY: all run build build-collector build-notifier build-web build-wasm build-migrator migrate test lint format audit audit-help doctor-help swagger clean init backups db-inspect
 
 
 
@@ -140,7 +140,8 @@ backups:
 	rm -rf $$tmpdir; mkdir -p $$tmpdir; \
 	latest=$$(ssh be-happy.kz "ls -1t /opt/beacon/backups/beacon.*.sqlite /opt/beacon/backups/beacon.*.sqlite.gz 2>/dev/null | head -n1"); \
 	if [ -n "$$latest" ]; then \
-		echo "db:   $$latest"; \
+		age=$$(ssh be-happy.kz "now=\$$(date -u +%s); mtime=\$$(stat -c %Y '$$latest' 2>/dev/null || stat -f %m '$$latest'); echo \$$(( (now - mtime) / 60 ))"); \
+		echo "db:   $$latest ($$age min old)"; \
 		scp be-happy.kz:$$latest $$tmpdir/; \
 		case "$$latest" in *.gz) gunzip -f $$tmpdir/*.sqlite.gz;; esac; \
 	else \
@@ -167,7 +168,7 @@ db-inspect:
 	@mkdir -p ./tmp/db-inspect
 	@latest=$$(ssh be-happy.kz "ls -1t /opt/beacon/backups/beacon.*.sqlite /opt/beacon/backups/beacon.*.sqlite.gz 2>/dev/null | head -n1"); \
 	if [ -z "$$latest" ]; then \
-		echo "no snapshot in /opt/beacon/backups — run 'make db-snapshot' first"; \
+		echo "no snapshot in /opt/beacon/backups — the 00:00 cron has not run, or sqlite_dump.sh is not installed"; \
 		exit 1; \
 	fi; \
 	age=$$(ssh be-happy.kz "now=\$$(date -u +%s); mtime=\$$(stat -c %Y '$$latest' 2>/dev/null || stat -f %m '$$latest'); echo \$$(( (now - mtime) / 60 ))"); \
@@ -185,6 +186,3 @@ db-inspect:
 		sqlite3 -header -column "file:$$local?immutable=1"; \
 	fi
 
-## db-snapshot: cut a fresh snapshot on the host now instead of waiting for the 00:00 cron (prompts for sudo)
-db-snapshot:
-	ssh -t be-happy.kz "sudo /opt/beacon/backups/sqlite_dump.sh"

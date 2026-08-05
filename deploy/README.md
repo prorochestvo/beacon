@@ -196,19 +196,41 @@ From a workstation, `make db-inspect` does all of that: it streams the newest sn
 (decompressing on the fly), reports its age, and opens it locally, so the host needs neither
 a `sqlite3` binary nor scratch space. `make db-inspect ARGS="<sql>"` runs one query and exits.
 The age matters: snapshots are cut at 00:00 UTC, so immediately after a deploy the newest
-one predates the migration you are trying to confirm. `make db-snapshot` cuts a fresh one
-on demand (interactive `sudo` on the host).
+one predates the migration you are trying to confirm.
 
-To make that snapshot non-interactive — for a scripted post-deploy check — add one narrow
-line to sudoers for the operator account, mirroring the CI grant in
-`configs/beacon-deploy.sudoers`:
+`make backups` pulls the same snapshot plus the service logs into one local archive at
+`./backups/beacon.<stamp>.tar.gz`, reporting the snapshot's age alongside it. That archive
+is the restore point to take before a risky deploy — and being on a different machine than
+the database it copies, it is a better one than another file on the host's own 94%-full
+disk.
+
+### Cutting a snapshot on demand
+
+This needs root **on the host** and cannot be driven from a workstation. The live database
+is `0600 root:root`, so only root can read it consistently; the SSH account (`pi5_aide`)
+has no passwordless sudo. A `make db-snapshot` target used to exist and was removed — its
+whole body was an `ssh -t … sudo …` that could only ever stop on a password prompt, and
+`db-inspect` pointed operators at it as if it were a way forward.
+
+As root on the host:
+
+```bash
+/opt/beacon/backups/sqlite_dump.sh
+```
+
+then `make backups` from the workstation to pull the result down.
+
+To make it non-interactive — for a scripted pre-deploy backup — add one narrow line to
+sudoers for the operator account, mirroring the CI grant in `configs/beacon-deploy.sudoers`:
 
 ```
 <operator> ALL=(root) NOPASSWD: /opt/beacon/backups/sqlite_dump.sh
 ```
 
-Not installed by `make init` on purpose: it widens what a compromised operator key can do,
-so it is an explicit decision rather than a default.
+Not installed by `make init` on purpose. Today an SSH key alone gets an unprivileged shell;
+with that line it additionally gets "read the entire database as root", which is a
+permanent widening of what a leaked key is worth in exchange for saving one manual command
+on a deploy that happens every few weeks.
 
 ### Restore drill
 
