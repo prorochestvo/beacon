@@ -37,6 +37,20 @@ Egress asymmetry: `cmd/collector` honours `BEACON_PROXY_URL`; the Open-Meteo ins
 in `cmd/web` probes **direct** (cmd/web ignores `BEACON_PROXY_URL`), so a false "down"
 there can't fail the deploy gate — the inspector is advisory.
 
+**Transient failures are retried inside the client.** Open-Meteo answers 5xx
+intermittently, and without a retry each one dropped that location for the whole run
+(167 of them in one production log). `OpenMeteo.get` — the single seam both `Forecast`
+and `Geocode` pass through — re-sends up to `openMeteoMaxAttempts` (3) on 5xx and
+connection-level faults, with a jittered backoff that honours `ctx` so a cancelled tick
+stops instead of sleeping. **429 is deliberately not retried**: the API is keyless and
+limits by IP, so an immediate re-send earns the same refusal and pushes further into the
+limit. Neither is any other 4xx — those describe a request that will not become valid by
+being sent again. The client takes an `io.Writer` and logs one line per retry and one per
+recovery; a clean first attempt is silent, so a degrading provider stays distinguishable
+from a healthy one. The `/health/check` inspector has its own client and deliberately
+does **not** retry — it reports whether Open-Meteo answers right now, and a retry there
+would hide the flakiness it exists to surface.
+
 **Alert edge semantics** — every alert kind is edge-triggered through the per-row
 `alert_latched` boolean, and `domain.EvaluateLatched` reports the transition as a
 `domain.AlertEdge`. The four daily-metric kinds (`alert_heat`, `alert_frost`,

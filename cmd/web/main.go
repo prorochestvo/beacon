@@ -209,7 +209,7 @@ func main() {
 	// (no proxy) — Telegram traffic already bypasses the proxy, and geocoding calls
 	// from the web handler are ephemeral lookups. The proxy URL is intentionally
 	// empty here; collector and doctor pass BEACON_PROXY_URL instead.
-	openMeteoClient, err := weatherinfra.NewOpenMeteo("")
+	openMeteoClient, err := weatherinfra.NewOpenMeteo("", l.WriterAs(internal.LogLevelInfo))
 	if err != nil {
 		log.Fatalf("geocoder: open-meteo: %s", err.Error())
 	}
