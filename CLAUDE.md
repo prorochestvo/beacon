@@ -118,6 +118,51 @@ Schema lives at the project root: `./migrations/*.sql`. The sibling Go file
 `./migrations/embed.go` (`package migrations`) exposes those files as
 `var MigrationsFS embed.FS` so they can be consumed without disk I/O at runtime.
 
+### Hot / archive tiering
+
+The two append-only telemetry tables are each split into a bounded **hot** working set
+and an **`*_archive`** twin of identical schema — `rate_values`/`rate_values_archive`,
+`execution_history`/`execution_history_archive` — **in the same database file**.
+
+The same file is the load-bearing choice. SQLite gives no atomicity to a transaction
+spanning attached databases under `journal_mode=WAL`, so tiers in separate files could
+only be reconciled by copy-and-verify, leaving the archive a permanent superset and every
+read responsible for deciding which tier owns a window. In one file the roll-over is
+`INSERT...SELECT` + `DELETE` inside a single transaction: a row is in exactly one tier at
+every observable instant, and reads just union the two.
+
+- **Reads span both tiers, unconditionally.** `rateValueSqlSelect` /
+  `executionHistorySqlSelect` select from a `UNION ALL` of hot and archive rather than
+  choosing a tier by how far back the caller asked. Results are therefore identical to the
+  untiered behaviour no matter where the boundary sits or how far the roll-over has fallen
+  behind — there is no horizon for a read to disagree with. SQLite pushes the `WHERE` into
+  both branches, so each rides its own compound index (pinned by
+  `TestTieredReadsUseIndexesOnBothBranches` via `EXPLAIN QUERY PLAN`). What the union gives
+  up is index-ordered output: an `ORDER BY` over a compound subquery sorts in a temp
+  b-tree, which is why every ordered read carries an `id` tie-break and why they are all
+  bounded by a window, a limit or a page.
+- **Writes are hot-only**, and their INSERT-vs-UPDATE existence checks use
+  `rateValueCountHot` / `executionHistoryCountHot`. Counting the union there would send an
+  id that lives solely in the archive down the UPDATE path, which matches nothing.
+- **`rate_values_archive` carries no foreign key** to `rate_sources`. History outlives the
+  sources that produced it; `ON DELETE CASCADE` would erase it when a dead source is
+  removed. The hot row still cascades — that is the point.
+- **`collection.MaintenanceAgent`** (collector tick, after collection) runs three ordered
+  steps: roll over rows older than `DefaultHotWindow` (180 days), apply
+  `DefaultArchiveRetention` (**0 — keep forever**, the configured value), then
+  `MaybeVacuum` on `DefaultVacuumInterval` (7 days).
+- **VACUUM is not optional.** Deleting rows marks pages free *inside* the file; SQLite
+  never returns them to the OS on its own, so without VACUUM the roll-over would show up
+  as exactly zero change in `df`. It is cadence-gated through `service_meta.last_vacuum_at`
+  because it rebuilds the database into a temporary copy and needs transient free space on
+  the order of the file's own size. The stamp is written **only after a successful run** —
+  stamping first would turn a transient `SQLITE_BUSY` (the web or notifier process holding
+  the write lock) into a skipped week. A missing stamp vacuums immediately; an unparseable
+  one is an error rather than a silent vacuum on every tick.
+- Retention is a **compile-time constant, not an env var**: it is the only setting in the
+  project that can destroy history, and a value that changes only through a reviewed commit
+  is harder to get wrong than one that changes through a typo in an env file.
+
 `cmd/migrator` is the **only** thing that mutates schema. It embeds
 `migrations.MigrationsFS` at build time, opens the DB via `BEACON_SQLITEDB_DSN`, and
 calls `sqlitedb.Migrator.Run(ctx)`. Idempotent: applied filenames are tracked in

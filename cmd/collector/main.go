@@ -113,7 +113,21 @@ func main() {
 	if err != nil {
 		log.Fatalf("repositories: %s", err.Error())
 	}
+	metaRepo, err := repository.NewServiceMetaRepository(db)
+	if err != nil {
+		log.Fatalf("repositories: %s", err.Error())
+	}
 	log.Println("repositories: initiated")
+
+	maintenanceAgent, err := collection.NewMaintenanceAgent(
+		metaRepo, db,
+		collection.DefaultHotWindow, collection.DefaultArchiveRetention, collection.DefaultVacuumInterval,
+		l.WriterAs(internal.LogLevelInfo),
+		rateValueRepo, historyRepo,
+	)
+	if err != nil {
+		log.Fatalf("runners: maintenance agent: %s", err.Error())
+	}
 
 	runners, err := buildRunners(
 		sourceRepo, historyRepo, rateValueRepo,
@@ -161,6 +175,17 @@ func main() {
 	// accumulates indefinitely. Non-fatal: a vacuum failure does not abort the run.
 	if vacuumErr := weatherObsRepo.RemoveWeatherObservationsOlderThan(context.Background(), 48*time.Hour); vacuumErr != nil {
 		log.Printf("execution: weather obs vacuum: %v", vacuumErr)
+	}
+
+	// Bound the hot tables and reclaim what that frees. Runs after collection, on a
+	// background context rather than ctx, so a tick cut short by SIGTERM still gets its
+	// maintenance — every step is idempotent and picks up where it left off next tick.
+	// Non-fatal for the same reason the weather vacuum is: falling behind on housekeeping
+	// must never take collection down with it.
+	if report, maintErr := maintenanceAgent.Run(context.Background()); maintErr != nil {
+		log.Printf("execution: maintenance: %v", maintErr)
+	} else if report.Total() > 0 || report.Vacuumed {
+		log.Printf("execution: maintenance archived %d row(s), vacuumed=%t", report.Total(), report.Vacuumed)
 	}
 
 	if ctx.Err() != nil {

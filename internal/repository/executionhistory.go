@@ -68,7 +68,15 @@ func (r *ExecutionHistoryRepository) ObtainLastNExecutionHistoryBySourceName(ctx
 		whereClause += " AND " + executionHistorySuccessFieldName + " = 1"
 	}
 
-	rows, err := executionHistoryQueryContext(tx, ctx, "WHERE "+whereClause+" ORDER BY "+executionHistoryTimestampFieldName+" DESC LIMIT ?;", sourceName, limit)
+	// The id breaks ties on timestamp. One collector tick writes a row per source at the
+	// same second, and the union of two tiers is sorted rather than walked in index order,
+	// so a bare timestamp sort leaves rows in an order the planner is free to change
+	// between calls.
+	rows, err := executionHistoryQueryContext(tx, ctx,
+		"WHERE "+whereClause+
+			" ORDER BY "+executionHistoryTimestampFieldName+" DESC, "+executionHistoryIdFieldName+" DESC"+
+			" LIMIT ?;",
+		sourceName, limit)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
@@ -111,7 +119,7 @@ func (r *ExecutionHistoryRepository) ObtainLatestExecutionHistoryBySources(ctx c
 		executionHistoryTimestampFieldName + ",\n" +
 		"  ROW_NUMBER() OVER (PARTITION BY " + executionHistorySourceNameFieldName +
 		" ORDER BY " + executionHistoryTimestampFieldName + " DESC, " + executionHistoryIdFieldName + " DESC) AS rn\n" +
-		"  FROM " + executionHistoryTableName +
+		"  " + executionHistorySqlFrom(executionHistoryTableName) + "\n" +
 		"  WHERE " + executionHistorySourceNameFieldName + " IN (" + placeholders + ")\n" +
 		") AS ranked WHERE ranked.rn = 1;"
 
@@ -169,9 +177,12 @@ func (r *ExecutionHistoryRepository) ObtainLastNExecutionHistoryErrors(ctx conte
 	}
 	defer printRollbackError(tx)
 
+	// The id tie-break is what makes offset pagination stable here: one tick fails several
+	// sources at the same second, so ordering on the timestamp alone can repeat a row on one
+	// page and skip it on the next.
 	query := executionHistorySqlSelect +
 		"\nWHERE " + executionHistorySuccessFieldName + " = 0" +
-		" ORDER BY " + executionHistoryTimestampFieldName + " DESC" +
+		" ORDER BY " + executionHistoryTimestampFieldName + " DESC, " + executionHistoryIdFieldName + " DESC" +
 		" LIMIT ? OFFSET ?;"
 
 	dbRows, err := tx.QueryContext(ctx, query, limit, offset)
@@ -221,7 +232,10 @@ func (r *ExecutionHistoryRepository) RetainExecutionHistory(ctx context.Context,
 	}
 	defer printRollbackError(tx)
 
-	count, err := executionHistoryCount(tx, ctx, "WHERE "+executionHistoryIdFieldName+" = ?;", record.ID)
+	// Hot-only on purpose: this decides INSERT versus UPDATE against the hot table, and the
+	// UPDATE below writes only there. Counting the union would send an id that lives solely
+	// in the archive down the UPDATE path, which would match nothing and lose the write.
+	count, err := executionHistoryCountHot(tx, ctx, "WHERE "+executionHistoryIdFieldName+" = ?;", record.ID)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return err
@@ -319,26 +333,51 @@ func (r *ExecutionHistoryRepository) RemoveSourceExecutionHistory(ctx context.Co
 }
 
 const (
-	executionHistoryTableName           = "execution_history"
+	executionHistoryTableName = "execution_history"
+	// executionHistoryArchiveTableName is the archive twin: same columns, same file. Rows
+	// arrive here only by the roll-over move and are never written directly.
+	executionHistoryArchiveTableName    = "execution_history_archive"
 	executionHistoryIdFieldName         = "id"
 	executionHistorySourceNameFieldName = "source_name"
 	executionHistorySuccessFieldName    = "success"
 	executionHistoryErrorFieldName      = "error"
 	executionHistoryTimestampFieldName  = "timestamp"
 
-	executionHistorySqlSelect = "SELECT" + "\n" +
-		executionHistoryIdFieldName + ", " +
+	executionHistoryColumnList = executionHistoryIdFieldName + ", " +
 		executionHistorySourceNameFieldName + ", " +
 		executionHistorySuccessFieldName + ", " +
 		executionHistoryErrorFieldName + ", " +
-		executionHistoryTimestampFieldName +
-		"\nFROM " + executionHistoryTableName
+		executionHistoryTimestampFieldName
 )
 
+// executionHistorySqlSelect reads both tiers — see rateValueSqlSelect for why every read
+// unions unconditionally instead of picking a tier by how far back the caller asked.
+var executionHistorySqlSelect = "SELECT\n" + executionHistoryColumnList + "\n" +
+	executionHistorySqlFrom(executionHistoryTableName)
+
+// executionHistorySqlFrom returns the both-tiers FROM clause under the given alias.
+func executionHistorySqlFrom(alias string) string {
+	return "FROM (\n" +
+		"SELECT " + executionHistoryColumnList + " FROM " + executionHistoryTableName + "\n" +
+		"UNION ALL\n" +
+		"SELECT " + executionHistoryColumnList + " FROM " + executionHistoryArchiveTableName + "\n" +
+		") AS " + alias
+}
+
+// executionHistoryCountHot counts the hot table alone. Write paths use it: they decide what
+// to do to execution_history, so they must ask about execution_history.
+func executionHistoryCountHot(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
+	return executionHistoryCountIn(tx, ctx, "FROM "+executionHistoryTableName, condition, args...)
+}
+
 func executionHistoryCount(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
+	return executionHistoryCountIn(tx, ctx, executionHistorySqlFrom(executionHistoryTableName), condition, args...)
+}
+
+func executionHistoryCountIn(tx *sql.Tx, ctx context.Context, from, condition string, args ...any) (int64, error) {
 	query := "SELECT\n" +
 		" COUNT(*)\n" +
-		"FROM " + executionHistoryTableName + "\n" + condition
+		from + "\n" + condition
 
 	var count int64
 	err := tx.QueryRowContext(ctx, query, args...).Scan(&count)

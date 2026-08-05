@@ -119,7 +119,7 @@ func (r *RateValueRepository) ObtainLatestRateValuesBySourceNames(ctx context.Co
 		rateValueTimestampFieldName + ",\n" +
 		"  ROW_NUMBER() OVER (PARTITION BY " + rateValueSourceNameFieldName +
 		" ORDER BY " + rateValueTimestampFieldName + " DESC, " + rateValueIdFieldName + " DESC) AS rn\n" +
-		"  FROM " + rateValueTableName +
+		"  " + rateValueSqlFrom(rateValueTableName) + "\n" +
 		"  WHERE " + rateValueSourceNameFieldName + " IN (" + placeholders + ")\n" +
 		") AS ranked WHERE ranked.rn = 1;"
 
@@ -196,7 +196,12 @@ func (r *RateValueRepository) RetainRateValue(ctx context.Context, record *domai
 	}
 	defer printRollbackError(tx)
 
-	count, err := rateValueCount(tx, ctx, " WHERE "+rateValueIdFieldName+" = ?;", record.ID)
+	// Hot-only on purpose: this decides INSERT versus UPDATE against the hot table, and
+	// the UPDATE below writes only there. Counting the union would send an id that lives
+	// solely in the archive down the UPDATE path, which would match nothing and lose the
+	// write. Ids are minted per insert so the case is unreachable in practice — the check
+	// is scoped correctly anyway rather than relying on that.
+	count, err := rateValueCountHot(tx, ctx, " WHERE "+rateValueIdFieldName+" = ?;", record.ID)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return err
@@ -341,7 +346,7 @@ func (r *RateValueRepository) ObtainHistoryForPairsPaged(
 		strings.Join(tuples, ", ") + ")"
 
 	// Query 1: row-level COUNT(*) for the full WHERE.
-	countQuery := "SELECT COUNT(*) FROM " + rateValueTableName + " WHERE " + inClause + ";"
+	countQuery := "SELECT COUNT(*) " + rateValueSqlFrom(rateValueTableName) + " WHERE " + inClause + ";"
 	if scanErr := tx.QueryRowContext(ctx, countQuery, args...).Scan(&rowTotal); scanErr != nil {
 		return nil, 0, 0, errors.Join(scanErr, fmt.Errorf("SQL: %s", countQuery), loginjector.NewTraceError())
 	}
@@ -392,9 +397,12 @@ func (r *RateValueRepository) ObtainHistoryForPairsPaged(
 	// concatenation because SQLite's COUNT(DISTINCT) takes a single expression;
 	// '|' is safe as long as provider titles contain no '|' — see
 	// plans/015-history-group-by-provider.md Assumption 2.
+	//
+	// The join resolves against the live rate_sources — one of the things keeping both
+	// tiers in one file buys: the archive needs no mirror of that table for its titles.
 	groupedQuery := "SELECT COUNT(DISTINCT " +
 		"rs." + rateSourceTitleFieldName + " || '|' || rv." + rateValueTimestampFieldName +
-		") FROM " + rateValueTableName + " rv" +
+		") " + rateValueSqlFrom("rv") +
 		" JOIN " + rateSourceTableName + " rs ON rs." + rateSourceNameFieldName + " = rv." + rateValueSourceNameFieldName +
 		" WHERE " + inClauseJoin + ";"
 
@@ -484,7 +492,11 @@ func (r *RateValueRepository) ObtainValuesForPairsSince(ctx context.Context, pai
 }
 
 const (
-	rateValueTableName              = "rate_values"
+	rateValueTableName = "rate_values"
+	// rateValueArchiveTableName is the archive twin: same columns, same file, no foreign
+	// key to rate_sources. Rows arrive here only by the roll-over move and are never
+	// written directly.
+	rateValueArchiveTableName       = "rate_values_archive"
 	rateValueIdFieldName            = "id"
 	rateValueSourceNameFieldName    = "source_name"
 	rateValueBaseCurrencyFieldName  = "base_currency"
@@ -492,20 +504,51 @@ const (
 	rateValuePriceFieldName         = "price"
 	rateValueTimestampFieldName     = "timestamp"
 
-	rateValueSqlSelect = "SELECT\n" +
-		rateValueIdFieldName + ", " +
+	rateValueColumnList = rateValueIdFieldName + ", " +
 		rateValueSourceNameFieldName + ", " +
 		rateValueBaseCurrencyFieldName + ", " +
 		rateValueQuoteCurrencyFieldName + ", " +
 		rateValuePriceFieldName + ", " +
-		rateValueTimestampFieldName +
-		"\nFROM " + rateValueTableName
+		rateValueTimestampFieldName
 )
 
+// rateValueSqlSelect reads both tiers. Every read spans the union unconditionally rather
+// than choosing a tier by how far back the caller asked, which keeps results identical to
+// the untiered behaviour no matter where the roll-over boundary currently sits or how far
+// behind it has fallen — there is no horizon for a read to disagree with.
+//
+// The cost is one extra index seek, not a scan: SQLite pushes the WHERE into both branches
+// of a UNION ALL, so each side rides its own compound index (verified by EXPLAIN QUERY PLAN
+// in the tests). What the union does give up is ordering — a compound subquery cannot be
+// walked in index order, so an ORDER BY sorts the matched rows in a temp b-tree. Every read
+// here is bounded (a chart window, a limit, a page), so that sort is over hundreds of rows,
+// not over the table.
+var rateValueSqlSelect = "SELECT\n" + rateValueColumnList + "\n" + rateValueSqlFrom(rateValueTableName)
+
+// rateValueSqlFrom returns the both-tiers FROM clause, aliased so callers can qualify
+// columns (the history query joins rate_sources and needs the rv alias).
+func rateValueSqlFrom(alias string) string {
+	return "FROM (\n" +
+		"SELECT " + rateValueColumnList + " FROM " + rateValueTableName + "\n" +
+		"UNION ALL\n" +
+		"SELECT " + rateValueColumnList + " FROM " + rateValueArchiveTableName + "\n" +
+		") AS " + alias
+}
+
+// rateValueCountHot counts the hot table alone. Write paths use it: they decide what to do
+// to rate_values, so they must ask about rate_values.
+func rateValueCountHot(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
+	return rateValueCountIn(tx, ctx, "FROM "+rateValueTableName, condition, args...)
+}
+
 func rateValueCount(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
+	return rateValueCountIn(tx, ctx, rateValueSqlFrom(rateValueTableName), condition, args...)
+}
+
+func rateValueCountIn(tx *sql.Tx, ctx context.Context, from, condition string, args ...any) (int64, error) {
 	query := "SELECT\n" +
 		" COUNT(*)\n" +
-		"FROM " + rateValueTableName + "\n" + condition
+		from + "\n" + condition
 
 	var count int64
 	err := tx.QueryRowContext(ctx, query, args...).Scan(&count)
