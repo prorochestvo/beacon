@@ -11,7 +11,7 @@ TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 BUILD_OPTIONS := "-s -w -X main.BuildVersion=${BRANCH} -X main.BuildTime=${TIME} -X main.BuildHash=${BUILD}"
 
-.PHONY: all run build build-collector build-notifier build-web build-wasm build-migrator migrate test lint format audit audit-help doctor-help swagger clean init backups
+.PHONY: all run build build-collector build-notifier build-web build-wasm build-migrator migrate test lint format audit audit-help doctor-help swagger clean init backups db-inspect db-snapshot
 
 
 
@@ -138,10 +138,11 @@ backups:
 	@stamp=$$(date -u +%Y%m%d-%H%M%S); \
 	tmpdir=./tmp/backups-beacon; \
 	rm -rf $$tmpdir; mkdir -p $$tmpdir; \
-	latest=$$(ssh be-happy.kz "ls -1t /opt/beacon/backups/beacon.*.sqlite 2>/dev/null | head -n1"); \
+	latest=$$(ssh be-happy.kz "ls -1t /opt/beacon/backups/beacon.*.sqlite /opt/beacon/backups/beacon.*.sqlite.gz 2>/dev/null | head -n1"); \
 	if [ -n "$$latest" ]; then \
 		echo "db:   $$latest"; \
 		scp be-happy.kz:$$latest $$tmpdir/; \
+		case "$$latest" in *.gz) gunzip -f $$tmpdir/*.sqlite.gz;; esac; \
 	else \
 		echo "db:   no snapshot in /opt/beacon/backups (has sqlite_dump.sh run on the host yet?)"; \
 	fi; \
@@ -159,3 +160,31 @@ backups:
 		echo "nothing pulled; no archive created"; \
 	fi; \
 	rm -rf $$tmpdir
+
+
+## db-inspect: pull the newest host snapshot and open it READ-ONLY; one-shot query with ARGS="SELECT ..."
+db-inspect:
+	@mkdir -p ./tmp/db-inspect
+	@latest=$$(ssh be-happy.kz "ls -1t /opt/beacon/backups/beacon.*.sqlite /opt/beacon/backups/beacon.*.sqlite.gz 2>/dev/null | head -n1"); \
+	if [ -z "$$latest" ]; then \
+		echo "no snapshot in /opt/beacon/backups — run 'make db-snapshot' first"; \
+		exit 1; \
+	fi; \
+	age=$$(ssh be-happy.kz "now=\$$(date -u +%s); mtime=\$$(stat -c %Y '$$latest' 2>/dev/null || stat -f %m '$$latest'); echo \$$(( (now - mtime) / 60 ))"); \
+	echo "snapshot: $$latest"; \
+	echo "age:      $$age min (snapshots are cut daily at 00:00 UTC; anything older than your last deploy cannot confirm it)"; \
+	local=./tmp/db-inspect/inspect.sqlite; \
+	case "$$latest" in \
+		*.gz) ssh be-happy.kz "cat '$$latest'" | gunzip -c > $$local;; \
+		*)    ssh be-happy.kz "cat '$$latest'" > $$local;; \
+	esac; \
+	if [ -n "$(ARGS)" ]; then \
+		sqlite3 -header -column "file:$$local?immutable=1" "$(ARGS)"; \
+	else \
+		echo "opening $$local — read-only, edits are impossible and local anyway"; \
+		sqlite3 -header -column "file:$$local?immutable=1"; \
+	fi
+
+## db-snapshot: cut a fresh snapshot on the host now instead of waiting for the 00:00 cron (prompts for sudo)
+db-snapshot:
+	ssh -t be-happy.kz "sudo /opt/beacon/backups/sqlite_dump.sh"

@@ -501,3 +501,51 @@ func TestRenderMeWeatherCities_AlertForm(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+// TestRenderMeWeatherCitiesForcedRain covers the Mini App side of the forced rain
+// subscription: the row stays visible because its threshold is user-tunable, but it
+// carries no delete control, since DELETE on a forced row can only ever answer 409.
+func TestRenderMeWeatherCitiesForcedRain(t *testing.T) {
+	t.Parallel()
+
+	summary := dto.WeatherCityRow{
+		ID: "c1", LocationID: "loc1", DisplayName: "Astana", Timezone: "Asia/Almaty",
+		NotifyKind: "morning_summary", NotifyHour: 7,
+	}
+	rain := dto.WeatherCityRow{
+		ID: "c-rain", LocationID: "loc1", DisplayName: "Astana", Timezone: "Asia/Almaty",
+		NotifyKind: "rain_alert", ConditionValue: "60",
+	}
+
+	t.Run("the rain row is listed with its threshold but has no delete control", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities: []dto.WeatherCityRow{summary, rain},
+		})
+
+		assert.Contains(t, html, "Rain alert ≥ 60% within 6h", "the tunable threshold must stay visible")
+		assert.NotContains(t, html, `data-id="c-rain"`,
+			"a delete button for a forced row would only ever produce a 409")
+		assert.Contains(t, html, `data-id="c1"`, "the deletable sibling row keeps its delete button")
+	})
+
+	t.Run("the always-on note covers rain alongside thaw", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities: []dto.WeatherCityRow{summary, rain},
+		})
+		assert.Contains(t, html, "weather-thaw-note")
+		assert.Contains(t, strings.ToLower(html), "rain alerts are always on")
+	})
+
+	t.Run("rain stays in the kind selector so its threshold can be retuned", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities:              []dto.WeatherCityRow{summary, rain},
+			AlertFormLocationID: "loc1",
+			AlertFormKind:       "alert_heat",
+		})
+		assert.Contains(t, html, `value="rain_alert"`)
+		assert.NotContains(t, html, `value="alert_thaw"`, "thaw carries no threshold and stays unlistable")
+	})
+}

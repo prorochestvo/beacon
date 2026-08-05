@@ -146,6 +146,89 @@ func (m *Migrator) Applied() int {
 	return m.applied
 }
 
+// Verify reports whether the database's recorded migration state matches the set this
+// Migrator was built from. It is Run's post-condition, checked separately so a schema
+// that does not match the shipped binary fails the deploy loudly instead of surfacing
+// weeks later as a "no such column" error in production.
+//
+// Two conditions fail verification:
+//
+//   - A migration is absent from __schema_migrations. Immediately after a successful Run
+//     that can only mean the database is not the one Run wrote to: a stale DSN, a restore
+//     from an older snapshot, or a hand-edited ledger.
+//   - A migration file is empty. Run skips empty content silently, so a truncated or
+//     accidentally-blank .sql would be a permanent no-op that nothing ever reports. Here
+//     it is a failed deploy instead.
+//
+// Every offending filename is collected before returning, so one run reports the whole
+// picture rather than the alphabetically-first problem.
+func (m *Migrator) Verify(ctx context.Context) error {
+	var tx *sql.Tx
+	var err error
+	if ro, ok := m.db.(interface {
+		ReadOnlyTransaction(context.Context) (*sql.Tx, error)
+	}); ok {
+		tx, err = ro.ReadOnlyTransaction(ctx)
+	} else {
+		tx, err = m.db.Transaction(ctx)
+	}
+	if err != nil || tx == nil {
+		if err == nil {
+			err = errors.New("transaction is nil")
+		}
+		return errors.Join(err, loginjector.NewTraceError())
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx, "SELECT filename FROM "+migrationTableName+";")
+	if err != nil {
+		return errors.Join(
+			fmt.Errorf("verify: read %s: %w", migrationTableName, err),
+			loginjector.NewTraceError(),
+		)
+	}
+	defer func() { _ = rows.Close() }()
+
+	recorded := make(map[string]struct{})
+	for rows.Next() {
+		var name string
+		if err = rows.Scan(&name); err != nil {
+			return errors.Join(fmt.Errorf("verify: scan filename: %w", err), loginjector.NewTraceError())
+		}
+		recorded[name] = struct{}{}
+	}
+	if err = rows.Err(); err != nil {
+		return errors.Join(fmt.Errorf("verify: iterate %s: %w", migrationTableName, err), loginjector.NewTraceError())
+	}
+
+	var empty, missing []string
+	for _, item := range m.items {
+		if len(item.content) == 0 {
+			empty = append(empty, item.name)
+			continue
+		}
+		if _, ok := recorded[item.name]; !ok {
+			missing = append(missing, item.name)
+		}
+	}
+
+	var problems []error
+	if len(empty) > 0 {
+		problems = append(problems, fmt.Errorf(
+			"empty migration file(s), which apply nothing and are never recorded: %s",
+			strings.Join(empty, ", ")))
+	}
+	if len(missing) > 0 {
+		problems = append(problems, fmt.Errorf(
+			"migration(s) not recorded in %s: %s",
+			migrationTableName, strings.Join(missing, ", ")))
+	}
+	if len(problems) > 0 {
+		return errors.Join(problems...)
+	}
+	return nil
+}
+
 // RequireMigratedSchema returns nil only when __schema_migrations exists and
 // has at least one row. Service binaries call it right after opening the DB so a
 // missing migrator step surfaces as a loud startup failure rather than a
@@ -219,10 +302,9 @@ func newDefaultMigrations(fsys fs.FS) ([]migration, error) {
 			return nil, err
 		}
 
-		if len(content) == 0 {
-			continue
-		}
-
+		// An empty file is kept in the list rather than dropped here: Run already
+		// skips empty content, and keeping the entry is what lets Verify report the
+		// file as a silent no-op instead of it vanishing before anyone can notice.
 		items = append(items, migration{
 			name:    fileName,
 			content: string(content),

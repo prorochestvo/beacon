@@ -257,3 +257,116 @@ type nilTxCommitter struct{}
 func (n *nilTxCommitter) Transaction(_ context.Context) (*sql.Tx, error) {
 	return nil, nil
 }
+
+// TestMigrator_Verify covers the deploy gate from issue #5: after the migrate unit runs,
+// the ledger must account for every migration the binary ships, and a migration that can
+// never apply must be loud rather than silent.
+func TestMigrator_Verify(t *testing.T) {
+	t.Parallel()
+
+	t.Run("passes after a successful run", func(t *testing.T) {
+		t.Parallel()
+		c := newTestClient(t)
+		m, err := NewMigrator(c, minimalFS())
+		require.NoError(t, err)
+		require.NoError(t, m.Run(t.Context()))
+
+		require.NoError(t, m.Verify(t.Context()))
+	})
+
+	t.Run("fails when a migration was never recorded", func(t *testing.T) {
+		t.Parallel()
+		c := newTestClient(t)
+		m, err := NewMigrator(c, minimalFS())
+		require.NoError(t, err)
+		require.NoError(t, m.Run(t.Context()))
+
+		// Simulate the ledger disagreeing with the shipped set: a database restored
+		// from an older snapshot, or one a stale DSN pointed the migrator away from.
+		tx, err := c.Transaction(t.Context())
+		require.NoError(t, err)
+		_, err = tx.Exec("DELETE FROM " + migrationTableName + " WHERE filename = 'stub_init.sql';")
+		require.NoError(t, err)
+		require.NoError(t, tx.Commit())
+
+		err = m.Verify(t.Context())
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "stub_init.sql")
+		require.Contains(t, err.Error(), migrationTableName)
+	})
+
+	t.Run("fails on an empty migration file", func(t *testing.T) {
+		t.Parallel()
+		c := newTestClient(t)
+		emptyFS := fstest.MapFS{
+			"001_real.sql":  {Data: []byte("CREATE TABLE IF NOT EXISTS verify_real (id INTEGER PRIMARY KEY);")},
+			"002_blank.sql": {Data: []byte{}},
+		}
+		m, err := NewMigrator(c, emptyFS)
+		require.NoError(t, err)
+		// Run tolerates the blank file — that silent tolerance is exactly what makes an
+		// accidentally truncated migration invisible without Verify.
+		require.NoError(t, m.Run(t.Context()))
+
+		err = m.Verify(t.Context())
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "002_blank.sql")
+		require.Contains(t, err.Error(), "empty migration file")
+		require.NotContains(t, err.Error(), "001_real.sql", "the applied migration must not be reported")
+	})
+
+	t.Run("reports every offending file, not just the first", func(t *testing.T) {
+		t.Parallel()
+		c := newTestClient(t)
+		mixedFS := fstest.MapFS{
+			"001_real.sql":   {Data: []byte("CREATE TABLE IF NOT EXISTS verify_multi (id INTEGER PRIMARY KEY);")},
+			"002_blank.sql":  {Data: []byte{}},
+			"003_blank2.sql": {Data: []byte{}},
+		}
+		m, err := NewMigrator(c, mixedFS)
+		require.NoError(t, err)
+		require.NoError(t, m.Run(t.Context()))
+
+		tx, err := c.Transaction(t.Context())
+		require.NoError(t, err)
+		_, err = tx.Exec("DELETE FROM " + migrationTableName + " WHERE filename = '001_real.sql';")
+		require.NoError(t, err)
+		require.NoError(t, tx.Commit())
+
+		err = m.Verify(t.Context())
+		require.Error(t, err)
+		for _, want := range []string{"001_real.sql", "002_blank.sql", "003_blank2.sql"} {
+			require.Containsf(t, err.Error(), want, "one run must surface the whole picture, missing %s", want)
+		}
+	})
+
+	t.Run("propagates a transaction failure", func(t *testing.T) {
+		t.Parallel()
+		c := newTestClient(t)
+		m, err := NewMigrator(c, minimalFS())
+		require.NoError(t, err)
+		require.NoError(t, m.Run(t.Context()))
+
+		m.db = &mockFailCommitter{err: errors.New("db unavailable")}
+		require.Error(t, m.Verify(t.Context()))
+
+		m.db = &nilTxCommitter{}
+		require.Error(t, m.Verify(t.Context()))
+	})
+
+	t.Run("fails when the ledger table is gone", func(t *testing.T) {
+		t.Parallel()
+		c := newTestClient(t)
+		m, err := NewMigrator(c, minimalFS())
+		require.NoError(t, err)
+		require.NoError(t, m.Run(t.Context()))
+
+		tx, err := c.Transaction(t.Context())
+		require.NoError(t, err)
+		_, err = tx.Exec("DROP TABLE " + migrationTableName + ";")
+		require.NoError(t, err)
+		require.NoError(t, tx.Commit())
+
+		require.Error(t, m.Verify(t.Context()))
+	})
+}

@@ -89,18 +89,19 @@ func renderWeatherBlock(obs domain.WeatherObservation, cityLoc *time.Location) s
 }
 
 // RenderWeatherAlert produces a compact Telegram HTML alert message for an alert
-// kind (heat, frost, thunderstorm, rain, thaw). It includes a kind-specific header with
-// emoji, the city name, the reason string from EvaluateAlert, and a one-line
-// forecast snapshot (condition + high/low).
+// kind (heat, frost, thunderstorm, rain, thaw). It includes a header keyed on the kind
+// AND the latch edge, the city name, the reason string from EvaluateLatched, and a
+// one-line forecast snapshot (condition + high/low).
 //
 // All dynamic text (city name, condition descriptions) is HTML-escaped; the reason
-// string from EvaluateAlert may contain ≥/≤/U+2212 which are safe plain-text
-// characters. Nil optional fields render as "—", never "0". Returns an error only
-// if called for a kind that has no registered header (programming error).
-func RenderWeatherAlert(city domain.WeatherUserCity, reason string, obs domain.WeatherObservation) (string, error) {
-	header, emoji, ok := alertKindHeader(city.NotifyKind)
+// string from EvaluateLatched may contain ≥/≤/U+2212 which are safe plain-text
+// characters. Nil optional fields render as "—", never "0". Returns an error when the
+// (kind, edge) pair has no registered header — an unknown kind, a non-notifiable edge,
+// or a cleared edge on a kind that only notifies one way (programming error).
+func RenderWeatherAlert(city domain.WeatherUserCity, edge domain.AlertEdge, reason string, obs domain.WeatherObservation) (string, error) {
+	header, emoji, ok := alertKindHeader(city.NotifyKind, edge)
 	if !ok {
-		return "", fmt.Errorf("RenderWeatherAlert: unrecognised alert kind %q for city %s", city.NotifyKind, city.ID)
+		return "", fmt.Errorf("RenderWeatherAlert: unrenderable alert kind %q edge %d for city %s", city.NotifyKind, edge, city.ID)
 	}
 
 	cityName := html.EscapeString(city.DisplayName)
@@ -128,10 +129,26 @@ func RenderWeatherAlert(city domain.WeatherUserCity, reason string, obs domain.W
 	return sb.String(), nil
 }
 
-// alertKindHeader returns the human-readable label and display emoji for the
-// given alert kind. Returns ok=false for non-alert kinds (morning_summary,
-// unknown), which must not be passed to RenderWeatherAlert.
-func alertKindHeader(kind domain.WeatherNotifyKind) (header, emoji string, ok bool) {
+// alertKindHeader returns the human-readable label and display emoji for the given alert
+// kind and latch edge. Returns ok=false for non-alert kinds (morning_summary, unknown),
+// for AlertEdgeNone (nothing to render), and for AlertEdgeCleared on any kind but
+// rain_alert — the daily-metric kinds re-arm silently, so a cleared edge reaching the
+// renderer for one of them is a bug, not a message.
+func alertKindHeader(kind domain.WeatherNotifyKind, edge domain.AlertEdge) (header, emoji string, ok bool) {
+	if kind == domain.WeatherNotifyAlertRain {
+		switch edge {
+		case domain.AlertEdgeEntered:
+			return "Rain alert", "🌧️", true
+		case domain.AlertEdgeCleared:
+			return "Rain cleared", "🌤️", true
+		default:
+			return "", "", false
+		}
+	}
+
+	if edge != domain.AlertEdgeEntered {
+		return "", "", false
+	}
 	switch kind {
 	case domain.WeatherNotifyAlertHeat:
 		return "Heat alert", "🔥", true
@@ -139,8 +156,6 @@ func alertKindHeader(kind domain.WeatherNotifyKind) (header, emoji string, ok bo
 		return "Frost alert", "❄️", true
 	case domain.WeatherNotifyAlertThunderstorm:
 		return "Thunderstorm alert", "⛈️", true
-	case domain.WeatherNotifyAlertRain:
-		return "Rain alert", "🌧️", true
 	case domain.WeatherNotifyAlertThaw:
 		return "Thaw alert", "🫠", true
 	default:

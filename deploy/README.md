@@ -145,9 +145,70 @@ failure (`OnFailure=`) to page on critical issues.
 The SQLite file is the entire persistent state of the service. Snapshot
 creation runs on the host via `configs/sqlite_dump.sh` (installed by
 `make init`): a daily online backup, safe under WAL, written to
-`/opt/beacon/backups/beacon.<YYYYMMDD>.sqlite` and mirrored to Google
+`/opt/beacon/backups/beacon.<YYYYMMDD>.sqlite.gz` and mirrored to Google
 Drive. See the project `README.md` for install, scheduling, and retention. The
 restore drill below is the operator-facing half not covered there.
+
+Snapshots are gzipped (~4× on real data: 8.1 MB → 2.1 MB), and local retention is
+**3 days** against 14 on Google Drive. Both numbers exist because the host disk is
+the scarce resource — roughly 1.2 GB free — while the remote is not: the local
+copies make a same-week restore fast, the remote mirror is the archive of record.
+The rclone sync always completes before the local prune, so shortening local
+retention can never drop a snapshot the remote has not already taken. Override
+either with `LOCAL_RETENTION_DAYS` / `REMOTE_RETENTION_DAYS` in
+`/opt/beacon/backups/.env`.
+
+Both extensions are handled everywhere: snapshots predating compression and the
+`cp` fallback's uncompressed set still restore, prune, and mirror normally.
+
+### Reading the database without stopping anything
+
+The live DB is root-owned `0600`, so inspection goes through the snapshots, which are
+world-readable. A plain read-only open of one fails:
+
+```
+$ sqlite3 -readonly /opt/beacon/backups/beacon.20260804.sqlite "SELECT 1"
+Error: in prepare, attempt to write a readonly database (8)
+```
+
+`journal_mode=WAL` is persisted in the database file header, so SQLite wants to create
+`-shm`/`-wal` sidecars beside the file — impossible in a root-owned backup directory.
+Open it as a URI with `immutable=1` instead, which tells SQLite the file cannot change
+and skips WAL setup:
+
+```bash
+sqlite3 "file:/opt/beacon/backups/beacon.20260804.sqlite?immutable=1" \
+  "SELECT filename, applied_at FROM __schema_migrations ORDER BY filename DESC LIMIT 5;"
+```
+
+Compression changes nothing about that. A gzipped snapshot is not a database at all until
+it is expanded — SQLite answers `file is not a database (26)` for it, with or without
+`immutable=1` — and the expanded file is byte-identical to what the snapshot always was,
+`journal_mode=WAL` in its header included. So the `immutable=1` requirement belongs to the
+decompressed file, exactly as it did before, and it is the only wrinkle either way:
+
+```bash
+gunzip -cf /opt/beacon/backups/beacon.20260804.sqlite* > /tmp/inspect.sqlite
+sqlite3 "file:/tmp/inspect.sqlite?immutable=1" "SELECT COUNT(*) FROM rate_values;"
+```
+
+From a workstation, `make db-inspect` does all of that: it streams the newest snapshot down
+(decompressing on the fly), reports its age, and opens it locally, so the host needs neither
+a `sqlite3` binary nor scratch space. `make db-inspect ARGS="<sql>"` runs one query and exits.
+The age matters: snapshots are cut at 00:00 UTC, so immediately after a deploy the newest
+one predates the migration you are trying to confirm. `make db-snapshot` cuts a fresh one
+on demand (interactive `sudo` on the host).
+
+To make that snapshot non-interactive — for a scripted post-deploy check — add one narrow
+line to sudoers for the operator account, mirroring the CI grant in
+`configs/beacon-deploy.sudoers`:
+
+```
+<operator> ALL=(root) NOPASSWD: /opt/beacon/backups/sqlite_dump.sh
+```
+
+Not installed by `make init` on purpose: it widens what a compromised operator key can do,
+so it is an explicit decision rather than a default.
 
 ### Restore drill
 
@@ -165,7 +226,10 @@ DB="${DB#sqlite://}"
 mv "$DB" "$DB.before-restore"
 [[ -f "$DB-wal" ]] && mv "$DB-wal" "$DB-wal.before-restore"
 [[ -f "$DB-shm" ]] && mv "$DB-shm" "$DB-shm.before-restore"
-cp /opt/beacon/backups/beacon.<YYYYMMDD>.sqlite "$DB"
+# -f makes this work for either extension: gunzip decompresses a .sqlite.gz, and
+# copies an already-uncompressed .sqlite through unchanged. Both kinds coexist —
+# snapshots predating compression, and the cp fallback's set.
+gunzip -cf /opt/beacon/backups/beacon.<YYYYMMDD>.sqlite* > "$DB"
 chown root:root "$DB"
 chmod 600 "$DB"
 ```

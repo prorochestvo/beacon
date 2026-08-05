@@ -37,6 +37,18 @@ Egress asymmetry: `cmd/collector` honours `BEACON_PROXY_URL`; the Open-Meteo ins
 in `cmd/web` probes **direct** (cmd/web ignores `BEACON_PROXY_URL`), so a false "down"
 there can't fail the deploy gate — the inspector is advisory.
 
+**Alert edge semantics** — every alert kind is edge-triggered through the per-row
+`alert_latched` boolean, and `domain.EvaluateLatched` reports the transition as a
+`domain.AlertEdge`. The four daily-metric kinds (`alert_heat`, `alert_frost`,
+`alert_thunderstorm`, `alert_thaw`) notify on entry only, re-arm silently, and are capped
+to one notification per `forecast_date` (`WeatherNotifyKind.UsesForecastDateCap`, cursor in
+`last_notified_at`). `rain_alert` is the exception on both counts: it notifies on **both**
+edges (distinct "Rain alert" / "Rain cleared" messages) and is exempt from the daily cap,
+because its metric is a rolling 6 h window whose two transitions routinely share one
+`forecast_date`. Its anti-flap guard is the hysteresis band instead — fires at
+`maxProb ≥ threshold`, clears only at `maxProb ≤ max(threshold − 20, 0)`, holds the latch
+in between.
+
 ### Layer Responsibilities
 
 | Layer | Location | Role |
@@ -65,8 +77,8 @@ Routes are registered in `internal/gateway/` (grep the path literals for the ful
 - **Auth** — the `/api/me/*` family is the only authenticated surface (HMAC algorithm in Key Patterns). The signed Telegram WebApp `initData` is accepted **only** in the `X-Telegram-Init-Data` header, never via query string (a signed payload in the URL leaks into access logs and `Referer`).
 - **Ownership → 404, not 403** — reading or mutating a `/api/me/*` resource (subscription, weather city) owned by another user returns **404**, never 403, to avoid existence disclosure. Deleting a subscription does **not** cascade-delete its `rate_user_events` rows.
 - **Chart endpoints** (`/api/me/rates/chart`, `/api/public/rates/chart`) — `period` is an integer-days whitelist `{7,30,90,180,360}` (default 7); anything else is 400 with a `PublicError` body. Equity (`kind=LAST`) pairs render under the `equity` category with an amber series (`#D98E04`).
-- **Weather city create** — server re-validates `timezone` via `time.LoadLocation`, `latitude in [-90,90]`, `longitude in [-180,180]`, `notify_hour in [0,23]` (default 7). Creating any city also auto-ensures a forced `alert_thaw` row for that location (idempotent second `RetainWeatherUserCity`) unless the requested kind already is thaw — thaw is system-managed and always-on for every tracked city. The Mini App's "+ Add alert" form also offers `morning_summary` with a 0–23 hour picker, so a deleted daily summary can be re-added and its hour changed; the upsert rewrites `notify_hour` but never `last_notified_at`, so re-adding cannot emit a second summary the same day.
-- **Weather alert delete** — `DELETE /api/me/weather/cities/{id}` removes one subscription row, but a direct delete of an `alert_thaw` row returns **409 + PublicError** (ownership check runs first, so cross-user/missing is still 404, never 409). To turn thaw off, remove the whole location via `DELETE /api/me/weather/locations/{location_id}`, which deletes every row (all kinds, including thaw) the caller owns there (204; 404 when the caller owns nothing at that location — no existence disclosure). The Mini App renders no per-city thaw row at all — the forced subscription is surfaced once as a single note above the city list — and offers a per-city "Remove city" control.
+- **Weather city create** — server re-validates `timezone` via `time.LoadLocation`, `latitude in [-90,90]`, `longitude in [-180,180]`, `notify_hour in [0,23]` (default 7). Creating any city also auto-ensures the two forced, system-managed rows for that location — `alert_thaw` (always upserted) and `rain_alert` at threshold `60` (inserted **only when absent**, so a user-tuned threshold is never stomped) — skipping whichever kind the request itself created. The Mini App's "+ Add alert" form also offers `morning_summary` with a 0–23 hour picker, so a deleted daily summary can be re-added and its hour changed; the upsert rewrites `notify_hour` but never `last_notified_at`, so re-adding cannot emit a second summary the same day. `rain_alert` stays in that form too: re-adding it with a new percentage is how its threshold is retuned (`alert_latched` is insert-only in the upsert, so retuning never re-fires).
+- **Weather alert delete** — `DELETE /api/me/weather/cities/{id}` removes one subscription row, but a direct delete of a forced row (`alert_thaw`, `rain_alert`) returns **409 + PublicError** (ownership check runs first, so cross-user/missing is still 404, never 409). To turn those off, remove the whole location via `DELETE /api/me/weather/locations/{location_id}`, which deletes every row (all kinds, including the forced ones) the caller owns there (204; 404 when the caller owns nothing at that location — no existence disclosure). The Mini App renders no per-city thaw row at all — the forced subscriptions are surfaced once as a single note above the city list — while the rain row IS listed (its threshold is user-tunable) but carries no delete control; each city offers a "Remove city" control.
 - **`GET /`** — dispatcher inline script routes on `window.Telegram.WebApp.initData`: non-empty → Mini App view, empty → public view.
 - **`GET /ping`** (alias `/healthz`) — liveness, always 200, touches no dependency, no auth.
 - **`GET /health/check`** — readiness; runs all inspectors under a 3s bound, per-component report. Critical (`sqlite`, `telegram`) flip `status=false` → HTTP 503; advisory (`open-meteo`) appears but never forces 503 (a weather outage must not fail the deploy gate). No auth.
@@ -111,6 +123,14 @@ Schema lives at the project root: `./migrations/*.sql`. The sibling Go file
 calls `sqlitedb.Migrator.Run(ctx)`. Idempotent: applied filenames are tracked in
 `__schema_migrations`.
 
+After applying, the migrator calls `Migrator.Verify(ctx)` and exits non-zero when the
+ledger does not account for every embedded migration, or when any migration file is
+empty (`Run` skips empty content silently, so a truncated `.sql` would otherwise be a
+permanent invisible no-op). The `beacon-migrate` unit is `Type=oneshot` with
+`RemainAfterExit=no`, so `systemctl start` propagates that exit code and the release
+job fails — schema drift surfaces at deploy time rather than at the first query
+against a missing column.
+
 Service binaries (`cmd/web`, `cmd/collector`, `cmd/notifier`) DO NOT migrate on
 startup. They call `sqlitedb.RequireMigratedSchema(ctx, db)` immediately after
 opening the DB; a missing or empty `__schema_migrations` table causes
@@ -136,6 +156,27 @@ make migrate       # applies any pending .sql files (no-op if up to date)
 make run           # starts collector, notifier, web
 ```
 
+**Reading production data.** The live DB is root-owned `0600`; the daily snapshots in
+`/opt/beacon/backups/` are world-readable, so inspection goes through those. `sqlite3
+-readonly <snapshot>` **fails** with `attempt to write a readonly database (8)`:
+`journal_mode=WAL` is persisted in the file header, so opening the file makes SQLite
+want `-shm`/`-wal` sidecars next to it, which the backup directory does not allow. The
+working form is a URI with `immutable=1`, which skips WAL setup entirely:
+
+```
+sqlite3 "file:/opt/beacon/backups/beacon.<YYYYMMDD>.sqlite?immutable=1" "<query>"
+```
+
+Snapshots are **gzipped** (`beacon.<YYYYMMDD>.sqlite.gz`, ~4× on real data), so decompress
+before applying the URI. `make db-inspect` does the whole dance: streams the newest
+snapshot down, decompresses on the fly, prints its age — snapshots are cut at 00:00 UTC,
+so one older than the last deploy cannot confirm that deploy's migrations — and opens it
+locally, so the host needs neither `sqlite3` nor scratch space. `ARGS="<sql>"` runs a
+single query and exits; without it you get the interactive shell. `make db-snapshot` cuts
+a fresh snapshot on demand (`sudo` prompts on the TTY) when the nightly one is too old to
+answer the question. Both extensions are handled throughout — snapshots predating
+compression, and the `cp` fallback's uncompressed WAL/SHM set, still prune and restore.
+
 ### Environment Variables
 
 - `BEACON_SQLITEDB_DSN` — SQLite connection string, parsed via `dsninjector.Unmarshal`. Format: `sqlite://<path-to-db-file>`
@@ -153,6 +194,15 @@ make run           # starts collector, notifier, web
 Static assets live in `cmd/web/static/` (embedded via `//go:embed static`); the WASM bundle builds from `cmd/wasm` (`GOOS=js GOARCH=wasm`) to `cmd/web/static/app.wasm`, sharing `internal/dto` wire types with the server. `make build` produces it.
 
 The `webAppURL` BotFather setting must point to `https://<host>/` (trailing slash, no path suffix) — update it whenever the host changes.
+
+**Mini App navigation** — the four authenticated screens form a 2×2 matrix of a **section** (rates / weather) and a **mode** (view / manage):
+
+| | view (home) | manage (settings) |
+|---|---|---|
+| **Rates** | `RenderMeSubscriptions` | `RenderMeSubscriptionsEdit` |
+| **Weather** | `RenderMeWeatherCurrent` | `RenderMeWeatherCities` |
+
+The vertical section rail (`cmd/wasm/ui/section_rail.go`, wrapped around every screen via `RenderSectionShell`) changes the **section only**; the manage gear (home) and the ← Back button (settings) change the **mode only**, so entering or leaving settings always stays in the section the user was in. Each cell is its own screen mount, so the active tab is implied by which screen rendered the rail — there is no tab state anywhere. Rail clicks are delegated from the stable `#app` container, never bound to the rail node: the weather and editor screens replace `#app` innerHTML on every redraw. Auth failure short-circuits before the shell, so a screen with no content renders no rail.
 
 ### Deployment
 

@@ -501,8 +501,10 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		require.NoError(t, a.Run(t.Context()))
 		require.Len(t, eventRepo.retained, 1, "one rain alert event must be queued")
 		assert.Contains(t, eventRepo.retained[0].Message, "Rain alert")
-		require.Len(t, cityRepo.fired, 1)
-		assert.Equal(t, "rain-c1", cityRepo.fired[0].id)
+		require.Empty(t, cityRepo.fired, "rain_alert is exempt from the per-forecast_date fire cap")
+		require.Len(t, cityRepo.latched, 1, "rain_alert persists the latch alone")
+		assert.Equal(t, "rain-c1", cityRepo.latched[0].id)
+		assert.True(t, cityRepo.latched[0].latched)
 	})
 
 	t.Run("rain_alert: already latched and still met does not re-fire or persist", func(t *testing.T) {
@@ -1072,4 +1074,160 @@ func (m *mockCountingObsRepo) ObtainLatestObservation(_ context.Context, _, prov
 	}
 	// Any other provider token is not queried by the check agent.
 	return nil, internal.ErrNotFound
+}
+
+// TestWeatherCheckAgent_RainBothEdges covers what issue #3 reported broken: the rain
+// alert used to notify only on the way into the condition, and the per-forecast_date fire
+// cap made a second notification on the same day impossible. Both directions must now
+// reach the queue, within one forecast_date, and neither may touch the fire cursor.
+func TestWeatherCheckAgent_RainBothEdges(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	rainCityWith := func(id string, latched bool) domain.WeatherUserCity {
+		return domain.WeatherUserCity{
+			ID: id, UserType: domain.UserTypeTelegram, UserID: "u-rain",
+			LocationID: "loc-" + id, DisplayName: "RainCity", Timezone: "UTC",
+			NotifyKind: domain.WeatherNotifyAlertRain, ConditionValue: "70",
+			AlertLatched: latched,
+		}
+	}
+	obsWith := func(locationID string, prob int) *domain.WeatherObservation {
+		p := prob
+		return &domain.WeatherObservation{
+			Provider:     domain.ProviderOpenMeteo,
+			LocationID:   locationID,
+			Hourly:       []domain.WeatherHourlyPoint{{Time: now.Add(time.Hour), PrecipProb: &p}},
+			ForecastDate: "2026-08-04",
+		}
+	}
+
+	t.Run("cleared edge queues a message and unlatches the row", func(t *testing.T) {
+		t.Parallel()
+		city := rainCityWith("rain-clear", true)
+		cityRepo := &mockWeatherCheckCityRepo{
+			citiesByKind: map[domain.WeatherNotifyKind][]domain.WeatherUserCity{
+				domain.WeatherNotifyAlertRain: {city},
+			},
+		}
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: obsWith(city.LocationID, 20),
+		}}
+		eventRepo := &mockCheckEventRepository{}
+
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		require.NoError(t, a.Run(t.Context()))
+
+		require.Len(t, eventRepo.retained, 1, "leaving the rain condition must notify, not just re-arm silently")
+		assert.Contains(t, eventRepo.retained[0].Message, "Rain cleared")
+		assert.Equal(t, "u-rain", eventRepo.retained[0].UserID)
+
+		require.Len(t, cityRepo.latched, 1)
+		assert.Equal(t, "rain-clear", cityRepo.latched[0].id)
+		assert.False(t, cityRepo.latched[0].latched, "the clear edge must persist alert_latched = false")
+		assert.Empty(t, cityRepo.fired, "rain_alert must never write the forecast_date fire cursor")
+	})
+
+	t.Run("both edges fire within one forecast_date", func(t *testing.T) {
+		t.Parallel()
+		// A row that already fired today: LastNotifiedAt holds this observation's
+		// forecast_date, which is exactly what the cap keys on for the daily-metric kinds.
+		firedToday, err := domain.ForecastDateKey("2026-08-04")
+		require.NoError(t, err)
+
+		city := rainCityWith("rain-both", true)
+		city.LastNotifiedAt = firedToday
+		cityRepo := &mockWeatherCheckCityRepo{
+			citiesByKind: map[domain.WeatherNotifyKind][]domain.WeatherUserCity{
+				domain.WeatherNotifyAlertRain: {city},
+			},
+		}
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: obsWith(city.LocationID, 10),
+		}}
+		eventRepo := &mockCheckEventRepository{}
+
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		require.NoError(t, a.Run(t.Context()))
+
+		require.Len(t, eventRepo.retained, 1,
+			"a same-forecast_date cursor must not suppress the rain clear message: that cap is for daily-metric kinds")
+		assert.Contains(t, eventRepo.retained[0].Message, "Rain cleared")
+	})
+
+	t.Run("dead band emits nothing and writes nothing", func(t *testing.T) {
+		t.Parallel()
+		city := rainCityWith("rain-band", true)
+		cityRepo := &mockWeatherCheckCityRepo{
+			citiesByKind: map[domain.WeatherNotifyKind][]domain.WeatherUserCity{
+				domain.WeatherNotifyAlertRain: {city},
+			},
+		}
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: obsWith(city.LocationID, 60), // between 50 and 70
+		}}
+		eventRepo := &mockCheckEventRepository{}
+
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		require.NoError(t, a.Run(t.Context()))
+
+		assert.Empty(t, eventRepo.retained, "the hysteresis band must not produce a message")
+		assert.Empty(t, cityRepo.latched, "an unchanged latch must cost zero writes")
+		assert.Empty(t, cityRepo.fired)
+	})
+
+	t.Run("queue failure on the cleared edge leaves the latch set for a retry", func(t *testing.T) {
+		t.Parallel()
+		city := rainCityWith("rain-retry", true)
+		cityRepo := &mockWeatherCheckCityRepo{
+			citiesByKind: map[domain.WeatherNotifyKind][]domain.WeatherUserCity{
+				domain.WeatherNotifyAlertRain: {city},
+			},
+		}
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: obsWith(city.LocationID, 5),
+		}}
+		eventRepo := &mockCheckEventRepository{err: errors.New("queue down")}
+
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		err := a.Run(t.Context())
+		require.Error(t, err)
+
+		assert.Empty(t, cityRepo.latched,
+			"a failed enqueue must not persist the unlatch, or the clear message would be lost forever")
+		assert.Empty(t, cityRepo.fired)
+	})
+
+	t.Run("daily-metric kinds stay capped to one notification per forecast_date", func(t *testing.T) {
+		t.Parallel()
+		firedToday, err := domain.ForecastDateKey("2026-08-04")
+		require.NoError(t, err)
+
+		tempMax := 38.0
+		heat := domain.WeatherUserCity{
+			ID: "heat-capped", UserType: domain.UserTypeTelegram, UserID: "u-heat",
+			LocationID: "loc-heat", DisplayName: "HeatCity", Timezone: "UTC",
+			NotifyKind: domain.WeatherNotifyAlertHeat, ConditionValue: "35",
+			AlertLatched: false, LastNotifiedAt: firedToday,
+		}
+		cityRepo := &mockWeatherCheckCityRepo{
+			citiesByKind: map[domain.WeatherNotifyKind][]domain.WeatherUserCity{
+				domain.WeatherNotifyAlertHeat: {heat},
+			},
+		}
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: {
+				Provider: domain.ProviderOpenMeteo, LocationID: "loc-heat",
+				TempMax: &tempMax, ForecastDate: "2026-08-04",
+			},
+		}}
+		eventRepo := &mockCheckEventRepository{}
+
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		require.NoError(t, a.Run(t.Context()))
+
+		assert.Empty(t, eventRepo.retained, "the forecast_date cap must still hold for heat")
+		require.Len(t, cityRepo.latched, 1, "the suppressed latch edge is still recorded")
+		assert.True(t, cityRepo.latched[0].latched)
+	})
 }

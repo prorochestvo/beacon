@@ -67,7 +67,6 @@ func TestRenderMeWeatherCurrent(t *testing.T) {
 			},
 		})
 		require.Contains(t, html, "weather-topbar")
-		require.Contains(t, html, "weather-current-back")
 		require.Contains(t, html, "weather-current-card")
 		require.Contains(t, html, "Almaty")
 		require.Contains(t, html, "Clear sky")

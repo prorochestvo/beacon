@@ -92,6 +92,17 @@ func run(dsnSQLiteDB dsninjector.DataSource, logger *loginjector.Logger) (err er
 
 	log.Printf("migrator: applied %d migration(s)", m.Applied())
 
+	// Post-condition: the ledger must now account for every embedded migration. A
+	// non-zero exit here fails `systemctl start beacon-migrate`, which fails the deploy
+	// step — so a database that does not match the shipped binary is caught at release
+	// time rather than weeks later at the first query against a missing column.
+	if err = m.Verify(ctx); err != nil {
+		err = fmt.Errorf("schema verification failed after migrate: %w", err)
+		return
+	}
+
+	log.Println("migrator: schema verified against the embedded migration set")
+
 	return
 }
 

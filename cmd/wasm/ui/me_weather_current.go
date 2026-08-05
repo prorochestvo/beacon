@@ -9,8 +9,13 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/dto"
 )
 
-// RenderMeWeatherCurrent returns the full HTML for the on-demand current-weather
-// screen. Auth-failure, loading, and error states short-circuit the content.
+// RenderMeWeatherCurrent returns the full HTML for the weather home tab.
+// Auth-failure, loading, and error states short-circuit the content.
+//
+// This is the weather counterpart of the rates home tab: same section shell, same
+// manage gear in the same slot, no back button — it is a top-level destination
+// reached from the section rail, not a sub-screen of the city manager. Its gear
+// leads to the weather settings screen, so entering settings keeps the section.
 //
 // All user-influenced or server-returned strings are passed through dom.Escape
 // before interpolation. Numeric fields (temperature, humidity, wind) are
@@ -23,38 +28,34 @@ func RenderMeWeatherCurrent(state application.WeatherCurrentState) string {
 
 	var b strings.Builder
 
+	b.WriteString(renderManageGearButton("Manage weather"))
 	b.WriteString(renderWeatherCurrentTopbar())
 
-	if state.Loading {
+	switch {
+	case state.Loading:
 		b.WriteString(`<p class="weather-loading">Loading…</p>`)
-		return b.String()
-	}
-	if state.LoadError != nil {
+	case state.LoadError != nil:
 		b.WriteString(`<p class="error-msg">`)
 		b.WriteString(dom.Escape(state.LoadError.Error()))
 		b.WriteString(`</p>`)
-		return b.String()
-	}
-
-	if len(state.Items) == 0 {
+	case len(state.Items) == 0:
 		b.WriteString(`<p class="weather-current-empty">No weather data yet. Add a city first.</p>`)
-		return b.String()
+	default:
+		b.WriteString(`<ul class="weather-current-list">`)
+		for _, item := range state.Items {
+			b.WriteString(renderWeatherCurrentCard(item))
+		}
+		b.WriteString(`</ul>`)
 	}
 
-	b.WriteString(`<ul class="weather-current-list">`)
-	for _, item := range state.Items {
-		b.WriteString(renderWeatherCurrentCard(item))
-	}
-	b.WriteString(`</ul>`)
-	return b.String()
+	return RenderSectionShell(SectionWeather, b.String())
 }
 
-// renderWeatherCurrentTopbar emits the screen header with a back button.
-// The back button id is "weather-current-back" so the WASM dispatcher can
-// route it separately from the city-picker back button.
+// renderWeatherCurrentTopbar emits the screen title. There is no back button: the
+// section rail moves sideways between home tabs and the gear moves into settings,
+// so this screen has nothing to go back to.
 func renderWeatherCurrentTopbar() string {
 	return `<div class="weather-topbar">` +
-		`<button class="weather-back" id="weather-current-back" type="button">← Back</button>` +
 		`<span class="weather-title">Current weather</span>` +
 		`</div>`
 }

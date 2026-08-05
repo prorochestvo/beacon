@@ -25,8 +25,8 @@
     }
     /*
      * #app is the screen container; making it position: relative establishes
-     * the containing block for the absolutely positioned .me-manage-gear and
-     * .me-weather-cloud buttons (see CSS rules further down).
+     * the containing block for the absolutely positioned .me-manage-gear
+     * button (see CSS rules further down).
      */
     #app { position: relative; }
     .badges { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -983,19 +983,6 @@
       display: flex;
       gap: 8px;
     }
-    .weather-current-btn {
-      width: 100%;
-      box-sizing: border-box;
-      padding: 10px;
-      border-radius: 8px;
-      font-size: 14px;
-      cursor: pointer;
-      min-height: 44px;
-      background: var(--tg-theme-button-color, #2196f3);
-      color: var(--tg-theme-button-text-color, #fff);
-      border: none;
-      margin-top: 12px;
-    }
     .weather-current-empty {
       text-align: center;
       padding: 30px 12px;
@@ -1075,14 +1062,81 @@
       margin-top: 6px;
     }
     /*
-     * Gear and weather-cloud buttons — authenticated subscriptions screen.
-     * Absolutely positioned at the top-right of #app so they float over the
-     * empty space to the right of the chart-card header instead of consuming
-     * their own row above the chart. #app is given position: relative below so
-     * these absolute elements resolve against the app container.
+     * Section shell — the two-column Mini App layout: a vertical section rail on
+     * the left, the active screen on the right. Neither wrapper may be given
+     * position: relative: the manage gear inside the panel is absolutely
+     * positioned and must keep resolving against #app, not against the panel.
      */
-    .me-manage-gear,
-    .me-weather-cloud {
+    .app-shell {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .section-rail {
+      flex: 0 0 auto;
+      /*
+       * Sticky so the rail stays reachable while a long city or subscription
+       * list scrolls. Works because no ancestor sets overflow.
+       */
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .section-rail-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      width: 52px;
+      padding: 8px 2px;
+      background: transparent;
+      border: none;
+      border-radius: 10px;
+      color: var(--tg-theme-hint-color, #888);
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    /*
+     * Active state keys off aria-selected rather than a second class, so the
+     * visual state and the accessibility state can never disagree.
+     */
+    .section-rail-item[aria-selected="true"] {
+      background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+      color: var(--tg-theme-button-color, #2ea6ff);
+    }
+    .section-rail-item:active { opacity: 0.7; }
+    .section-rail-label {
+      font-size: 10px;
+      line-height: 1;
+      pointer-events: none;
+    }
+    .section-rail-item svg {
+      width: 20px;
+      height: 20px;
+      pointer-events: none;
+    }
+    /*
+     * min-width: 0 overrides the flex default of min-width: auto; without it a
+     * wide sparkline SVG would refuse to shrink and push the panel past the
+     * viewport.
+     */
+    .section-panel {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    /*
+     * Manage gear — the Mini App's only entry point into settings, rendered on
+     * both home tabs. Absolutely positioned at the top-right of #app so it floats
+     * over the empty space beside the screen header instead of consuming its own
+     * row. #app is given position: relative above so this resolves against the
+     * app container.
+     */
+    .me-manage-gear {
       position: absolute;
       top: 0;
       right: 0;
@@ -1100,16 +1154,10 @@
       cursor: pointer;
       touch-action: manipulation;
     }
-    /* Weather button sits one 44px slot left of the gear. */
-    .me-weather-cloud {
-      right: 44px;
-    }
-    .me-manage-gear:active,
-    .me-weather-cloud:active {
+    .me-manage-gear:active {
       opacity: 0.7;
     }
-    .me-manage-gear svg,
-    .me-weather-cloud svg {
+    .me-manage-gear svg {
       width: 20px;
       height: 20px;
       /*
