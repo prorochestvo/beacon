@@ -40,6 +40,28 @@ array grows through the session; a literal index would name a different moment o
 request. `ApplyJSONPath` accepts hyphens in keys for the same reason — `BTC-USD` is a key,
 not a subtraction.
 
+### Collection egress is direct, on purpose
+
+`cmd/collector` reaches every upstream directly and does not read `BEACON_PROXY_URL`. That
+is a decision taken on measurement (issue #16), not an omission, and it is worth not
+reversing casually:
+
+- **There is no volume to hide.** Each Kazakhstani host sees four requests a day; the
+  batched Yahoo endpoint sees four. `gateway.prod.qazpost.kz` states its own budget in a
+  response header — `x-ratelimit-remaining: 199` — against which one is spent.
+- **Direct is the least suspicious origin available.** The host is a Kazakhstani provider in
+  Astana reaching Kazakhstani bank sites. The tunnel replaced that with a foreign datacenter
+  address that rotates daily, which is the signature of evasion rather than of a client.
+- **One bank already treated the two differently.** `halykbank.kz` answers `server: nginx`
+  direct and `server: ddos-guard` through the tunnel, reproducibly. The proxy is what put
+  collection behind bot protection.
+- **It cost availability.** 207 `proxyconnect ... connection refused` errors in one log
+  window killed the proxied sources until `vpntunnel` came back.
+- **And latency**, 2.9× to 12.6× depending on host.
+
+`cmd/doctor` still honours the proxy: it talks to AI providers, which is a different
+question with different exposure.
+
 ### Weather providers
 
 Open-Meteo (`domain.ProviderOpenMeteo`) is the sole weather provider: global, keyless
@@ -50,9 +72,10 @@ is a retained vestigial column (it partitions two composite indexes) that now on
 holds `'open-meteo'`; it was kept rather than dropped to avoid a rebuild of the largest
 weather table for zero functional gain.
 
-Egress asymmetry: `cmd/collector` honours `BEACON_PROXY_URL`; the Open-Meteo inspector
-in `cmd/web` probes **direct** (cmd/web ignores `BEACON_PROXY_URL`), so a false "down"
-there can't fail the deploy gate — the inspector is advisory.
+Weather collection is direct, like everything else the collector fetches — see the
+collection-egress note below. The Open-Meteo inspector in `cmd/web` has always probed
+direct, so the two now agree; a false "down" there still cannot fail the deploy gate,
+because the inspector is advisory.
 
 **Transient failures are retried inside the client.** Open-Meteo answers 5xx
 intermittently, and without a retry each one dropped that location for the whole run
@@ -300,7 +323,7 @@ and is not installed on purpose.
 
 - `BEACON_SQLITEDB_DSN` — SQLite connection string, parsed via `dsninjector.Unmarshal`. Format: `sqlite://<path-to-db-file>`
 - `BEACON_TELEGRAMBOT_DSN` — Telegram bot credentials parsed via `dsninjector.Unmarshal`. Format: `<adminChatID>:<botToken>@<host>` where `Addr()` returns the token and `Login()` returns the admin chat ID.
-- `BEACON_PROXY_URL` — optional outbound proxy URL, parsed via `dsninjector.Unmarshal`. Format: `<scheme>://<host>:<port>` (e.g. `http://127.0.0.1:7788`). When unset or empty all outbound traffic is direct. Used by `cmd/collector` (plain and chromedp rate sources) and `cmd/doctor` (AI provider calls and chromedp fetcher). Telegram Bot API traffic bypasses the proxy unconditionally — the bypass is enforced in code via a hardcoded `Proxy: nil` transport in `internal/infrastructure/telegrambot/tbotclient.go`. Do not configure `HTTPS_PROXY`, `HTTP_PROXY`, or `NO_PROXY` for proxy routing — they are not consulted by any component in this project.
+- `BEACON_PROXY_URL` — optional outbound proxy URL, parsed via `dsninjector.Unmarshal`. Format: `<scheme>://<host>:<port>` (e.g. `http://127.0.0.1:7788`). Read **only by `cmd/doctor`** (AI provider calls and its chromedp fetcher). **`cmd/collector` deliberately ignores it** — see the collection-egress note in the Architecture section; a value left in the env file is inert, which a test pins. Telegram Bot API traffic bypasses any proxy unconditionally — the bypass is enforced in code via a hardcoded `Proxy: nil` transport in `internal/infrastructure/telegrambot/tbotclient.go`. Do not configure `HTTPS_PROXY`, `HTTP_PROXY`, or `NO_PROXY` for proxy routing — they are not consulted by any component in this project.
 - `BEACON_CHROMIUM_PATH` — optional absolute path to the Chromium/Chrome binary for `fetcher_kind='chromedp'` sources. Read by `cmd/collector` and `cmd/doctor`. When unset, chromedp searches PATH (`chromium`, `chromium-browser`, `google-chrome`, `chrome`).
 - `BEACON_AI_PRIMARY_DSN` (required) and `BEACON_AI_FALLBACK_DSN` (optional) — AI provider DSNs read only by `cmd/doctor rulegen`. See `cmd/doctor/README.md` for the DSN format and provider details.
 

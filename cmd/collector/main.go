@@ -1,11 +1,10 @@
 // Command collector polls all active rate sources on a configurable schedule,
 // extracts exchange-rate values, and persists them to the SQLite database.
 //
-// It reads BEACON_SQLITEDB_DSN from the environment. Outbound HTTP/HTTPS traffic from
-// plain and chromedp sources routes through BEACON_PROXY_URL (format: http://<host>:<port>,
-// parsed via dsninjector); when unset or empty, traffic goes direct. Telegram Bot
-// API traffic bypasses the proxy via a hardcoded transport in
-// internal/infrastructure/telegrambot.
+// It reads BEACON_SQLITEDB_DSN from the environment. All outbound traffic is direct:
+// BEACON_PROXY_URL is deliberately not consulted here — see the collection-egress note in
+// CLAUDE.md for the measurements behind that. cmd/doctor still honours it for AI provider
+// calls and its chromedp fetcher.
 package main
 
 import (
@@ -28,7 +27,6 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/infrastructure/sqlitedb"
 	weatherinfra "github.com/seilbekskindirov/beacon/internal/infrastructure/weather"
 	"github.com/seilbekskindirov/beacon/internal/repository"
-	"github.com/seilbekskindirov/beacon/internal/tools/proxyutil"
 	_ "modernc.org/sqlite"
 )
 
@@ -50,7 +48,6 @@ var (
 )
 
 const (
-	envProxyURL = "BEACON_PROXY_URL"
 	// envChromiumPath is an optional absolute path to the Chromium/Chrome binary;
 	// when unset, chromedp searches PATH for chromedp-kind sources.
 	envChromiumPath = "BEACON_CHROMIUM_PATH"
@@ -70,8 +67,6 @@ func main() {
 	// wrappers discard, so no line in the file could be attributed to a release.
 	log.Printf("build: %s (%s) at %s\n", BuildVersion, BuildHash, BuildTime)
 	log.Println("logger: initiated")
-
-	proxyURL := proxyutil.ResolveURL(envProxyURL)
 
 	// Preserve the startup-marker sequence (logger -> settings ->
 	// dependencies -> repositories -> runners) that operators grep on.
@@ -134,7 +129,7 @@ func main() {
 	runners, err := buildRunners(
 		sourceRepo, historyRepo, rateValueRepo,
 		weatherCityRepo, weatherObsRepo,
-		proxyURL, l.WriterAs(internal.LogLevelWarning),
+		l.WriterAs(internal.LogLevelWarning),
 	)
 	if err != nil {
 		log.Fatalf("runners: runners building is failed: %s", err)
@@ -238,11 +233,12 @@ func buildRunners(
 	value *repository.RateValueRepository,
 	weatherCity *repository.WeatherUserCityRepository,
 	weatherObs *repository.WeatherObservationRepository,
-	proxyURL string,
 	logger io.Writer,
 ) ([]runner, error) {
+	// The empty proxy URL is the point of this call, not an oversight: rate sources are
+	// fetched directly. See the collection-egress note in CLAUDE.md.
 	collectionRateAgent, err := collection.NewRateAgent(
-		proxyURL,
+		"",
 		ChromiumPath,
 		source,
 		history,
@@ -253,7 +249,7 @@ func buildRunners(
 		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
-	weatherAgent, err := wireWeather(weatherCity, weatherObs, proxyURL, logger)
+	weatherAgent, err := wireWeather(weatherCity, weatherObs, logger)
 	if err != nil {
 		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
@@ -263,16 +259,18 @@ func buildRunners(
 
 // wireWeather constructs the Open-Meteo weather collection agent. Open-Meteo is
 // hardcoded and always on — there is no per-provider config table and no "inactive"
-// state, so this always returns a non-nil runner. A provider construction failure
-// (e.g. an invalid proxy URL) or an agent construction failure is fatal and returned
-// as an error.
+// state, so this always returns a non-nil runner. An agent construction failure is fatal
+// and returned as an error.
+//
+// Direct, like the rate sources, which also makes this consistent with cmd/web: the
+// health inspector there has always probed Open-Meteo directly, and the two paths
+// disagreeing was a documented wart.
 func wireWeather(
 	weatherCity *repository.WeatherUserCityRepository,
 	weatherObs *repository.WeatherObservationRepository,
-	proxyURL string,
 	logger io.Writer,
 ) (runner, error) {
-	openMeteoProvider, err := weatherinfra.NewOpenMeteo(proxyURL, logger)
+	openMeteoProvider, err := weatherinfra.NewOpenMeteo("", logger)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("weather: open-meteo provider: %w", err), loginjector.NewTraceError())
 	}
