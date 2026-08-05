@@ -43,12 +43,15 @@ const (
 )
 
 func main() {
-	log.Printf("build: %s (%s) at %s\n", BuildVersion, BuildHash, BuildTime)
 
 	l, err := internal.NewLogger(LogsDir, "notifier", LogVerbosity)
 	if err != nil {
 		log.Fatalf("logger: %s", err.Error())
 	}
+	// First line of every run in the log file: which build wrote everything below.
+	// Logged after the logger exists — before it, this went to a stderr the cron
+	// wrappers discard, so no line in the file could be attributed to a release.
+	log.Printf("build: %s (%s) at %s\n", BuildVersion, BuildHash, BuildTime)
 	log.Println("logger: initiated")
 
 	// Notifier only calls Telegram, and Telegram traffic bypasses any proxy via the

@@ -148,6 +148,16 @@ closing `execution: done` line. A run that emits neither marker
 completed cleanly. Failed-source detail is available via the HTTP
 routes `GET /api/errors/execution` and `GET /api/notifications/failed`.
 
+**Every line — on stdout and in the log file — is prefixed with an RFC3339
+timestamp**, so match these markers as substrings rather than anchoring to the start
+of a line. Stdout has always carried a prefix; the log file gained one only recently,
+which is why incidents before that could be located in the file by line number but
+never dated. Each run's first logged line names the build that wrote everything under
+it.
+
+The offset is part of the stamp (`Z` on a UTC host), so a host whose timezone changes
+says so in the log rather than silently renumbering history.
+
 `chromedp`-kind sources share one Chromium subprocess per collector
 tick and execute sequentially (the underlying CDP socket is not
 concurrency-safe). Each source has a 30 s navigation timeout, so a
