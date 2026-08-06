@@ -219,6 +219,18 @@ func TestApplyJSONPath_NegativeIndex(t *testing.T) {
 		assert.Contains(t, err.Error(), "-1")
 	})
 
+	t.Run("a null series is reported as not an array", func(t *testing.T) {
+		t.Parallel()
+		// Production incident: at 00:00 UTC the upstream returns "close": null for
+		// round-the-clock symbols, because the new day has no bars yet. The message has to
+		// name the shape rather than the value, since that is what sends whoever reads it
+		// at the payload instead of at the rule.
+		nulled := []byte(`{"BTC-USD":{"symbol":"BTC-USD","close":null}}`)
+		_, err := ApplyJSONPath("BTC-USD.close[-1]", nulled)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "is not an array")
+	})
+
 	t.Run("a null at the end surfaces rather than being skipped", func(t *testing.T) {
 		t.Parallel()
 		// Upstream can leave a gap where a period had no trade. Silently walking back to
