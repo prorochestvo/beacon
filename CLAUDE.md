@@ -26,10 +26,17 @@ operator tooling (LLM rule generation and source auditing). Sources use a `kind`
 **Batched sources share one fetch.** `rateextractor` caches responses by URL for 30
 minutes, so several sources pointing at the *same* URL cost one outbound request between
 them, each picking its own value out of the shared payload with its own rule. The 20 Yahoo
-sources use this: they all fetch `/v8/finance/spark?symbols=<all 20>` and select
-`<TICKER>.close[-1]`, turning 20 requests a tick into one — 80 a day into four, matching
-every other host. (`/v7/finance/quote` would be the tidier endpoint but answers 401 without
-a crumb.)
+sources use this: they all fetch `/v8/finance/spark?symbols=<all 20>&range=5d&interval=1d`
+and select `<TICKER>.close[-1]`, turning 20 requests a tick into one — 80 a day into four,
+matching every other host. (`/v7/finance/quote` would be the tidier endpoint but answers 401
+without a crumb.)
+
+**`range=5d&interval=1d` is load-bearing, not decoration.** The endpoint's default window is
+the current day, which at 00:00 UTC has no bars yet: round-the-clock symbols come back with
+`"close": null` and the rule fails. That cost the five crypto sources one collection in four,
+every day, until it was found in production. A multi-day window is never empty at a
+boundary — the newest element is simply the previous day's close — and the price is
+unchanged either way.
 
 Two consequences worth knowing before touching those rows. The symbol list lives in the
 URL and the URLs must be **identical** to share a fetch, so adding a Yahoo source means
