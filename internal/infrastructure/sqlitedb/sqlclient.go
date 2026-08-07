@@ -63,6 +63,10 @@ func NewSQLiteClient(sqlDSN dsninjector.DataSource, logger io.Writer) (*SQLiteCl
 // journal_mode=WAL is persisted in the database file header and set once here
 // via db.Exec.
 //
+// The DSN also carries _txlock=immediate, which is what makes busy_timeout apply
+// to write transactions at all; a *sql.DB opened without it takes the deferred
+// path and fails instantly under contention instead of waiting.
+//
 // Invariant: busy_timeout (5 s, set in connectionOptions) must remain strictly
 // less than Timeout (30 s default; 60 s in NewSQLiteClient). If busy_timeout is
 // raised, raise Timeout first so the Go-level context deadline always fires
@@ -119,6 +123,15 @@ func (sqlite *SQLiteClient) Ping(ctx context.Context) error {
 
 // Transaction opens a read-write transaction. The caller is responsible for
 // committing or rolling back the returned *sql.Tx.
+//
+// It issues BEGIN IMMEDIATE (see _txlock in connectionOptions), so the write lock
+// is held from BEGIN rather than from the first write statement. Call it only for
+// paths that actually write; use ReadOnlyTransaction for the rest, or reads will
+// serialise against each other for no reason.
+//
+// Two of these cannot be open at the same time — the second BEGIN waits for the
+// first to finish, and deadlocks outright if the first is waiting on the second.
+// Open, write and commit within one function, as every repository method does.
 func (sqlite *SQLiteClient) Transaction(ctx context.Context) (*sql.Tx, error) {
 	return sqlite.db.BeginTx(ctx, nil)
 }
@@ -167,11 +180,16 @@ func (sqlite *SQLiteClient) Commit(ctx context.Context, action sqlAction, extraA
 // Rollback runs action and each extraAction inside a transaction that is always
 // rolled back, regardless of errors. Use this for read-only operations to avoid
 // any unintended writes.
+//
+// The transaction is opened read-only so it stays a deferred BEGIN despite
+// _txlock=immediate. Ping runs through here and the /health/check inspector runs
+// through Ping; a readiness probe that took the WAL write lock would queue behind
+// every collector tick and could time out on a database that is merely busy.
 func (sqlite *SQLiteClient) Rollback(ctx context.Context, action sqlAction, extraActions ...sqlAction) error {
 	ctx, cancel := context.WithTimeout(ctx, sqlite.Timeout)
 	defer cancel()
 
-	tx, err := sqlite.db.BeginTx(ctx, nil)
+	tx, err := sqlite.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return err
