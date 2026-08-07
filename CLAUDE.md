@@ -193,16 +193,36 @@ Engine: SQLite, accessed via the pure-Go `modernc.org/sqlite` driver (no CGO).
 Three PRAGMAs are applied on connection open:
 - `foreign_keys=ON` and `busy_timeout=5000` are passed as `?_pragma=`
   query parameters on the DSN (see `connectionOptions` in
-  `sqlclient.go`). The `modernc.org/sqlite` driver re-applies them in
+  `config.go`). The `modernc.org/sqlite` driver re-applies them in
   its `Open` hook on every new connection the `database/sql` pool
   opens, which is the only way to keep these per-connection settings
   consistent across `SetMaxOpenConns(N>1)`.
 - `journal_mode=WAL` is persisted in the database file header and is
   set once via `db.Exec` inside `NewSQLiteClientEx`.
 
-`busy_timeout` (5 s) is the driver-level retry window for concurrent
-writers; it must stay strictly less than the Go-level `Timeout` so the
-context deadline always fires after the driver retry expires.
+`busy_timeout` (5 s) is the driver-level retry window for lock
+contention; it must stay strictly less than the Go-level `Timeout` so
+the context deadline always fires after the driver retry expires.
+
+**Writes open `BEGIN IMMEDIATE`; reads stay deferred.** The DSN also carries
+`_txlock=immediate`, and the driver applies that begin mode only when
+`sql.TxOptions.ReadOnly` is false — so `Transaction` takes the WAL write lock at
+`BEGIN` while `ReadOnlyTransaction` keeps a plain deferred `BEGIN` and still runs
+concurrently with a writer.
+
+That split is what makes `busy_timeout` reachable at all. A deferred transaction
+begins as a reader and *promotes* at its first write, and SQLite refuses to invoke
+the busy handler on a promotion — two connections both waiting to promote would
+deadlock — so it returns `SQLITE_BUSY` on the spot. Collector/notifier/web
+contention therefore lost writes in milliseconds while a 5 s retry window sat
+unused (12 rate values and 5 `execution_history` rows in one production log).
+Taking the lock at `BEGIN` is not a promotion, so the wait is real.
+
+Consequence for new code: **`Transaction` is for paths that write.** Reads go
+through `ReadOnlyTransaction` or they serialise against each other for nothing.
+`SQLiteClient.Rollback` — and `Ping`, and through it the `/health/check`
+inspector — is read-only for that reason: a readiness probe queued behind a
+collector tick would report a busy database as a dead one.
 
 Foreign keys point from `rate_values`, `rate_user_subscriptions`, and
 `rate_user_events` to `rate_sources(name)` with `ON DELETE CASCADE` —
