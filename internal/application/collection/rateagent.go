@@ -14,7 +14,10 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/tools/rateextractor"
 )
 
-// NewRateAgent constructs a RateAgent. proxyURL may be empty to disable proxying.
+// NewRateAgent constructs a RateAgent. proxyURL says a proxy is available; it does not
+// route anything on its own — the plain extractor builds a proxied client alongside the
+// direct one and a source reaches it only via options.use_proxy.
+//
 // chromiumPath is the absolute path to the Chromium/Chrome binary for chromedp
 // sources; pass empty to let chromedp search PATH. The chromedp extractor is
 // constructed eagerly, but Chromium launches only on the first Run for a chromedp
@@ -32,7 +35,13 @@ func NewRateAgent(
 		return nil, err
 	}
 
-	chromedpExt := rateextractor.NewChromedpRateExtractor(chromiumPath, proxyURL, logger, rRateValue)
+	// Chromium gets no proxy, deliberately. Its proxy setting is a browser-launch
+	// argument on one subprocess shared by the whole tick, so it cannot vary per source:
+	// forwarding proxyURL here would make a configured BEACON_PROXY_URL route every
+	// chromedp source at once, which is the all-or-nothing behaviour issue #16 removed
+	// and issue #28 put out of scope. Chromedp stays direct until something gives it a
+	// per-source route of its own. There are no active chromedp sources today.
+	chromedpExt := rateextractor.NewChromedpRateExtractor(chromiumPath, "", logger, rRateValue)
 
 	a := &RateAgent{
 		rateValueRepository:        rRateValue,

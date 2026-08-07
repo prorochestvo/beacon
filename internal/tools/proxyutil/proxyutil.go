@@ -1,6 +1,8 @@
 // Package proxyutil resolves and redacts the operator-configured outbound proxy
-// URL. It is shared by the cmd/collector and cmd/doctor binaries, which both
-// read BEACON_PROXY_URL at startup.
+// URL. It is shared by the cmd/collector and cmd/doctor binaries, which both read
+// BEACON_PROXY_URL at startup and then differ on what they do with it: doctor
+// proxies every call, while the collector only makes the proxy available and routes
+// a source through it when that source sets options.use_proxy.
 package proxyutil
 
 import (

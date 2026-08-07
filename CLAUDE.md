@@ -21,7 +21,8 @@ and routes Telegram callbacks. `migrator` applies schema migrations; `doctor` pr
 operator tooling (LLM rule generation and source auditing). Sources use a `kind` of
 `BID`, `ASK`, or `LAST` (equity / last-traded price); sources that require a custom
 `User-Agent` or other header overrides store them in `RateSourceOptions.Headers` (the
-`options` JSON column), applied per-request by the plain fetcher.
+`options` JSON column), applied per-request by the plain fetcher, which is also where
+`UseProxy` lives.
 
 **Batched sources share one fetch.** `rateextractor` caches responses by URL for 30
 minutes, so several sources pointing at the *same* URL cost one outbound request between
@@ -47,11 +48,14 @@ array grows through the session; a literal index would name a different moment o
 request. `ApplyJSONPath` accepts hyphens in keys for the same reason — `BTC-USD` is a key,
 not a subtraction.
 
-### Collection egress is direct, on purpose
+### Collection egress is direct by default, on purpose
 
-`cmd/collector` reaches every upstream directly and does not read `BEACON_PROXY_URL`. That
-is a decision taken on measurement (issue #16), not an omission, and it is worth not
-reversing casually:
+`cmd/collector` reaches every upstream directly unless a source row opts out. Two levels
+must agree before anything is proxied: `BEACON_PROXY_URL` says a proxy exists, and
+`rate_sources.options.use_proxy` says *that* source wants it. Absent means direct, so
+configuring the variable alone re-routes nothing and opting a source in is a deliberate
+per-row act (issue #28). No source is opted in today. The default is a decision taken on
+measurement (issue #16), not an omission, and it is worth not reversing casually:
 
 - **There is no volume to hide.** Each Kazakhstani host sees four requests a day; the
   batched Yahoo endpoint sees four. `gateway.prod.qazpost.kz` states its own budget in a
@@ -66,8 +70,22 @@ reversing casually:
   window killed the proxied sources until `vpntunnel` came back.
 - **And latency**, 2.9× to 12.6× depending on host.
 
-`cmd/doctor` still honours the proxy: it talks to AI providers, which is a different
-question with different exposure.
+`cmd/doctor` still honours the proxy unconditionally: it talks to AI providers, which is a
+different question with different exposure.
+
+Two things stay direct regardless of the flag. **Chromedp** takes its proxy as a
+browser-launch argument on one Chromium subprocess shared by the whole tick, so it cannot
+vary per source — `NewRateAgent` therefore passes it an empty proxy URL on purpose, or a
+configured variable would silently re-route every chromedp source at once. (There are no
+active chromedp sources; all 56 are `plain`.) **Weather** is one global keyless provider,
+not a source with rules, and `cmd/web`'s health inspector probes it directly.
+
+The **fetch cache and the failure tombstone are keyed on URL *and* route**, not URL alone.
+Sources sharing a URL is how batching works, so two of them disagreeing about the proxy
+would otherwise be served whichever response landed first — and a direct failure would
+tombstone a proxied source that would have succeeded. Headers are still not in the key: the
+20 Yahoo sources share a URL *and* their headers, so that collision stays benign. Add
+headers to the key before creating a pair that disagrees.
 
 ### Weather providers
 
@@ -350,7 +368,7 @@ and is not installed on purpose.
 
 - `BEACON_SQLITEDB_DSN` — SQLite connection string, parsed via `dsninjector.Unmarshal`. Format: `sqlite://<path-to-db-file>`
 - `BEACON_TELEGRAMBOT_DSN` — Telegram bot credentials parsed via `dsninjector.Unmarshal`. Format: `<adminChatID>:<botToken>@<host>` where `Addr()` returns the token and `Login()` returns the admin chat ID.
-- `BEACON_PROXY_URL` — optional outbound proxy URL, parsed via `dsninjector.Unmarshal`. Format: `<scheme>://<host>:<port>` (e.g. `http://127.0.0.1:7788`). Read **only by `cmd/doctor`** (AI provider calls and its chromedp fetcher). **`cmd/collector` deliberately ignores it** — see the collection-egress note in the Architecture section; a value left in the env file is inert, which a test pins. Telegram Bot API traffic bypasses any proxy unconditionally — the bypass is enforced in code via a hardcoded `Proxy: nil` transport in `internal/infrastructure/telegrambot/tbotclient.go`. Do not configure `HTTPS_PROXY`, `HTTP_PROXY`, or `NO_PROXY` for proxy routing — they are not consulted by any component in this project.
+- `BEACON_PROXY_URL` — optional outbound proxy URL. Format: `<scheme>://<host>:<port>` (e.g. `http://127.0.0.1:7788`). Read by `cmd/doctor` (AI provider calls and its chromedp fetcher), which proxies unconditionally, and by `cmd/collector`, which **routes nothing through it on its own**: a rate source reaches the proxy only by setting `options.use_proxy`, so setting this variable alone leaves collection direct — see the collection-egress note in the Architecture section, and the tests that pin both halves. Telegram Bot API traffic bypasses any proxy unconditionally — the bypass is enforced in code via a hardcoded `Proxy: nil` transport in `internal/infrastructure/telegrambot/tbotclient.go`. Do not configure `HTTPS_PROXY`, `HTTP_PROXY`, or `NO_PROXY` for proxy routing — they are not consulted by any component in this project.
 - `BEACON_CHROMIUM_PATH` — optional absolute path to the Chromium/Chrome binary for `fetcher_kind='chromedp'` sources. Read by `cmd/collector` and `cmd/doctor`. When unset, chromedp searches PATH (`chromium`, `chromium-browser`, `google-chrome`, `chrome`).
 - `BEACON_AI_PRIMARY_DSN` (required) and `BEACON_AI_FALLBACK_DSN` (optional) — AI provider DSNs read only by `cmd/doctor rulegen`. See `cmd/doctor/README.md` for the DSN format and provider details.
 
