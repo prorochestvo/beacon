@@ -2,11 +2,13 @@ package rateextractor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -98,39 +100,55 @@ func TestNewRateExtractor(t *testing.T) {
 		require.Contains(t, err.Error(), "parse proxy URL")
 	})
 
-	t.Run("explicit proxyURL is set on the transport", func(t *testing.T) {
-		t.Parallel()
+	// A configured proxy URL builds the proxied client but routes nothing by itself.
+	// This pair is the whole two-level contract: BEACON_PROXY_URL says a proxy exists,
+	// options.use_proxy says a source wants it, and only their conjunction proxies.
+	// The first subtest is what keeps issue #16's measured default in place when an
+	// operator sets the variable — it used to be the opposite assertion.
+	newProxiedExtractor := func(t *testing.T) (ext *RateExtractor, targetURL string, proxyHits *atomic.Int32) {
+		t.Helper()
+		proxyHits = &atomic.Int32{}
 
-		var correctHits atomic.Int32
-		correctProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			correctHits.Add(1)
-			w.WriteHeader(http.StatusOK)
+		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			proxyHits.Add(1)
 			_, _ = w.Write([]byte("correct-proxy"))
 		}))
-		t.Cleanup(correctProxy.Close)
+		t.Cleanup(proxy.Close)
 
 		target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("target"))
 		}))
 		t.Cleanup(target.Close)
 
-		ext, err := NewRateExtractor(
-			&mockRateValueRepository{},
-			correctProxy.URL,
-			5*time.Second,
-			logger,
-		)
+		ext, err := NewRateExtractor(&mockRateValueRepository{}, proxy.URL, 5*time.Second, logger)
 		require.NoError(t, err)
+		return ext, target.URL, proxyHits
+	}
 
-		source := &domain.RateSource{
-			Name:  "proxy_src",
-			URL:   target.URL,
-			Rules: []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: `(correct-proxy|target)`}},
+	proxySource := func(name, targetURL string, useProxy bool) *domain.RateSource {
+		return &domain.RateSource{
+			Name:    name,
+			URL:     targetURL,
+			Options: domain.RateSourceOptions{UseProxy: useProxy},
+			Rules:   []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: `(correct-proxy|target)`}},
 		}
+	}
 
-		_ = ext.Run(t.Context(), source)
-		require.Positive(t, correctHits.Load(), "explicit proxyURL must route traffic through the proxy")
+	t.Run("a configured proxyURL alone routes nothing", func(t *testing.T) {
+		t.Parallel()
+
+		ext, targetURL, proxyHits := newProxiedExtractor(t)
+		_ = ext.Run(t.Context(), proxySource("direct_src", targetURL, false))
+		require.Zero(t, proxyHits.Load(),
+			"a source that has not opted in must stay direct even with a proxy configured")
+	})
+
+	t.Run("a source opted in routes through the proxy", func(t *testing.T) {
+		t.Parallel()
+
+		ext, targetURL, proxyHits := newProxiedExtractor(t)
+		_ = ext.Run(t.Context(), proxySource("proxy_src", targetURL, true))
+		require.Positive(t, proxyHits.Load(), "options.use_proxy must route traffic through the proxy")
 	})
 }
 
@@ -789,7 +807,7 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		body, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil)
+		body, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil, false)
 		require.NoError(t, err)
 		require.Equal(t, []byte(responseBody), body)
 	})
@@ -812,11 +830,11 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		body1, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil)
+		body1, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil, false)
 		require.NoError(t, err)
 		require.Equal(t, []byte(responseBody), body1)
 
-		body2, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil)
+		body2, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil, false)
 		require.NoError(t, err)
 		require.Equal(t, []byte(responseBody), body2)
 
@@ -832,7 +850,7 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		_, err = ext.fetchHtmlPage(t.Context(), "://bad", nil)
+		_, err = ext.fetchHtmlPage(t.Context(), "://bad", nil, false)
 		require.Error(t, err)
 	})
 	t.Run("non-nil headers forwarded to server", func(t *testing.T) {
@@ -852,7 +870,7 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		body, err := ext.fetchHtmlPage(t.Context(), srv.URL, map[string]string{"User-Agent": "TestAgent/3.0"})
+		body, err := ext.fetchHtmlPage(t.Context(), srv.URL, map[string]string{"User-Agent": "TestAgent/3.0"}, false)
 		require.NoError(t, err)
 		require.NotNil(t, body)
 		require.Equal(t, "TestAgent/3.0", receivedUA,
@@ -883,7 +901,7 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 		cacheKey := fmt.Sprintf("GET:%s", srv.URL)
 		require.NoError(t, ext.cache.Push(cacheKey, []byte{}))
 
-		body, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil)
+		body, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil, false)
 		require.NoError(t, err)
 		require.NotNil(t, body)
 		require.Equal(t, []byte(responseBody), body)
@@ -1051,4 +1069,190 @@ func (emptyBodyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		Body:       io.NopCloser(strings.NewReader("")),
 		Request:    req,
 	}, nil
+}
+
+// TestRateExtractorPerSourceProxy covers routing: which of the two clients a source
+// fetches through, and that the two routes do not share cache or tombstone slots.
+//
+// The proxied client is a real http.Transport with Proxy set, pointed at an httptest
+// server standing in for the proxy. A plain-HTTP proxy receives the request itself
+// (absolute-URI form) rather than a CONNECT, so the stand-in can answer directly and
+// the assertion covers actual routing rather than which struct field was read.
+func TestRateExtractorPerSourceProxy(t *testing.T) {
+	t.Parallel()
+
+	newRouted := func(t *testing.T, directBody, proxyBody string) (
+		ext *RateExtractor, originURL string, log *threadsafe.Buffer,
+		directHits, proxyHits *atomic.Int32,
+	) {
+		t.Helper()
+		directHits, proxyHits = &atomic.Int32{}, &atomic.Int32{}
+
+		origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			directHits.Add(1)
+			_, _ = fmt.Fprint(w, directBody)
+		}))
+		t.Cleanup(origin.Close)
+
+		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			proxyHits.Add(1)
+			_, _ = fmt.Fprint(w, proxyBody)
+		}))
+		t.Cleanup(proxy.Close)
+
+		proxyTarget, err := url.Parse(proxy.URL)
+		require.NoError(t, err)
+
+		log = threadsafe.NewBuffer(nil)
+		ext, err = NewRateExtractorWithHTTPClients(
+			&mockRateValueRepository{},
+			// srv.Client() rather than a bare &http.Client{}: a nil Transport shares
+			// http.DefaultTransport across parallel tests. Its Timeout must be set —
+			// fetchHtmlPage derives the request context deadline from it, and a zero
+			// http.Client.Timeout ("no timeout") becomes an already-expired context.
+			timedClient(origin.Client()),
+			&http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(proxyTarget)}},
+			log,
+		)
+		require.NoError(t, err)
+		return ext, origin.URL, log, directHits, proxyHits
+	}
+
+	t.Run("a source without the flag fetches direct", func(t *testing.T) {
+		t.Parallel()
+		ext, origin, _, directHits, proxyHits := newRouted(t, "DIRECT", "PROXIED")
+
+		body, err := ext.fetchHtmlPage(t.Context(), origin, nil, false)
+		require.NoError(t, err)
+		require.Equal(t, []byte("DIRECT"), body)
+		require.Equal(t, int32(1), directHits.Load())
+		require.Equal(t, int32(0), proxyHits.Load(), "an unflagged source must never reach the proxy")
+	})
+
+	t.Run("a flagged source fetches through the proxy", func(t *testing.T) {
+		t.Parallel()
+		ext, origin, log, directHits, proxyHits := newRouted(t, "DIRECT", "PROXIED")
+
+		body, err := ext.fetchHtmlPage(t.Context(), origin, nil, true)
+		require.NoError(t, err)
+		require.Equal(t, []byte("PROXIED"), body)
+		require.Equal(t, int32(1), proxyHits.Load())
+		require.Equal(t, int32(0), directHits.Load())
+		require.Contains(t, log.String(), "via=proxy")
+	})
+
+	t.Run("two sources on one URL do not share a cache slot across routes", func(t *testing.T) {
+		t.Parallel()
+		// This is the collision the batched Yahoo sources made reachable: 20 of them
+		// share one URL by design, so a URL-only key would hand whichever fetched
+		// first to the other route as well.
+		ext, origin, _, directHits, proxyHits := newRouted(t, "DIRECT", "PROXIED")
+
+		direct, err := ext.fetchHtmlPage(t.Context(), origin, nil, false)
+		require.NoError(t, err)
+		proxied, err := ext.fetchHtmlPage(t.Context(), origin, nil, true)
+		require.NoError(t, err)
+
+		require.Equal(t, []byte("DIRECT"), direct)
+		require.Equal(t, []byte("PROXIED"), proxied, "the proxied fetch must not be served the direct response")
+		require.Equal(t, int32(1), directHits.Load())
+		require.Equal(t, int32(1), proxyHits.Load())
+	})
+
+	t.Run("a failure on one route does not tombstone the other", func(t *testing.T) {
+		t.Parallel()
+		// The tombstone stops one dead source burning a whole run. Keyed on the URL
+		// alone it would also stop a source that reaches the same host by the other
+		// route and would have succeeded.
+		var proxyHits atomic.Int32
+		origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "nope", http.StatusInternalServerError)
+		}))
+		t.Cleanup(origin.Close)
+		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			proxyHits.Add(1)
+			_, _ = fmt.Fprint(w, "PROXIED")
+		}))
+		t.Cleanup(proxy.Close)
+		proxyTarget, err := url.Parse(proxy.URL)
+		require.NoError(t, err)
+
+		ext, err := NewRateExtractorWithHTTPClients(
+			&mockRateValueRepository{},
+			timedClient(origin.Client()),
+			&http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(proxyTarget)}},
+			threadsafe.NewBuffer(nil),
+		)
+		require.NoError(t, err)
+
+		_, err = ext.fetchHtmlPage(t.Context(), origin.URL, nil, false)
+		require.Error(t, err, "the direct fetch is expected to fail and tombstone its own route")
+
+		body, err := ext.fetchHtmlPage(t.Context(), origin.URL, nil, true)
+		require.NoError(t, err, "the proxied route must not inherit the direct route's tombstone")
+		require.Equal(t, []byte("PROXIED"), body)
+		require.Equal(t, int32(1), proxyHits.Load())
+	})
+
+	t.Run("a flagged source falls back to direct when no proxy is configured", func(t *testing.T) {
+		t.Parallel()
+		var directHits atomic.Int32
+		origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			directHits.Add(1)
+			_, _ = fmt.Fprint(w, "DIRECT")
+		}))
+		t.Cleanup(origin.Close)
+
+		log := threadsafe.NewBuffer(nil)
+		ext, err := NewRateExtractorWithHTTPClients(
+			&mockRateValueRepository{}, timedClient(origin.Client()), nil, log,
+		)
+		require.NoError(t, err)
+
+		body, err := ext.fetchHtmlPage(t.Context(), origin.URL, nil, true)
+		require.NoError(t, err, "a missing BEACON_PROXY_URL must not stop a source that reaches its host direct")
+		require.Equal(t, []byte("DIRECT"), body)
+		require.Equal(t, int32(1), directHits.Load())
+		require.Contains(t, log.String(), "requests the proxy but none is configured")
+	})
+
+	t.Run("Run passes the source flag through", func(t *testing.T) {
+		t.Parallel()
+		ext, origin, _, directHits, proxyHits := newRouted(t, "1.5", "2.5")
+
+		source := &domain.RateSource{
+			Name:          "TEST_PROXIED",
+			URL:           origin,
+			BaseCurrency:  "USD",
+			QuoteCurrency: "KZT",
+			Options:       domain.RateSourceOptions{UseProxy: true},
+			Rules:         []domain.RateSourceRule{{Method: domain.MethodParseFloat}},
+		}
+		require.NoError(t, ext.Run(t.Context(), source))
+		require.Equal(t, int32(1), proxyHits.Load())
+		require.Equal(t, int32(0), directHits.Load())
+	})
+}
+
+// TestRateSourceOptionsUseProxyDefault pins that the flag is absent-means-direct, so a
+// source row written before the option existed, or one that simply omits it, is never
+// routed through the proxy.
+func TestRateSourceOptionsUseProxyDefault(t *testing.T) {
+	t.Parallel()
+
+	var opts domain.RateSourceOptions
+	require.NoError(t, json.Unmarshal([]byte(`{"headers":{"User-Agent":"x"}}`), &opts))
+	require.False(t, opts.UseProxy)
+
+	encoded, err := json.Marshal(domain.RateSourceOptions{})
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "use_proxy",
+		"the default must not be written back into stored options")
+}
+
+// timedClient gives an httptest client a request timeout. httptest.Server.Client()
+// leaves Timeout at zero, which fetchHtmlPage turns into an expired context.
+func timedClient(c *http.Client) *http.Client {
+	c.Timeout = 5 * time.Second
+	return c
 }

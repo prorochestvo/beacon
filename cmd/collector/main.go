@@ -1,9 +1,11 @@
 // Command collector polls all active rate sources on a configurable schedule,
 // extracts exchange-rate values, and persists them to the SQLite database.
 //
-// It reads BEACON_SQLITEDB_DSN from the environment. All outbound traffic is direct:
-// BEACON_PROXY_URL is deliberately not consulted here — see the collection-egress note in
-// CLAUDE.md for the measurements behind that. cmd/doctor still honours it for AI provider
+// It reads BEACON_SQLITEDB_DSN from the environment. Outbound traffic is direct by
+// default: BEACON_PROXY_URL is consulted, but it only makes a proxy available — a rate
+// source reaches it solely by setting options.use_proxy, so configuring the variable
+// alone routes nothing. See the collection-egress note in CLAUDE.md for the measurements
+// behind that default. cmd/doctor honours the proxy unconditionally, for AI provider
 // calls and its chromedp fetcher.
 package main
 
@@ -27,6 +29,7 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/infrastructure/sqlitedb"
 	weatherinfra "github.com/seilbekskindirov/beacon/internal/infrastructure/weather"
 	"github.com/seilbekskindirov/beacon/internal/repository"
+	"github.com/seilbekskindirov/beacon/internal/tools/proxyutil"
 	_ "modernc.org/sqlite"
 )
 
@@ -43,6 +46,16 @@ var (
 	// BEACON_CHROMIUM_PATH. When empty, chromedp searches PATH (chromium, chromium-browser,
 	// google-chrome, chrome).
 	ChromiumPath = os.Getenv(envChromiumPath)
+	// ProxyURL is the outbound proxy resolved from BEACON_PROXY_URL. It says only that
+	// a proxy exists; nothing is routed through it until a source sets
+	// options.use_proxy, so setting it alone leaves all 56 sources direct — the
+	// measured default from issue #16.
+	//
+	// Assigned in main after the logger exists, not here: proxyutil.ResolveURL logs the
+	// resolved value and log.Fatalf's on a malformed one, and a package initialiser runs
+	// before the file logger is wired, where both would go to a stderr the cron wrappers
+	// discard.
+	ProxyURL string
 	// LogVerbosity controls the minimum log level emitted by the logger.
 	LogVerbosity = internal.LogLevelWarning
 )
@@ -51,7 +64,9 @@ const (
 	// envChromiumPath is an optional absolute path to the Chromium/Chrome binary;
 	// when unset, chromedp searches PATH for chromedp-kind sources.
 	envChromiumPath = "BEACON_CHROMIUM_PATH"
-	envDsnSqliteDB  = "BEACON_SQLITEDB_DSN"
+	// envProxyURL is an optional outbound proxy, opted into per source.
+	envProxyURL    = "BEACON_PROXY_URL"
+	envDsnSqliteDB = "BEACON_SQLITEDB_DSN"
 )
 
 func main() {
@@ -74,6 +89,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("settings: %s, %s", envDsnSqliteDB, err.Error())
 	}
+	ProxyURL = proxyutil.ResolveURL(envProxyURL)
 	log.Println("settings: initiated")
 
 	db, err := sqlitedb.NewSQLiteClient(dsnDB, l.WriterAs(internal.LogLevelInfo))
@@ -235,10 +251,11 @@ func buildRunners(
 	weatherObs *repository.WeatherObservationRepository,
 	logger io.Writer,
 ) ([]runner, error) {
-	// The empty proxy URL is the point of this call, not an oversight: rate sources are
-	// fetched directly. See the collection-egress note in CLAUDE.md.
+	// Passing the proxy URL does not route anything through it: the extractor builds a
+	// proxied client alongside the direct one, and a source reaches it only by setting
+	// options.use_proxy. Default stays direct. See the collection-egress note in CLAUDE.md.
 	collectionRateAgent, err := collection.NewRateAgent(
-		"",
+		ProxyURL,
 		ChromiumPath,
 		source,
 		history,
