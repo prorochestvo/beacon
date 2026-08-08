@@ -23,6 +23,38 @@ Generic Go conventions (style, declaration order, test structure, godoc, error d
 build hygiene, organisation) come from the `stack-go` plugin skills and are not restated
 anywhere in this repo.
 
+### Where new canon goes
+
+This file is loaded whole into every session and stays there, so its size is a tax on every
+conversation regardless of what the task touches. Keep it under **20k chars**; 40k is where
+Claude Code warns about performance. Route new documentation by *when the reader needs it*,
+not by how important the subject feels:
+
+- **CLAUDE.md** — what applies to every task (the binary map, layer table, key patterns,
+  env vars, error handling, the working agreement), plus rules whose violation is
+  **silent**. A tripwire keeps its place here even after its subject has moved out.
+- **A project skill** (`.claude/skills/<name>/SKILL.md`) — the depth for one subject area.
+  The `description` frontmatter *is* the load trigger: name the packages, paths, symbols
+  and env vars that should pull it in. A description that summarises the prose instead of
+  naming triggers means the skill never loads and the knowledge is lost.
+- **Neither** — incident narratives, enumerations derivable from the code, and the
+  reasoning behind a decision already taken. Those belong in commit bodies, `plans/` and
+  `docs/decisions/`.
+
+**Every subject moved into a skill leaves one line behind.** The skill carries the why;
+CLAUDE.md carries the sentence that stops someone getting it wrong before they think to
+load anything. This is not redundancy — it is the whole reason the split is safe. Reserve
+it for failures that do not announce themselves: a read that skips a storage tier returns
+partial history without erroring, and an identity-adjacent column is far cheaper to prevent
+than to revert from production.
+
+**Measure, never estimate.** Compression proposals against this file have been off by 2–3×
+when guessed by eye, because it is mostly contracts and identifiers, which do not compress —
+only the prose around them does. Count with `wc -c` before and after. After moving content,
+prove nothing was dropped rather than assuming it: extract every backticked span and figure
+from the old text and confirm each still appears somewhere in the new set, then account for
+each survivor of that check by name.
+
 ## Build & Run Commands
 
 Pure-Go build, `CGO_ENABLED=0` by default. Standard `make` targets (`build`, `run`, `test`, `lint`, `format`, `clean`) — see the Makefile; `make test` runs fmt + vet + `go test -race`, `make lint` also checks forbidden imports.
