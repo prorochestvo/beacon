@@ -2,11 +2,64 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+It is deliberately a map, not a manual. It holds what applies to every task plus the rules
+whose violation is silent; the depth lives in the project skills listed below and is loaded
+on demand.
+
+## Project skills
+
+Invoke these by name (Skill tool) when the work touches their area. Each is the full canon
+for its subject — this file only keeps the tripwire.
+
+| Skill | Load before touching |
+|---|---|
+| `beacon-collection` | `cmd/collector`, `rateextractor`, `application/collection`, `infrastructure/weather`, `SourceHealthAgent`, `rate_sources` rows, `BEACON_PROXY_URL` / `options.use_proxy`, weather alert kinds |
+| `beacon-storage` | any `internal/repository` query, any `./migrations/*.sql`, `MaintenanceAgent`, `sqlitedb.Migrator`, reading the production database |
+| `beacon-http-api` | `internal/gateway`, `cmd/web`, `cmd/wasm`, `cmd/web/static`, `configs/nginx.*`, any `/api/me` or `/api/public` route |
+| `beacon-forecasting` | `internal/tools/rateforecaster`, `internal/tools/rateanomaly` (load with `knowledge:forecasting`) |
+| `beacon-data-privacy` | any new column on a user-scoped table, anything captured from a Telegram update, any new log field |
+
+Generic Go conventions (style, declaration order, test structure, godoc, error discipline,
+build hygiene, organisation) come from the `stack-go` plugin skills and are not restated
+anywhere in this repo.
+
+### Where new canon goes
+
+This file is loaded whole into every session and stays there, so its size is a tax on every
+conversation regardless of what the task touches. Keep it under **20k chars**; 40k is where
+Claude Code warns about performance. Route new documentation by *when the reader needs it*,
+not by how important the subject feels:
+
+- **CLAUDE.md** — what applies to every task (the binary map, layer table, key patterns,
+  env vars, error handling, the working agreement), plus rules whose violation is
+  **silent**. A tripwire keeps its place here even after its subject has moved out.
+- **A project skill** (`.claude/skills/<name>/SKILL.md`) — the depth for one subject area.
+  The `description` frontmatter *is* the load trigger: name the packages, paths, symbols
+  and env vars that should pull it in. A description that summarises the prose instead of
+  naming triggers means the skill never loads and the knowledge is lost.
+- **Neither** — incident narratives, enumerations derivable from the code, and the
+  reasoning behind a decision already taken. Those belong in commit bodies, `plans/` and
+  `docs/decisions/`.
+
+**Every subject moved into a skill leaves one line behind.** The skill carries the why;
+CLAUDE.md carries the sentence that stops someone getting it wrong before they think to
+load anything. This is not redundancy — it is the whole reason the split is safe. Reserve
+it for failures that do not announce themselves: a read that skips a storage tier returns
+partial history without erroring, and an identity-adjacent column is far cheaper to prevent
+than to revert from production.
+
+**Measure, never estimate.** Compression proposals against this file have been off by 2–3×
+when guessed by eye, because it is mostly contracts and identifiers, which do not compress —
+only the prose around them does. Count with `wc -c` before and after. After moving content,
+prove nothing was dropped rather than assuming it: extract every backticked span and figure
+from the old text and confirm each still appears somewhere in the new set, then account for
+each survivor of that check by name.
+
 ## Build & Run Commands
 
 Pure-Go build, `CGO_ENABLED=0` by default. Standard `make` targets (`build`, `run`, `test`, `lint`, `format`, `clean`) — see the Makefile; `make test` runs fmt + vet + `go test -race`, `make lint` also checks forbidden imports.
 
-Gotcha: `-race` needs cgo, so targeted race runs use `CGO_ENABLED=1 go test -race -run TestX ./<pkg>/` (macOS tolerates `0`, Linux does not). Benchmarks (`-bench=.`, no `-race`) don't need cgo.
+Gotcha: `-race` needs cgo, so targeted race runs use `CGO_ENABLED=1 go test -race -run TestX ./<pkg>/` (macOS tolerates `0`, Linux does not). Benchmarks (`-bench=.`, no `-race`) don't need cgo. `make test` starts with `go clean -cache`, so a full run rebuilds `modernc.org/sqlite` from scratch — minutes, not seconds.
 
 ## Architecture Overview
 
@@ -18,149 +71,19 @@ conditions (delta / interval / daily / cron) against the latest rates and enqueu
 notifications, and a dispatch-agent that drains the pool and sends them over Telegram.
 The `web` binary serves a REST API plus an embedded dashboard (HTML and a WASM build)
 and routes Telegram callbacks. `migrator` applies schema migrations; `doctor` provides
-operator tooling (LLM rule generation and source auditing). Sources use a `kind` of
-`BID`, `ASK`, or `LAST` (equity / last-traded price); sources that require a custom
-`User-Agent` or other header overrides store them in `RateSourceOptions.Headers` (the
-`options` JSON column), applied per-request by the plain fetcher, which is also where
-`UseProxy` lives.
+operator tooling (LLM rule generation and source auditing).
 
-**Batched sources share one fetch.** `rateextractor` caches responses by URL for 30
-minutes, so several sources pointing at the *same* URL cost one outbound request between
-them, each picking its own value out of the shared payload with its own rule. The 20 Yahoo
-sources use this: they all fetch `/v8/finance/spark?symbols=<all 20>&range=5d&interval=1d`
-and select `<TICKER>.close[-1]`, turning 20 requests a tick into one — 80 a day into four,
-matching every other host. (`/v7/finance/quote` would be the tidier endpoint but answers 401
-without a crumb.)
+Sources use a `kind` of `BID`, `ASK`, or `LAST` (equity / last-traded price). Per-source
+fetch behaviour — header overrides, the proxy opt-in — lives in the `options` JSON column
+(`domain.RateSourceOptions`). Several sources may share one URL and therefore one fetch;
+that batching is load-bearing and easy to break. **Skill: `beacon-collection`.**
 
-**`range=5d&interval=1d` is load-bearing, not decoration.** The endpoint's default window is
-the current day, which at 00:00 UTC has no bars yet: round-the-clock symbols come back with
-`"close": null` and the rule fails. That cost the five crypto sources one collection in four,
-every day, until it was found in production. A multi-day window is never empty at a
-boundary — the newest element is simply the previous day's close — and the price is
-unchanged either way.
+**Collection egress is direct by default.** Two levels must agree before anything is
+proxied: `BEACON_PROXY_URL` says a proxy exists, `rate_sources.options.use_proxy` says the
+source wants it. No source is opted in today, and the default is a measured decision
+(issue #16) — do not reverse it casually. Chromedp and weather stay direct regardless.
 
-Two consequences worth knowing before touching those rows. The symbol list lives in the
-URL and the URLs must be **identical** to share a fetch, so adding a Yahoo source means
-rewriting all of them, not adding a row — getting it wrong degrades rather than breaks (the
-odd one out simply fetches separately) but silently gives the saving back. And the rule
-addresses the series by its end (`close[-1]`, negative indices count backwards) because the
-array grows through the session; a literal index would name a different moment on every
-request. `ApplyJSONPath` accepts hyphens in keys for the same reason — `BTC-USD` is a key,
-not a subtraction.
-
-### Collection egress is direct by default, on purpose
-
-`cmd/collector` reaches every upstream directly unless a source row opts out. Two levels
-must agree before anything is proxied: `BEACON_PROXY_URL` says a proxy exists, and
-`rate_sources.options.use_proxy` says *that* source wants it. Absent means direct, so
-configuring the variable alone re-routes nothing and opting a source in is a deliberate
-per-row act (issue #28). No source is opted in today. The default is a decision taken on
-measurement (issue #16), not an omission, and it is worth not reversing casually:
-
-- **There is no volume to hide.** Each Kazakhstani host sees four requests a day; the
-  batched Yahoo endpoint sees four. `gateway.prod.qazpost.kz` states its own budget in a
-  response header — `x-ratelimit-remaining: 199` — against which one is spent.
-- **Direct is the least suspicious origin available.** The host is a Kazakhstani provider in
-  Astana reaching Kazakhstani bank sites. The tunnel replaced that with a foreign datacenter
-  address that rotates daily, which is the signature of evasion rather than of a client.
-- **One bank already treated the two differently.** `halykbank.kz` answers `server: nginx`
-  direct and `server: ddos-guard` through the tunnel, reproducibly. The proxy is what put
-  collection behind bot protection.
-- **It cost availability.** 207 `proxyconnect ... connection refused` errors in one log
-  window killed the proxied sources until `vpntunnel` came back.
-- **And latency**, 2.9× to 12.6× depending on host.
-
-`cmd/doctor` still honours the proxy unconditionally: it talks to AI providers, which is a
-different question with different exposure.
-
-Two things stay direct regardless of the flag. **Chromedp** takes its proxy as a
-browser-launch argument on one Chromium subprocess shared by the whole tick, so it cannot
-vary per source — `NewRateAgent` therefore passes it an empty proxy URL on purpose, or a
-configured variable would silently re-route every chromedp source at once. (There are no
-active chromedp sources; all 56 are `plain`.) **Weather** is one global keyless provider,
-not a source with rules, and `cmd/web`'s health inspector probes it directly.
-
-The **fetch cache and the failure tombstone are keyed on URL *and* route**, not URL alone.
-Sources sharing a URL is how batching works, so two of them disagreeing about the proxy
-would otherwise be served whichever response landed first — and a direct failure would
-tombstone a proxied source that would have succeeded. Headers are still not in the key: the
-20 Yahoo sources share a URL *and* their headers, so that collision stays benign. Add
-headers to the key before creating a pair that disagrees.
-
-### Weather providers
-
-Open-Meteo (`domain.ProviderOpenMeteo`) is the sole weather provider: global, keyless
-JSON, hardcoded always-on (no `active` toggle, no per-provider config row). The
-collector fetches it per tick for every distinct subscribed location, throttled by
-`collection.DefaultWeatherThrottleInterval` per location. `weather_observations.provider`
-is a retained vestigial column (it partitions two composite indexes) that now only ever
-holds `'open-meteo'`; it was kept rather than dropped to avoid a rebuild of the largest
-weather table for zero functional gain.
-
-Weather collection is direct, like everything else the collector fetches — see the
-collection-egress note below. The Open-Meteo inspector in `cmd/web` has always probed
-direct, so the two now agree; a false "down" there still cannot fail the deploy gate,
-because the inspector is advisory.
-
-**Transient failures are retried inside the client.** Open-Meteo answers 5xx
-intermittently, and without a retry each one dropped that location for the whole run
-(167 of them in one production log). `OpenMeteo.get` — the single seam both `Forecast`
-and `Geocode` pass through — re-sends up to `openMeteoMaxAttempts` (3) on 5xx and
-connection-level faults, with a jittered backoff that honours `ctx` so a cancelled tick
-stops instead of sleeping. **429 is deliberately not retried**: the API is keyless and
-limits by IP, so an immediate re-send earns the same refusal and pushes further into the
-limit. Neither is any other 4xx — those describe a request that will not become valid by
-being sent again. The client takes an `io.Writer` and logs one line per retry and one per
-recovery; a clean first attempt is silent, so a degrading provider stays distinguishable
-from a healthy one. The `/health/check` inspector has its own client and deliberately
-does **not** retry — it reports whether Open-Meteo answers right now, and a retry there
-would hide the flakiness it exists to surface.
-
-**Alert edge semantics** — every alert kind is edge-triggered through the per-row
-`alert_latched` boolean, and `domain.EvaluateLatched` reports the transition as a
-`domain.AlertEdge`. The four daily-metric kinds (`alert_heat`, `alert_frost`,
-`alert_thunderstorm`, `alert_thaw`) notify on entry only, re-arm silently, and are capped
-to one notification per `forecast_date` (`WeatherNotifyKind.UsesForecastDateCap`, cursor in
-`last_notified_at`). `rain_alert` is the exception on both counts: it notifies on **both**
-edges (distinct "Rain alert" / "Rain cleared" messages) and is exempt from the daily cap,
-because its metric is a rolling 6 h window whose two transitions routinely share one
-`forecast_date`. Its anti-flap guard is the hysteresis band instead — fires at
-`maxProb ≥ threshold`, clears only at `maxProb ≤ max(threshold − 20, 0)`, holds the latch
-in between.
-
-### Collection health alerting
-
-`notification.SourceHealthAgent` (notifier, before the dispatch so a transition detected
-this tick is delivered this tick) tells the admin chat when a rate source stops producing
-data and when it starts again. Before it, a source could fail on every run for weeks in
-silence — the per-run tombstone that stops one dead source burning the whole run also
-stopped anyone hearing about it.
-
-- **Health is measured as silence, not as a failure count.** A source that runs and fails
-  writes failure rows a counter would catch; a source that stops being attempted at all
-  writes nothing, so its counter stays at zero while it is equally dead. `now -
-  lastSuccessAt` catches both. The failure count still rides in the message — it is what
-  separates "failing loudly" from "no longer running".
-- **The window is relative to the source's own `interval`**: `max(DefaultSourceStaleFloor,
-  DefaultSourceStaleFactor × interval)` — 18 h at production's uniform 6 h. A fixed run
-  count would mean different things per source the moment intervals diverge; the floor
-  exists because the collector is cron-driven and cannot attempt anything more often than
-  it runs.
-- **Edge-triggered via `rate_source_health`** — one message down, one message up, nothing
-  in between. Repeating every run would swap an unnoticed silence for an ignored alarm.
-  The latch is a **separate table, not a column on `rate_sources`**, because
-  `RetainRateSource` rewrites source rows wholesale (`cmd/doctor rulegen` does exactly
-  that), and runtime state living there is destroyed by an unrelated config write.
-- **Delivery reuses the notification pool**: the event is addressed to
-  `tbot.AdminChatID()` and `RateDispatchAgent` already parses `UserID` as a chat id, so an
-  operator alert gets the same persistence, retry and failure audit as a user's. Nothing
-  gains a Telegram client — least of all the collector, which would be the component
-  reporting on its own failure.
-- `ObtainSourceCollectionHealth` reads the **hot tier only**, unlike every other query in
-  that repository: health is a question about the last few hours against a tier bounded at
-  180 days.
-- Weather locations are **not** covered: they write no `execution_history`, so there is no
-  persisted per-location outcome to measure a gap against.
+> `cmd/doctor` is the operator-only umbrella for LLM rule (re)generation and source auditing (`rulegen` single/`--all`, `audit --all`/`--source`). Usage, exit codes, and env vars: `cmd/doctor/README.md` + godoc.
 
 ### Layer Responsibilities
 
@@ -178,31 +101,29 @@ stopped anyone hearing about it.
 
 ### Key Patterns
 
-- **Repository pattern** — each repository type owns its own SQL, migration, and query helper functions. Queries execute inside explicit transactions (`r.db.Transaction(ctx)`). Repositories are passed as interfaces into service and handler layers.
+- **Repository pattern** — each repository type owns its own SQL, migration, and query helper functions. Queries execute inside explicit transactions (`r.db.Transaction(ctx)` to write, `r.db.ReadOnlyTransaction(ctx)` to read). Repositories are passed as interfaces into service and handler layers.
 - **Configuration injection** — `BEACON_SQLITEDB_DSN` and `BEACON_TELEGRAMBOT_DSN` are read via `dsninjector.Unmarshal(envName)` at startup in `cmd/web/main.go` and live in the systemd `EnvironmentFile`. The public HTTPS origin is passed via the `--api-dsn` CLI flag (format: `https://<host>/`, parsed by `dsninjector.Parse`) and is hardcoded in the systemd unit's `ExecStart` line — never in `.env`. All three configs must be present at startup; the binary calls `log.Fatalf` on any missing value.
+- **Startup ordering** — anything that logs or can `log.Fatalf` on bad config belongs in `main` *after* the logger exists, never in a package initialiser: the cron wrappers discard stderr, so a line emitted earlier is attributable to nothing. Operators grep the marker sequence `logger -> settings -> dependencies -> repositories -> runners`.
 - **Embedded assets** — `cmd/web/main.go` embeds the `static/` directory via `//go:embed static`. All static files served by `http.FileServer` live under `cmd/web/static/`.
 - **Auth: Telegram WebApp initData HMAC** — the `/api/me/...` endpoint family authenticates callers by verifying the Telegram WebApp `initData` HMAC-SHA256 signature. The signing algorithm uses `secret_key = HMAC_SHA256("WebAppData", botToken)` (the string literal is the key; the token is the message). Implementation lives in `internal/tools/tgwebapp/initdata.go`. The handler injects the validator as a function field so tests can substitute a fake without real bot tokens. No other endpoint requires this auth.
 
-### HTTP Routes
+### HTTP surface
 
-Routes are registered in `internal/gateway/` (grep the path literals for the full list); wire shapes live in `internal/dto`. Only the contracts that aren't obvious from that code live here:
+Routes are registered in `internal/gateway/`; wire shapes live in `internal/dto`. Two rules
+hold everywhere and are easy to break silently:
 
-- **Auth** — the `/api/me/*` family is the only authenticated surface (HMAC algorithm in Key Patterns). The signed Telegram WebApp `initData` is accepted **only** in the `X-Telegram-Init-Data` header, never via query string (a signed payload in the URL leaks into access logs and `Referer`).
-- **Ownership → 404, not 403** — reading or mutating a `/api/me/*` resource (subscription, weather city) owned by another user returns **404**, never 403, to avoid existence disclosure. Deleting a subscription does **not** cascade-delete its `rate_user_events` rows.
-- **Chart endpoints** (`/api/me/rates/chart`, `/api/public/rates/chart`) — `period` is an integer-days whitelist `{7,30,90,180,360}` (default 7); anything else is 400 with a `PublicError` body. Equity (`kind=LAST`) pairs render under the `equity` category with an amber series (`#D98E04`).
-- **Weather city create** — server re-validates `timezone` via `time.LoadLocation`, `latitude in [-90,90]`, `longitude in [-180,180]`, `notify_hour in [0,23]` (default 7). Creating any city also auto-ensures the two forced, system-managed rows for that location — `alert_thaw` (always upserted) and `rain_alert` at threshold `60` (inserted **only when absent**, so a user-tuned threshold is never stomped) — skipping whichever kind the request itself created. The Mini App's "+ Add alert" form also offers `morning_summary` with a 0–23 hour picker, so a deleted daily summary can be re-added and its hour changed; the upsert rewrites `notify_hour` but never `last_notified_at`, so re-adding cannot emit a second summary the same day. `rain_alert` stays in that form too: re-adding it with a new percentage is how its threshold is retuned (`alert_latched` is insert-only in the upsert, so retuning never re-fires).
-- **Weather alert delete** — `DELETE /api/me/weather/cities/{id}` removes one subscription row, but a direct delete of a forced row (`alert_thaw`, `rain_alert`) returns **409 + PublicError** (ownership check runs first, so cross-user/missing is still 404, never 409). To turn those off, remove the whole location via `DELETE /api/me/weather/locations/{location_id}`, which deletes every row (all kinds, including the forced ones) the caller owns there (204; 404 when the caller owns nothing at that location — no existence disclosure). The Mini App renders no per-city thaw row at all — the forced subscriptions are surfaced once as a single note above the city list — while the rain row IS listed (its threshold is user-tunable) but carries no delete control; each city offers a "Remove city" control.
-- **`GET /`** — dispatcher inline script routes on `window.Telegram.WebApp.initData`: non-empty → Mini App view, empty → public view.
-- **`GET /ping`** (alias `/healthz`) — liveness, always 200, touches no dependency, no auth.
-- **`GET /health/check`** — readiness; runs all inspectors under a 3s bound, per-component report. Critical (`sqlite`, `telegram`) flip `status=false` → HTTP 503; advisory (`open-meteo`) appears but never forces 503 (a weather outage must not fail the deploy gate). No auth.
+- The `/api/me/*` family is the **only** authenticated surface, and the signed `initData` is
+  accepted **only** in the `X-Telegram-Init-Data` header — never a query string, which would
+  leak a signed payload into access logs and `Referer`.
+- A `/api/me/*` resource owned by another user returns **404, never 403**. Existence is not
+  disclosed, anywhere.
 
-### Static asset caching
+Everything else — per-endpoint contracts, the forced weather subscriptions and their 409,
+content-hashed WASM URLs and the nginx location ordering, Mini App navigation — is in the
+**`beacon-http-api`** skill.
 
-`app.wasm` (~4 MB) and `wasm_exec.js` are served under content-hashed URLs (`/app.<8hex>.wasm`, `/wasm_exec.<8hex>.js`) so nginx caches them 7 days immutable. The 8-hex is the first 4 bytes of SHA-256 over the **raw** (uncompressed) bytes, computed at `cmd/web` boot — hashing raw means a gzip-level change alone doesn't bust the URL. `cmd/web` rewrites `/app.wasm` and `/wasm_exec.js` to their hashed forms in the in-memory HTML for `/`, `/index.html`, `/admin/`, `/admin/index.html`. Go origin serves a pre-built `app.wasm.gz` sibling with `Content-Encoding: gzip`; nginx gzips `wasm_exec.js` on the wire.
-
-The nginx regex location in `configs/nginx.beacon_common_settings.conf` (`^/(app|wasm_exec)\.[a-f0-9]{8}\.(wasm|js)$`) **must** sit above the catch-all `location /` — nginx evaluates regex locations in source order. Unhashed `/app.wasm` / `/wasm_exec.js` fall through to `http.FileServer`, so a browser holding stale HTML still loads the current bytes.
-
-> `cmd/doctor` is the operator-only umbrella for LLM rule (re)generation and source auditing (`rulegen` single/`--all`, `audit --all`/`--source`). Usage, exit codes, and env vars: `cmd/doctor/README.md` + godoc.
+`GET /ping` (alias `/healthz`) is liveness and touches no dependency; `GET /health/check` is
+readiness and probes every dependency for real. Both are unauthenticated.
 
 ### Database
 
@@ -236,139 +157,34 @@ contention therefore lost writes in milliseconds while a 5 s retry window sat
 unused (12 rate values and 5 `execution_history` rows in one production log).
 Taking the lock at `BEGIN` is not a promotion, so the wait is real.
 
-Consequence for new code: **`Transaction` is for paths that write.** Reads go
-through `ReadOnlyTransaction` or they serialise against each other for nothing.
-`SQLiteClient.Rollback` — and `Ping`, and through it the `/health/check`
-inspector — is read-only for that reason: a readiness probe queued behind a
-collector tick would report a busy database as a dead one.
+Consequences for new code:
+
+- **`Transaction` is for paths that write.** Reads go through `ReadOnlyTransaction` or
+  they serialise against each other for nothing. `SQLiteClient.Rollback` — and `Ping`, and
+  through it the `/health/check` inspector — is read-only for that reason: a readiness
+  probe queued behind a collector tick would report a busy database as a dead one.
+- **Two write transactions cannot be open at once** in one process; the second `BEGIN`
+  waits for the first. Open, write and commit inside one function, as every repository
+  method does.
 
 Foreign keys point from `rate_values`, `rate_user_subscriptions`, and
 `rate_user_events` to `rate_sources(name)` with `ON DELETE CASCADE` —
 deleting a source destroys all dependent rows. See the warning on
 `RemoveRateSource` before wiring it to any endpoint.
 
-Schema lives at the project root: `./migrations/*.sql`. The sibling Go file
-`./migrations/embed.go` (`package migrations`) exposes those files as
-`var MigrationsFS embed.FS` so they can be consumed without disk I/O at runtime.
-
-### Hot / archive tiering
-
-The two append-only telemetry tables are each split into a bounded **hot** working set
-and an **`*_archive`** twin of identical schema — `rate_values`/`rate_values_archive`,
-`execution_history`/`execution_history_archive` — **in the same database file**.
-
-The same file is the load-bearing choice. SQLite gives no atomicity to a transaction
-spanning attached databases under `journal_mode=WAL`, so tiers in separate files could
-only be reconciled by copy-and-verify, leaving the archive a permanent superset and every
-read responsible for deciding which tier owns a window. In one file the roll-over is
-`INSERT...SELECT` + `DELETE` inside a single transaction: a row is in exactly one tier at
-every observable instant, and reads just union the two.
-
-- **Reads span both tiers, unconditionally.** `rateValueSqlSelect` /
-  `executionHistorySqlSelect` select from a `UNION ALL` of hot and archive rather than
-  choosing a tier by how far back the caller asked. Results are therefore identical to the
-  untiered behaviour no matter where the boundary sits or how far the roll-over has fallen
-  behind — there is no horizon for a read to disagree with. SQLite pushes the `WHERE` into
-  both branches, so each rides its own compound index (pinned by
-  `TestTieredReadsUseIndexesOnBothBranches` via `EXPLAIN QUERY PLAN`). What the union gives
-  up is index-ordered output: an `ORDER BY` over a compound subquery sorts in a temp
-  b-tree, which is why every ordered read carries an `id` tie-break and why they are all
-  bounded by a window, a limit or a page.
-- **Writes are hot-only**, and their INSERT-vs-UPDATE existence checks use
-  `rateValueCountHot` / `executionHistoryCountHot`. Counting the union there would send an
-  id that lives solely in the archive down the UPDATE path, which matches nothing.
-- **`rate_values_archive` carries no foreign key** to `rate_sources`. History outlives the
-  sources that produced it; `ON DELETE CASCADE` would erase it when a dead source is
-  removed. The hot row still cascades — that is the point.
-- **`collection.MaintenanceAgent`** (collector tick, after collection) runs three ordered
-  steps: roll over rows older than `DefaultHotWindow` (180 days), apply
-  `DefaultArchiveRetention` (**0 — keep forever**, the configured value), then
-  `MaybeVacuum` on `DefaultVacuumInterval` (7 days).
-- **VACUUM is not optional.** Deleting rows marks pages free *inside* the file; SQLite
-  never returns them to the OS on its own, so without VACUUM the roll-over would show up
-  as exactly zero change in `df`. It is cadence-gated through `service_meta.last_vacuum_at`
-  because it rebuilds the database into a temporary copy and needs transient free space on
-  the order of the file's own size. The stamp is written **only after a successful run** —
-  stamping first would turn a transient `SQLITE_BUSY` (the web or notifier process holding
-  the write lock) into a skipped week. A missing stamp vacuums immediately; an unparseable
-  one is an error rather than a silent vacuum on every tick.
-- Retention is a **compile-time constant, not an env var**: it is the only setting in the
-  project that can destroy history, and a value that changes only through a reviewed commit
-  is harder to get wrong than one that changes through a typo in an env file.
-
-`cmd/migrator` is the **only** thing that mutates schema. It embeds
-`migrations.MigrationsFS` at build time, opens the DB via `BEACON_SQLITEDB_DSN`, and
-calls `sqlitedb.Migrator.Run(ctx)`. Idempotent: applied filenames are tracked in
-`__schema_migrations`.
-
-After applying, the migrator calls `Migrator.Verify(ctx)` and exits non-zero when the
-ledger does not account for every embedded migration, or when any migration file is
-empty (`Run` skips empty content silently, so a truncated `.sql` would otherwise be a
-permanent invisible no-op). The `beacon-migrate` unit is `Type=oneshot` with
-`RemainAfterExit=no`, so `systemctl start` propagates that exit code and the release
-job fails — schema drift surfaces at deploy time rather than at the first query
-against a missing column.
-
-Service binaries (`cmd/web`, `cmd/collector`, `cmd/notifier`) DO NOT migrate on
-startup. They call `sqlitedb.RequireMigratedSchema(ctx, db)` immediately after
-opening the DB; a missing or empty `__schema_migrations` table causes
-`log.Fatalf("schema not initialised: run cmd/migrator before starting the service")`.
-
-Migration files live at `./migrations/*.sql`. Filename convention:
-`<YYYYMM>.<NNN>.<table>.<description>.sql` (e.g.
-`202605.001.rate_sources.table_initiate.sql`). The `<NNN>` segment is a
-**global** zero-padded counter across all tables — files are applied in
-lexicographic order, which the naming makes the execution order. Once
-applied to any production database the filename is **immutable**: renaming
-triggers a duplicate apply.
-
-Repository files in `internal/repository/` reference table and column names
-exclusively through `const` declarations (e.g. `rateSourceTableName`,
-`rateSourceNameFieldName`) so a schema rename surfaces at compile time and via
-`grep`, never via a runtime "no such column" error.
-
-Deploy flow:
-```
-make build         # builds all binaries including ./build/migrator
-make migrate       # applies any pending .sql files (no-op if up to date)
-make run           # starts collector, notifier, web
-```
-
-**Reading production data.** The live DB is root-owned `0600`; the daily snapshots in
-`/opt/beacon/backups/` are world-readable, so inspection goes through those. `sqlite3
--readonly <snapshot>` **fails** with `attempt to write a readonly database (8)`:
-`journal_mode=WAL` is persisted in the file header, so opening the file makes SQLite
-want `-shm`/`-wal` sidecars next to it, which the backup directory does not allow. The
-working form is a URI with `immutable=1`, which skips WAL setup entirely:
-
-```
-sqlite3 "file:/opt/beacon/backups/beacon.<YYYYMMDD>.sqlite?immutable=1" "<query>"
-```
-
-Snapshots are **gzipped** (`beacon.<YYYYMMDD>.sqlite.gz`, ~4× on real data), so decompress
-before applying the URI. `make db-inspect` does the whole dance: streams the newest
-snapshot down, decompresses on the fly, prints its age — snapshots are cut at 00:00 UTC,
-so one older than the last deploy cannot confirm that deploy's migrations — and opens it
-locally, so the host needs neither `sqlite3` nor scratch space. `ARGS="<sql>"` runs a
-single query and exits; without it you get the interactive shell. `make backups` pulls the
-same snapshot plus the service logs into `./backups/beacon.<stamp>.tar.gz` and reports the
-snapshot's age — that archive is the off-host restore point, and its age is what says
-whether it is one. Both extensions are handled throughout — snapshots predating
-compression, and the `cp` fallback's uncompressed WAL/SHM set, still prune and restore.
-
-**Cutting a snapshot on demand needs root on the host and cannot be driven from a
-workstation.** The live database is `0600 root:root` and so is `sqlite_dump.sh`; the SSH
-account (`pi5_aide`) has no passwordless sudo, so there is deliberately no Make target for
-it — one that always failed on a `sudo` prompt used to exist and was removed. Run
-`/opt/beacon/backups/sqlite_dump.sh` as root on the host, then `make backups` locally. The
-narrow `NOPASSWD` sudoers line that would automate it is documented in `deploy/README.md`
-and is not installed on purpose.
+**`rate_values` and `execution_history` are tiered.** Each has an `*_archive` twin in the
+same file: reads must span both via `UNION ALL`, writes touch hot only. Getting this wrong
+returns partial history without erroring. Schema lives at `./migrations/*.sql` and applied
+filenames are **immutable**. Both, plus roll-over, retention, VACUUM and how to read a
+production snapshot: **skill `beacon-storage`**. `cmd/migrator` is the only thing that
+mutates schema; service binaries call `sqlitedb.RequireMigratedSchema` and refuse to start
+against an unmigrated database.
 
 ### Environment Variables
 
 - `BEACON_SQLITEDB_DSN` — SQLite connection string, parsed via `dsninjector.Unmarshal`. Format: `sqlite://<path-to-db-file>`
 - `BEACON_TELEGRAMBOT_DSN` — Telegram bot credentials parsed via `dsninjector.Unmarshal`. Format: `<adminChatID>:<botToken>@<host>` where `Addr()` returns the token and `Login()` returns the admin chat ID.
-- `BEACON_PROXY_URL` — optional outbound proxy URL. Format: `<scheme>://<host>:<port>` (e.g. `http://127.0.0.1:7788`). Read by `cmd/doctor` (AI provider calls and its chromedp fetcher), which proxies unconditionally, and by `cmd/collector`, which **routes nothing through it on its own**: a rate source reaches the proxy only by setting `options.use_proxy`, so setting this variable alone leaves collection direct — see the collection-egress note in the Architecture section, and the tests that pin both halves. Telegram Bot API traffic bypasses any proxy unconditionally — the bypass is enforced in code via a hardcoded `Proxy: nil` transport in `internal/infrastructure/telegrambot/tbotclient.go`. Do not configure `HTTPS_PROXY`, `HTTP_PROXY`, or `NO_PROXY` for proxy routing — they are not consulted by any component in this project.
+- `BEACON_PROXY_URL` — optional outbound proxy URL. Format: `<scheme>://<host>:<port>` (e.g. `http://127.0.0.1:7788`). Resolved through `proxyutil.ResolveURL`. `cmd/doctor` proxies through it unconditionally; `cmd/collector` routes nothing through it on its own — see the egress rule above and the `beacon-collection` skill. Telegram Bot API traffic bypasses any proxy unconditionally, enforced by a hardcoded `Proxy: nil` transport in `internal/infrastructure/telegrambot/tbotclient.go`. Do not configure `HTTPS_PROXY`, `HTTP_PROXY`, or `NO_PROXY` — no component in this project consults them.
 - `BEACON_CHROMIUM_PATH` — optional absolute path to the Chromium/Chrome binary for `fetcher_kind='chromedp'` sources. Read by `cmd/collector` and `cmd/doctor`. When unset, chromedp searches PATH (`chromium`, `chromium-browser`, `google-chrome`, `chrome`).
 - `BEACON_AI_PRIMARY_DSN` (required) and `BEACON_AI_FALLBACK_DSN` (optional) — AI provider DSNs read only by `cmd/doctor rulegen`. See `cmd/doctor/README.md` for the DSN format and provider details.
 
@@ -376,57 +192,13 @@ and is not installed on purpose.
 
 > Never read or edit `.env` files.
 
-### Frontend
-
-Static assets live in `cmd/web/static/` (embedded via `//go:embed static`); the WASM bundle builds from `cmd/wasm` (`GOOS=js GOARCH=wasm`) to `cmd/web/static/app.wasm`, sharing `internal/dto` wire types with the server. `make build` produces it.
-
-The `webAppURL` BotFather setting must point to `https://<host>/` (trailing slash, no path suffix) — update it whenever the host changes.
-
-**Mini App navigation** — the four authenticated screens form a 2×2 matrix of a **section** (rates / weather) and a **mode** (view / manage):
-
-| | view (home) | manage (settings) |
-|---|---|---|
-| **Rates** | `RenderMeSubscriptions` | `RenderMeSubscriptionsEdit` |
-| **Weather** | `RenderMeWeatherCurrent` | `RenderMeWeatherCities` |
-
-The vertical section rail (`cmd/wasm/ui/section_rail.go`, wrapped around every screen via `RenderSectionShell`) changes the **section only**; the manage gear (home) and the ← Back button (settings) change the **mode only**, so entering or leaving settings always stays in the section the user was in. Each cell is its own screen mount, so the active tab is implied by which screen rendered the rail — there is no tab state anywhere. Rail clicks are delegated from the stable `#app` container, never bound to the rail node: the weather and editor screens replace `#app` innerHTML on every redraw. Auth failure short-circuits before the shell, so a screen with no content renders no rail.
-
 ### Deployment
 
 Standard release layout: immutable `/opt/beacon/artifacts/<VERSION_ID>/` build sets and a `bin/release` channel symlink the units run through. **Security boundary**: the CI deploy user may write only under `artifacts/` and `bin/`; `.env`, the DB, and the base dir are root-owned and out of reach. The `release.yml` job (on an `r_*` tag) uploads a new `artifacts/<VERSION_ID>/`, flips the symlink, runs migrations via the **`beacon-migrate` one-shot unit (root, so the deploy user never writes the DB)**, restarts `beacon`, and health-gates on `/health/check` with one-symlink rollback. Schema reconciliation is deploy-time, not startup-time — the service unit has no `ExecStartPre` migrator. `make init` provisions the layout, both units, the narrow `/etc/sudoers.d/beacon-deploy`, and the nginx vhost. See `deploy/README.md`.
 
-### Forecasting (`internal/tools/rateforecaster`)
-
-Method doctrine (baseline-first, series profiling, walk-forward backtesting, metrics,
-leakage traps) comes from the `knowledge:forecasting` skill — load it for any work
-here. Beacon-specific rules:
-
-- **Contract**: `Forecaster.Forecast(ctx, []*domain.RateValue) (domain.ForecastResult, error)`
-  in `forecaster.go`. `rates` is **newest-first**; return `ErrInsufficientData` when
-  `len(rates) < 3`; implementations must be safe for concurrent use. One implementation
-  per file alongside `moving_average.go`, `linear_regression.go`, `composite.go`.
-- **Data access**: `ObtainLastNRateValuesBySourceName` (`internal/repository/ratevalue.go`);
-  query through the compound index `idx_rate_values_lookup`
-  (`source_name, base_currency, quote_currency, timestamp DESC`), never bypass it.
-- **`ForecastResult.Method` strings** are stable short identifiers that land in logs and
-  DB rows (`"moving_average"`, `"linear_regression"`, `"composite"`; new ones like
-  `"ar2"`, `"holt_winters"`, `"naive_last"`). Never encode hyperparameters in the
-  string — those are struct fields.
-- **Shipping bar**: a new model must beat naive last-value **and** the existing
-  `MovingAverageForecaster` on the same walk-forward window, or it doesn't ship. For FX,
-  weigh directional accuracy alongside error metrics. The backtest ships in the same
-  change, as subtests of the implementation's `Test*` function; report the metrics
-  table (new model + baselines, same window) in chat — numbers, not adjectives.
-- **Profile on real history**: `make backups` pulls production data to
-  `./backups/beacon.sqlite` — use it; don't invent synthetic fixtures when real data
-  is on disk.
-- **Dependencies**: the bar is "gonum can't do this cleanly" (AR(p) fits via
-  `gonum/mat.Solve` on the lag design matrix — no regression dep needed). New deps are
-  proposed in the plan for explicit approval.
-- **Anomaly detection is a separate concern** — a parallel `Detector` in
-  `internal/tools/rateanomaly/` (mirroring the rateforecaster layout), not a
-  `Forecaster` implementation. Cheapest credible start: residual threshold
-  `|observed − predicted| > k·σ` over an existing forecaster.
+There is **no staging**: an `r_*` tag, prerelease or not, flips the production symlink and
+restarts the service. Do not tag casually. Remote hosts are read-freely, mutate-never
+without explicit per-action approval.
 
 ## Error Handling
 
@@ -436,76 +208,22 @@ Every controller test on an error branch must assert: (1) a response was actuall
 
 ## Data & Privacy
 
-This project stores the **minimum personal data required** to function as a
-Telegram bot. The stance is not "zero PII" — that ship sailed when we started
-keying subscriptions by Telegram `chat_id`. The stance is "no PII beyond what is
-strictly necessary for the bot to deliver notifications."
+This project stores the **minimum personal data required** to function as a Telegram bot —
+not zero PII, but nothing beyond what delivering notifications requires.
 
-### Pre-approved fields
+Pre-approved for user-scoped tables, no discussion needed: Telegram `chat_id`, IANA
+timezone, BCP-47 locale, and coordinates of a city the user picked from a geocoding search.
 
-These may be stored in user-scoped tables without further discussion:
+**Off limits without an explicit policy change**: `@username` or any name, phone, email,
+photo, biometrics, device- or IP-derived location, IP address, device fingerprint,
+user-agent. Same list for log output — `chat=<chat_id>` is fine, nothing else is.
 
-- **Telegram `chat_id`** (column: `user_id` in `rate_user_subscriptions`,
-  `rate_user_events`, `rate_user_profiles`). Unavoidable — the bot has no
-  other way to address a user. Already PII under GDPR (stable persistent
-  identifier), but the cost of avoiding it is "no bot."
-- **IANA timezone** (e.g. `Asia/Almaty`, `Europe/Moscow`). Low-sensitivity:
-  one of ~400 values, weak identifying power on its own.
-- **BCP-47 locale** (e.g. `ru-RU`, `kk-KZ`, `en-US`). Same as timezone —
-  low-sensitivity, useful for future localisation of notification text.
-- **City coordinates** (`latitude`, `longitude` in `weather_user_cities`). These
-  are user-volunteered preferences — the user explicitly searches for and selects a
-  named city from a geocoding result list. They are not device-collected, geolocation
-  API, or IP-derived coordinates. The coordinates are stored to request weather data
-  for the chosen city and carry no more identifying power than the city name itself.
-  Guardrails: values are server-re-validated (lat ∈ [-90,90], lng ∈ [-180,180]) before
-  persistence; the Open-Meteo geocoding call is the only source of coordinate values.
-
-### Off-limits fields
-
-Do **not** add any of these to user-scoped tables without an explicit policy
-change. If a feature request seems to require one of these, push back on the
-design before writing SQL — there is usually a way to achieve the same UX
-without persisting the field:
-
-- Telegram `@username` / display name / first name / last name.
-- Phone, email, or any other contact channel.
-- Photo URL or any biometric.
-- Device-collected or IP-derived precise location (lat/lng). Note: city coordinates
-  explicitly chosen by the user from a geocoding search result are **pre-approved** (see
-  above) — this prohibition is about coordinates obtained without the user's active
-  selection (geolocation API, IP geolocation, etc.).
-- IP address, device fingerprint, browser user-agent string.
-
-### When a request looks borderline
-
-If asked to add a field that is not on either list above, classify it first
-and surface the trade-off before persisting it. Examples of borderline cases
-that warrant a sanity check:
-
-- Subscription notes / tags entered by the user (free text → may contain PII).
-- Last-active timestamp at high precision (the bot already has chat_id; do we
-  also need to know exactly when each user opens the Mini App?).
-- Per-user notification preferences beyond the minimal set already stored.
-
-The default for "I'm not sure if this is OK" is **don't persist it yet, ask
-first**. Schema changes that add identity-adjacent columns are easier to
-prevent than to revert from a production database.
-
-### Logs
-
-The same policy applies to log output, with one practical relaxation: the
-bot's existing log lines already include `chat=<chat_id>` for observability
-and that is fine. Do not log `@username`, message body content, or any other
-off-limits field. The `middleware [200] GET /api/me/subscriptions` access-log
-format intentionally omits the `X-Telegram-Init-Data` header for the same
-reason.
+Anything not on either list: **do not persist it yet, ask first.** Identity-adjacent columns
+are far easier to prevent than to revert from a production database. Full policy, the
+guardrails on each pre-approved field, and how to classify a borderline one: **skill
+`beacon-data-privacy`**.
 
 ## Constraints
-
-Generic Go conventions (style, file declaration order, test structure, godoc,
-error discipline, build hygiene, code organization) come from the `stack-go`
-plugin skills — they are not restated here. Project-specific constraints:
 
 - **Forbidden imports**: CGO-dependent SQLite drivers (e.g. `github.com/mattn/go-sqlite3`)
   must never appear in `go.mod` — persistence is pure-Go via `modernc.org/sqlite`.
@@ -532,8 +250,9 @@ All non-trivial work follows the plan-first pipeline:
    P0/P1 findings loop back to the engineer. Only when every P0/P1 is fixed or
    explicitly accepted: move the plan via the `pipeline:complete-plan` skill.
 
-Forecasting work follows the same pipeline; the engineer and reviewers load the
-`knowledge:forecasting` skill and the **Forecasting** section above.
-
 Plans live in `plans/` (active), `plans/completed/` (shipped, `YYMMDD.NNNN.slug.md`),
 `plans/history/` (abandoned/superseded). One plan per concern.
+
+Branch as `type/<issue>-<slug>`; never commit to `main` directly. `main` requires an
+approving review that GitHub will not let the PR author give, so merging needs the user's
+explicit say-so each time.
