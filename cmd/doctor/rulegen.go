@@ -222,13 +222,13 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 
 	dsnSQLiteDB, err := dsninjector.Unmarshal(envDsnSqliteDB)
 	if err != nil {
-		infraFail("settings %s: %v", envDsnSqliteDB, err)
+		infraFail("settings %s: unparseable value (contents not logged)", envDsnSqliteDB)
 		return 3
 	}
 
 	dsnAIPrimary, err := dsninjector.Unmarshal(envDsnAIPrimary)
 	if err != nil {
-		infraFail("settings %s: %v", envDsnAIPrimary, err)
+		infraFail("settings %s: unparseable value (contents not logged)", envDsnAIPrimary)
 		return 3
 	}
 
@@ -258,7 +258,7 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 	if _, ok := os.LookupEnv(envDsnAIFallback); ok {
 		dsnAIFallback, dsnErr := dsninjector.Unmarshal(envDsnAIFallback)
 		if dsnErr != nil {
-			infraFail("settings %s: %v", envDsnAIFallback, dsnErr)
+			infraFail("settings %s: unparseable value (contents not logged)", envDsnAIFallback)
 			return 3
 		}
 		aiFallback, err = artificialintelligence.NewClient(dsnAIFallback, l.WriterAs(internal.LogLevelInfo), proxyURL)

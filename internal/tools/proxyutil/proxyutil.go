@@ -18,6 +18,12 @@ import (
 // present-but-unparseable value — a malformed proxy URL is an operator config
 // error that must be fixed before the service starts.
 //
+// That failure names the variable and nothing else, deliberately. dsninjector.Parse
+// embeds its entire input in the error it returns, so logging that error would put
+// the raw value — proxy userinfo here, the bot token and AI keys at the other
+// settings call sites — into the persisted log file. RedactURL below covers only
+// the success path; dropping the error text is what covers the other one.
+//
 // Emits one startup line via log.Printf (the same sink as every other startup
 // line, so it reaches stdout and the file logger regardless of verbosity level):
 //   - "proxy: not configured" when the variable is absent.
@@ -31,7 +37,7 @@ func ResolveURL(envName string) string {
 	}
 	dsn, err := dsninjector.Unmarshal(envName)
 	if err != nil {
-		log.Fatalf("settings: %s: %s", envName, err.Error())
+		log.Fatalf("settings: %s: unparseable value (contents not logged)", envName)
 	}
 	raw := dsn.Driver() + "://" + dsn.Addr()
 	log.Printf("proxy: BEACON_PROXY_URL=%s", RedactURL(raw))
