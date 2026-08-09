@@ -43,6 +43,8 @@ const (
 )
 
 func main() {
+	flag.Parse()
+	initFlags()
 
 	l, err := internal.NewLogger(LogsDir, "notifier", LogVerbosity)
 	if err != nil {
@@ -210,15 +212,29 @@ func main() {
 	log.Println("execution: done")
 }
 
-func init() {
-	logsDir := flag.String("logs-dir", LogsDir, "path to logs directory")
-	verbosity := flag.String("verbosity", "warning", "minimum stdout log level (debug, info, warning, error, severe, critical)")
-	flag.Parse()
+// flagLogsDir and flagVerbosity hold the raw flag values populated by flag.Parse in
+// main. They are package-level so initFlags can apply them after parsing.
+var (
+	flagLogsDir   *string
+	flagVerbosity *string
+)
 
-	if dir := *logsDir; dir != "" {
+func init() {
+	// Register flags here so the test binary can see them, but do NOT call flag.Parse()
+	// in init() — it would consume go test's own flags before the testing package
+	// registers them ("flag provided but not defined"). main() calls flag.Parse() once;
+	// tests never invoke main().
+	flagLogsDir = flag.String("logs-dir", LogsDir, "path to logs directory")
+	flagVerbosity = flag.String("verbosity", "warning", "minimum stdout log level (debug, info, warning, error, severe, critical)")
+}
+
+// initFlags applies the parsed flag values. Called from main after flag.Parse.
+func initFlags() {
+	if dir := *flagLogsDir; dir != "" {
 		LogsDir = dir
 	}
-	if v := *verbosity; v != "" {
-		LogVerbosity = internal.ParseLogLevel(*verbosity)
+
+	if v := *flagVerbosity; v != "" {
+		LogVerbosity = internal.ParseLogLevel(v)
 	}
 }
