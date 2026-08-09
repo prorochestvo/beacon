@@ -48,12 +48,12 @@ it for failures that do not announce themselves: a read that skips a storage tie
 partial history without erroring, and an identity-adjacent column is far cheaper to prevent
 than to revert from production.
 
-**Measure, never estimate.** Compression proposals against this file have been off by 2–3×
-when guessed by eye, because it is mostly contracts and identifiers, which do not compress —
-only the prose around them does. Count with `wc -c` before and after. After moving content,
-prove nothing was dropped rather than assuming it: extract every backticked span and figure
-from the old text and confirm each still appears somewhere in the new set, then account for
-each survivor of that check by name.
+**Measure, never estimate.** This file is mostly contracts and identifiers, which do not
+compress — only the prose around them does, so a guess at what a rewrite will save runs
+high. Count with `wc -c` before and after. After moving content, prove nothing was dropped
+rather than assuming it: extract every backticked span and figure from the old text, confirm
+each still appears somewhere in the new set, and account for every apparent casualty by
+name.
 
 ## Build & Run Commands
 
@@ -171,6 +171,13 @@ Foreign keys point from `rate_values`, `rate_user_subscriptions`, and
 `rate_user_events` to `rate_sources(name)` with `ON DELETE CASCADE` —
 deleting a source destroys all dependent rows. See the warning on
 `RemoveRateSource` before wiring it to any endpoint.
+
+Two things that look free to change and are not. **`weather_observations.provider` only
+ever holds `'open-meteo'` but partitions two composite indexes** — dropping the vestigial
+column degrades them. And **runtime state never goes on `rate_sources`**: `RetainRateSource`
+rewrites those rows wholesale (`cmd/doctor rulegen` does exactly that), so a column added
+there is destroyed by an unrelated config write — which is why the source-health latch lives
+in its own `rate_source_health` table.
 
 **`rate_values` and `execution_history` are tiered.** Each has an `*_archive` twin in the
 same file: reads must span both via `UNION ALL`, writes touch hot only. Getting this wrong

@@ -1,6 +1,6 @@
 ---
 name: beacon-storage
-description: Beacon's SQLite storage rules beyond the basics — the hot/archive tiering of rate_values and execution_history (why one file, why reads UNION both tiers and writes touch only hot, roll-over, retention, VACUUM), the migrator contract and the immutable migration filename convention, and how to read production data out of a gzipped snapshot. Load before writing or reviewing any query in internal/repository, adding a migration under ./migrations, touching collection.MaintenanceAgent or sqlitedb.Migrator, or inspecting the production database.
+description: Beacon's SQLite storage rules beyond the basics — the hot/archive tiering of rate_values and execution_history (why one file, why reads UNION both tiers and writes touch only hot, roll-over, retention, VACUUM), the migrator contract and the immutable migration filename convention, columns that look droppable but are not, and how to read production data out of a gzipped snapshot. Load before writing or reviewing any query in internal/repository or internal/infrastructure/sqlitedb, adding or altering a migration under ./migrations, touching collection.MaintenanceAgent, sqlitedb.Migrator, Transaction/ReadOnlyTransaction, RetainRateSource, rate_source_health or weather_observations, or inspecting the production database.
 ---
 
 # Beacon storage
@@ -89,6 +89,18 @@ Repository files in `internal/repository/` reference table and column names excl
 through `const` declarations (e.g. `rateSourceTableName`, `rateSourceNameFieldName`) so a
 schema rename surfaces at compile time and via `grep`, never via a runtime "no such column"
 error.
+
+### Two columns a migration must not "clean up"
+
+- **`weather_observations.provider`** now only ever holds `'open-meteo'`, so it reads as
+  dead weight. It is not: it partitions two composite indexes. It was retained rather than
+  dropped precisely to avoid rebuilding the largest weather table for zero functional gain,
+  and dropping it degrades those indexes silently.
+- **`rate_sources` holds configuration, never runtime state.** `RetainRateSource` rewrites
+  those rows wholesale — `cmd/doctor rulegen` does exactly that — so any runtime column
+  added there is destroyed by an unrelated config write. That is why the source-health latch
+  lives in its own `rate_source_health` table, and why the next piece of per-source runtime
+  state needs its own table too.
 
 Deploy flow:
 
