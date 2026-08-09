@@ -45,7 +45,7 @@ var (
 	// ChromiumPath is the absolute path to the Chromium/Chrome binary read from
 	// BEACON_CHROMIUM_PATH. When empty, chromedp searches PATH (chromium, chromium-browser,
 	// google-chrome, chrome).
-	ChromiumPath = os.Getenv(envChromiumPath)
+	ChromiumPath = os.Getenv(internal.EnvChromiumPath)
 	// ProxyURL is the outbound proxy resolved from BEACON_PROXY_URL. It says only that
 	// a proxy exists; nothing is routed through it until a source sets
 	// options.use_proxy, so setting it alone leaves all 56 sources direct — the
@@ -58,15 +58,6 @@ var (
 	ProxyURL string
 	// LogVerbosity controls the minimum log level emitted by the logger.
 	LogVerbosity = internal.LogLevelWarning
-)
-
-const (
-	// envChromiumPath is an optional absolute path to the Chromium/Chrome binary;
-	// when unset, chromedp searches PATH for chromedp-kind sources.
-	envChromiumPath = "BEACON_CHROMIUM_PATH"
-	// envProxyURL is an optional outbound proxy, opted into per source.
-	envProxyURL    = "BEACON_PROXY_URL"
-	envDsnSqliteDB = "BEACON_SQLITEDB_DSN"
 )
 
 func main() {
@@ -85,11 +76,11 @@ func main() {
 
 	// Preserve the startup-marker sequence (logger -> settings ->
 	// dependencies -> repositories -> runners) that operators grep on.
-	dsnDB, err := dsninjector.Unmarshal(envDsnSqliteDB)
+	dsnDB, err := dsninjector.Unmarshal(internal.EnvSQLiteDSN)
 	if err != nil {
-		log.Fatalf("settings: %s: unparseable value (contents not logged)", envDsnSqliteDB)
+		log.Fatalf("settings: %s: unparseable value (contents not logged)", internal.EnvSQLiteDSN)
 	}
-	ProxyURL = proxyutil.ResolveURL(envProxyURL)
+	ProxyURL = proxyutil.ResolveURL(internal.EnvProxyURL)
 	log.Println("settings: initiated")
 
 	db, err := sqlitedb.NewSQLiteClient(dsnDB, l.WriterAs(internal.LogLevelInfo))

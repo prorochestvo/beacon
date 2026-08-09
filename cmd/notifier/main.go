@@ -37,11 +37,6 @@ var (
 	LogVerbosity = internal.LogLevelWarning
 )
 
-const (
-	envDsnTelegramBOT = "BEACON_TELEGRAMBOT_DSN"
-	envDsnSqliteDB    = "BEACON_SQLITEDB_DSN"
-)
-
 func main() {
 	flag.Parse()
 	initFlags()
@@ -59,13 +54,13 @@ func main() {
 	// Notifier only calls Telegram, and Telegram traffic bypasses any proxy via the
 	// hardcoded transport in NewTBotClient, so BEACON_PROXY_URL is intentionally not parsed.
 
-	dsnTelegramBOT, err := dsninjector.Unmarshal(envDsnTelegramBOT)
+	dsnTelegramBOT, err := dsninjector.Unmarshal(internal.EnvTelegramBotDSN)
 	if err != nil {
-		log.Fatalf("settings: %s: unparseable value (contents not logged)", envDsnTelegramBOT)
+		log.Fatalf("settings: %s: unparseable value (contents not logged)", internal.EnvTelegramBotDSN)
 	}
-	dsnDB, err := dsninjector.Unmarshal(envDsnSqliteDB)
+	dsnDB, err := dsninjector.Unmarshal(internal.EnvSQLiteDSN)
 	if err != nil {
-		log.Fatalf("settings: %s: unparseable value (contents not logged)", envDsnSqliteDB)
+		log.Fatalf("settings: %s: unparseable value (contents not logged)", internal.EnvSQLiteDSN)
 	}
 	log.Println("settings: initiated")
 

@@ -58,11 +58,6 @@ var (
 	APIDsn = ""
 )
 
-const (
-	envDsnTelegramBOT = "BEACON_TELEGRAMBOT_DSN"
-	envDsnSqliteDB    = "BEACON_SQLITEDB_DSN"
-)
-
 func main() {
 	serviceStart := time.Now()
 	flag.Parse()
@@ -89,9 +84,9 @@ func main() {
 	// parsed here.
 
 	// init settings
-	dsnTelegramBOT, err := dsninjector.Unmarshal(envDsnTelegramBOT)
+	dsnTelegramBOT, err := dsninjector.Unmarshal(internal.EnvTelegramBotDSN)
 	if err != nil {
-		log.Fatalf("settings: %s: unparseable value (contents not logged)", envDsnTelegramBOT)
+		log.Fatalf("settings: %s: unparseable value (contents not logged)", internal.EnvTelegramBotDSN)
 		return
 	}
 	if APIDsn == "" {
@@ -109,9 +104,9 @@ func main() {
 	// Echo the resolved URL so operators can confirm the BotFather Menu Button
 	// still points at the same origin after each deploy. Not a secret.
 	log.Printf("settings: webAppURL=%s (must match BotFather Menu Button URL)", webAppURL)
-	dsnDB, err := dsninjector.Unmarshal(envDsnSqliteDB)
+	dsnDB, err := dsninjector.Unmarshal(internal.EnvSQLiteDSN)
 	if err != nil {
-		log.Fatalf("settings: %s: unparseable value (contents not logged)", envDsnSqliteDB)
+		log.Fatalf("settings: %s: unparseable value (contents not logged)", internal.EnvSQLiteDSN)
 		return
 	}
 	log.Println("settings: initiated")

@@ -63,19 +63,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const (
-	envDsnSqliteDB   = "BEACON_SQLITEDB_DSN"
-	envDsnAIPrimary  = "BEACON_AI_PRIMARY_DSN"
-	envDsnAIFallback = "BEACON_AI_FALLBACK_DSN"
-	// envChromiumPath is the optional absolute path to the Chromium/Chrome binary;
-	// when unset, chromedp searches PATH (chromium, chromium-browser, google-chrome,
-	// chrome).
-	envChromiumPath = "BEACON_CHROMIUM_PATH"
-	// envProxyURL is the optional outbound proxy URL parsed via dsninjector;
-	// when unset or empty, outbound traffic goes direct.
-	envProxyURL = "BEACON_PROXY_URL"
-)
-
 // rateSourceLister is the narrow read-side interface runAll needs, defined locally
 // so tests can fake it without the concrete repository.
 type rateSourceLister interface {
@@ -218,17 +205,17 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 		return 3
 	}
 
-	proxyURL := proxyutil.ResolveURL(envProxyURL)
+	proxyURL := proxyutil.ResolveURL(internal.EnvProxyURL)
 
-	dsnSQLiteDB, err := dsninjector.Unmarshal(envDsnSqliteDB)
+	dsnSQLiteDB, err := dsninjector.Unmarshal(internal.EnvSQLiteDSN)
 	if err != nil {
-		infraFail("settings %s: unparseable value (contents not logged)", envDsnSqliteDB)
+		infraFail("settings %s: unparseable value (contents not logged)", internal.EnvSQLiteDSN)
 		return 3
 	}
 
-	dsnAIPrimary, err := dsninjector.Unmarshal(envDsnAIPrimary)
+	dsnAIPrimary, err := dsninjector.Unmarshal(internal.EnvAIPrimaryDSN)
 	if err != nil {
-		infraFail("settings %s: unparseable value (contents not logged)", envDsnAIPrimary)
+		infraFail("settings %s: unparseable value (contents not logged)", internal.EnvAIPrimaryDSN)
 		return 3
 	}
 
@@ -255,10 +242,10 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 	}
 
 	var aiFallback artificialintelligence.AIClient
-	if _, ok := os.LookupEnv(envDsnAIFallback); ok {
-		dsnAIFallback, dsnErr := dsninjector.Unmarshal(envDsnAIFallback)
+	if _, ok := os.LookupEnv(internal.EnvAIFallbackDSN); ok {
+		dsnAIFallback, dsnErr := dsninjector.Unmarshal(internal.EnvAIFallbackDSN)
 		if dsnErr != nil {
-			infraFail("settings %s: unparseable value (contents not logged)", envDsnAIFallback)
+			infraFail("settings %s: unparseable value (contents not logged)", internal.EnvAIFallbackDSN)
 			return 3
 		}
 		aiFallback, err = artificialintelligence.NewClient(dsnAIFallback, l.WriterAs(internal.LogLevelInfo), proxyURL)
@@ -289,7 +276,7 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 
 	chromedpFor := func(waitSelector string) rulegen.Fetcher {
 		return rulegen.NewChromedpFetcher(rulegen.ChromedpFetcherOptions{
-			ChromiumPath: os.Getenv(envChromiumPath),
+			ChromiumPath: os.Getenv(internal.EnvChromiumPath),
 			ProxyURL:     proxyURL,
 			Logger:       l.WriterAs(internal.LogLevelInfo),
 			WaitSelector: waitSelector,

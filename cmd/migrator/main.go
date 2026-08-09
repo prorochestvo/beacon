@@ -36,10 +36,6 @@ var (
 	LogVerbosity = internal.LogLevelWarning
 )
 
-const (
-	envDsnSqliteDB = "BEACON_SQLITEDB_DSN"
-)
-
 func main() {
 	flag.Parse()
 	initFlags()
@@ -54,12 +50,12 @@ func main() {
 	log.Printf("build: %s (%s) at %s\n", BuildVersion, BuildHash, BuildTime)
 	log.Println("logger: initiated")
 
-	dsnDB, err := dsninjector.Unmarshal(envDsnSqliteDB)
+	dsnDB, err := dsninjector.Unmarshal(internal.EnvSQLiteDSN)
 	if err != nil {
-		if env := os.Getenv(envDsnSqliteDB); env == "" {
+		if env := os.Getenv(internal.EnvSQLiteDSN); env == "" {
 			err = errors.Join(errors.New("environment variable is not set"), err)
 		}
-		log.Fatalf("settings: %s: unparseable value (contents not logged)", envDsnSqliteDB)
+		log.Fatalf("settings: %s: unparseable value (contents not logged)", internal.EnvSQLiteDSN)
 		return
 	}
 	log.Println("settings: initiated")
