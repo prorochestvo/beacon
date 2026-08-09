@@ -87,7 +87,7 @@ func main() {
 	// dependencies -> repositories -> runners) that operators grep on.
 	dsnDB, err := dsninjector.Unmarshal(envDsnSqliteDB)
 	if err != nil {
-		log.Fatalf("settings: %s, %s", envDsnSqliteDB, err.Error())
+		log.Fatalf("settings: %s: unparseable value (contents not logged)", envDsnSqliteDB)
 	}
 	ProxyURL = proxyutil.ResolveURL(envProxyURL)
 	log.Println("settings: initiated")

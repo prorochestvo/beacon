@@ -59,11 +59,11 @@ func main() {
 
 	dsnTelegramBOT, err := dsninjector.Unmarshal(envDsnTelegramBOT)
 	if err != nil {
-		log.Fatalf("settings: %s, %s", envDsnTelegramBOT, err.Error())
+		log.Fatalf("settings: %s: unparseable value (contents not logged)", envDsnTelegramBOT)
 	}
 	dsnDB, err := dsninjector.Unmarshal(envDsnSqliteDB)
 	if err != nil {
-		log.Fatalf("settings: %s, %s", envDsnSqliteDB, err.Error())
+		log.Fatalf("settings: %s: unparseable value (contents not logged)", envDsnSqliteDB)
 	}
 	log.Println("settings: initiated")
 

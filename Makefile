@@ -105,6 +105,14 @@ lint:
 		echo "lint failure: forbidden CGO-dependent SQLite driver in go.mod (use modernc.org/sqlite)"; \
 		exit 1; \
 	fi
+	@if grep -rEn '(log\.Fatalf?|infraFail)\("settings[^"]*",[^)]*\berr' --include='*.go' cmd/ internal/ | grep -v '_test.go'; then \
+		echo "lint failure: a settings failure above logs the parser error."; \
+		echo "  dsninjector.Parse embeds its whole input in that error, and BEACON_TELEGRAMBOT_DSN"; \
+		echo "  is the bot token while the AI DSNs carry API keys. internal.NewLogger points the"; \
+		echo "  standard logger at the persisted log file, so this writes credentials to disk."; \
+		echo "  Name the variable, drop the error text."; \
+		exit 1; \
+	fi
 
 ## audit: probe seeded rate sources; default audits all sources; override with ARGS="--source halyk_usd" (exits non-zero on any MISS)
 ARGS ?= --all

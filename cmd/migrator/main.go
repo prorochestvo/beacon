@@ -57,7 +57,7 @@ func main() {
 		if env := os.Getenv(envDsnSqliteDB); env == "" {
 			err = errors.Join(errors.New("environment variable is not set"), err)
 		}
-		log.Fatalf("settings: %s, %s", envDsnSqliteDB, err.Error())
+		log.Fatalf("settings: %s: unparseable value (contents not logged)", envDsnSqliteDB)
 		return
 	}
 	log.Println("settings: initiated")
