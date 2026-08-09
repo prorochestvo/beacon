@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/repository"
 	"github.com/seilbekskindirov/beacon/internal/tools/rateextractor"
@@ -63,7 +64,7 @@ func TestWireWeather(t *testing.T) {
 // Not parallel, and deliberately its own test rather than a subtest: t.Setenv mutates
 // process state, which the testing package refuses to allow under a parallel parent.
 func TestWeatherIgnoresProxyEnv(t *testing.T) {
-	t.Setenv("BEACON_PROXY_URL", "http://127.0.0.1:9")
+	t.Setenv(internal.EnvProxyURL, "http://127.0.0.1:9")
 
 	cityRepo, err := repository.NewWeatherUserCityRepository(nil)
 	require.NoError(t, err)
@@ -87,7 +88,7 @@ func TestWeatherIgnoresProxyEnv(t *testing.T) {
 // long before t.Setenv runs.
 func TestProxyEnvAloneDoesNotRouteCollection(t *testing.T) {
 	const deadProxy = "http://127.0.0.1:9" // discard port: nothing listens
-	t.Setenv(envProxyURL, deadProxy)
+	t.Setenv(internal.EnvProxyURL, deadProxy)
 
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("451.0"))
@@ -95,7 +96,7 @@ func TestProxyEnvAloneDoesNotRouteCollection(t *testing.T) {
 	t.Cleanup(target.Close)
 
 	extractor, err := rateextractor.NewRateExtractor(
-		&discardingRateValueRepository{}, os.Getenv(envProxyURL), 5*time.Second, io.Discard,
+		&discardingRateValueRepository{}, os.Getenv(internal.EnvProxyURL), 5*time.Second, io.Discard,
 	)
 	require.NoError(t, err)
 

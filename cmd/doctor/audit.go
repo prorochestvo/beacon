@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/application/sourceaudit"
 	"github.com/seilbekskindirov/beacon/internal/tools/proxyutil"
 )
@@ -136,7 +137,7 @@ func runAuditWith(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out,
 	}
 
 	if fetcher == nil {
-		proxyURL := proxyutil.ResolveURL(envProxyURL)
+		proxyURL := proxyutil.ResolveURL(internal.EnvProxyURL)
 		var fetcherErr error
 		fetcher, fetcherErr = sourceaudit.NewHTTPFetcher(time.Minute, proxyURL)
 		if fetcherErr != nil {
