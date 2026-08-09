@@ -21,8 +21,6 @@ type httpFetcher struct {
 	client  *http.Client
 }
 
-var _ Fetcher = (*httpFetcher)(nil)
-
 // NewHTTPFetcher returns a Fetcher backed by net/http. baseURL is prepended to
 // every relative path passed to FetchJSON or FetchNoContent; a trailing slash
 // is trimmed so paths like "/api/sources" join cleanly. httpClient is optional —

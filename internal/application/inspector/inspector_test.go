@@ -16,6 +16,13 @@ var _ Inspector = (*stubInspector)(nil)
 var _ dbPinger = (*stubPinger)(nil)
 var _ botPinger = (*stubPinger)(nil)
 
+// The three production implementations return concrete types from their
+// constructors, so without these the only thing holding the Inspector contract
+// together is the wiring in cmd/web — and /health/check is the deploy gate.
+var _ Inspector = (*DBInspector)(nil)
+var _ Inspector = (*TelegramInspector)(nil)
+var _ Inspector = (*OpenMeteoInspector)(nil)
+
 // stubInspector is a test double for Inspector. When block is true, CheckUP blocks
 // until ctx is cancelled and returns its error, simulating a hung dependency.
 type stubInspector struct {

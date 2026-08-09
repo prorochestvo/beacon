@@ -17,6 +17,7 @@ import (
 )
 
 var _ committer = (*mockFailCommitter)(nil)
+var _ Committer = (*SQLiteClient)(nil)
 
 // newTestClient opens an in-memory SQLite DB, applies the migration table, and
 // returns a ready-to-use *SQLiteClient. The DB is closed automatically when the

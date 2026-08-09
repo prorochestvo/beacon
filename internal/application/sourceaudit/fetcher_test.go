@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var _ Fetcher = (*httpFetcher)(nil)
+
 func TestNewHTTPFetcher(t *testing.T) {
 	t.Parallel()
 

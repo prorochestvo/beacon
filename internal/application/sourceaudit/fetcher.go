@@ -10,8 +10,6 @@ import (
 	"time"
 )
 
-var _ Fetcher = (*httpFetcher)(nil)
-
 // maxResponseBytes caps the body read from any audit fetch to guard against
 // OOM from unexpectedly large responses; rate-source pages are KBs (KASE ~540 KB).
 const maxResponseBytes = 10 << 20 // 10 MB

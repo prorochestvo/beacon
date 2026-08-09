@@ -18,6 +18,10 @@ import (
 	"github.com/seilbekskindirov/beacon/cmd/wasm/apiclient"
 )
 
+// The external test package cannot name httpFetcher, so the contract is pinned
+// through the constructor's return value instead.
+var _ apiclient.Fetcher = apiclient.NewHTTPFetcher("", nil)
+
 func TestNewHTTPFetcher_FetchJSON(t *testing.T) {
 	t.Parallel()
 

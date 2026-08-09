@@ -23,8 +23,6 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/tools/rateextractor"
 )
 
-var _ RuleExecutor = (*defaultRuleExecutor)(nil)
-
 // RuleExecutor applies a chain of RateSourceRules to a body and returns the
 // final numeric value. Implementations must be deterministic and must not
 // mutate the caller's body slice.
