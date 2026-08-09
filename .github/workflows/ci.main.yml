@@ -1,12 +1,14 @@
-# CI for the main branch — lints, runs the full suite, and does a production-shape
-# build on every push to main and every PR targeting main. No deploy. The release
-# pipeline lives in release.yml and triggers on v* tags.
+# CI for the long-lived branches — lints, runs the full suite, and does a
+# production-shape build on every push to main or alpha and every PR targeting
+# either. alpha is where day-to-day work integrates and where release tags are
+# cut; main only ever moves to the latest non-prerelease tag. No deploy — the
+# release pipeline lives in release.yml and triggers on r* tags.
 name: ci-main
 on:
   push:
-    branches: [main]
+    branches: [main, alpha]
   pull_request:
-    branches: [main]
+    branches: [main, alpha]
 
 permissions:
   contents: read
@@ -52,9 +54,9 @@ jobs:
           GOOS=linux GOARCH=amd64 go build -o ./build/notifier ./cmd/notifier
           GOOS=linux GOARCH=amd64 go build -o ./build/migrator ./cmd/migrator
 
-      # Failure-only alert: main is the protected branch, so a red run is worth
-      # surfacing to the shared chat. No success notification — green main is the
-      # norm and would be noise. ACTION=ci so the status line reads "ci failed",
+      # Failure-only alert: these are the branches releases are cut from, so a red
+      # run is worth surfacing to the shared chat. No success notification — green
+      # is the norm and would be noise. ACTION=ci so the status line reads "ci failed",
       # not "deploy failed" (this workflow does not deploy).
       - name: Notify failure
         if: failure()
