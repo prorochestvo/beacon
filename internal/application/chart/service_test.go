@@ -8,6 +8,7 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/application/chart"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/domain/ratepair"
+	"github.com/seilbekskindirov/beacon/internal/repository"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,6 +18,14 @@ var _ chart.SourcesLoader = (*fakeSources)(nil)
 var _ chart.ValuesLoader = (*fakeValues)(nil)
 var _ chart.HistoryValuesLoader = (*fakeHistoryValues)(nil)
 var _ chart.PublicSourcesLoader = (*fakePublicSources)(nil)
+
+// The production satisfiers, wired in cmd/web. Asserting only the fakes leaves the
+// real contract unpinned — the pattern ratecheckagent_test.go already follows.
+var _ chart.SubscriptionsLoader = (*repository.RateUserSubscriptionRepository)(nil)
+var _ chart.SourcesLoader = (*repository.RateSourceRepository)(nil)
+var _ chart.PublicSourcesLoader = (*repository.RateSourceRepository)(nil)
+var _ chart.ValuesLoader = (*repository.RateValueRepository)(nil)
+var _ chart.HistoryValuesLoader = (*repository.RateValueRepository)(nil)
 
 type fakeSubs struct {
 	subs []domain.RateUserSubscription

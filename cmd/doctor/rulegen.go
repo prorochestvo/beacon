@@ -338,8 +338,6 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 	return 0
 }
 
-var _ rulegen.Fetcher = (*sourceAuditFetcherAdapter)(nil)
-
 // sourceAuditFetcherAdapter adapts sourceaudit.Fetcher to rulegen.Fetcher, which
 // returns only the body bytes. Headers are forwarded to the inner Fetcher so
 // per-source header-dependent sources (e.g. Yahoo Finance) work correctly in rulegen.

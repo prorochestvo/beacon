@@ -19,6 +19,7 @@ var _ rateSourceRepository = (*mockSourceRepo)(nil)
 var _ Fetcher = (*mockFetcher)(nil)
 var _ RuleExecutor = (*mockRuleExecutor)(nil)
 var _ RuleExecutor = (*sequentialExecutor)(nil)
+var _ RuleExecutor = (*defaultRuleExecutor)(nil)
 
 type mockAIClient struct {
 	name      string
