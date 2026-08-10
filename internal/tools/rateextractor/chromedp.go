@@ -16,22 +16,6 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
-// ChromedpRateExtractor renders pages using a headless Chrome instance, then
-// applies the source's extraction rule pipeline and persists the resulting rate
-// value. RunBatch shares one Chromium subprocess across every source in the
-// batch; Run delegates to RunBatch with a single-element slice.
-//
-// The constructor is lazy-friendly: pass an empty chromiumPath to let chromedp
-// fall back to its own PATH lookup (chromium, chromium-browser, google-chrome, chrome).
-type ChromedpRateExtractor struct {
-	chromiumPath string
-	proxyURL     string
-	logger       io.Writer
-	repo         rateValueRepository
-	failedURLs   map[string]error
-	failedURLsMu sync.Mutex
-}
-
 // NewChromedpRateExtractor constructs a ChromedpRateExtractor. Empty chromiumPath
 // lets chromedp search PATH. proxyURL is an optional HTTP proxy URL (e.g.
 // "http://127.0.0.1:7788"); "" runs Chromium without a proxy. logger receives a
@@ -51,6 +35,22 @@ func NewChromedpRateExtractor(chromiumPath string, proxyURL string, logger io.Wr
 		repo:         repo,
 		failedURLs:   make(map[string]error),
 	}
+}
+
+// ChromedpRateExtractor renders pages using a headless Chrome instance, then
+// applies the source's extraction rule pipeline and persists the resulting rate
+// value. RunBatch shares one Chromium subprocess across every source in the
+// batch; Run delegates to RunBatch with a single-element slice.
+//
+// The constructor is lazy-friendly: pass an empty chromiumPath to let chromedp
+// fall back to its own PATH lookup (chromium, chromium-browser, google-chrome, chrome).
+type ChromedpRateExtractor struct {
+	chromiumPath string
+	proxyURL     string
+	logger       io.Writer
+	repo         rateValueRepository
+	failedURLs   map[string]error
+	failedURLsMu sync.Mutex
 }
 
 // Run renders source.URL via headless Chrome with a one-shot allocator and
@@ -116,11 +116,6 @@ func (e *ChromedpRateExtractor) RunBatch(ctx context.Context, batch []*domain.Ra
 func (e *ChromedpRateExtractor) newExecAllocator(ctx context.Context) (context.Context, context.CancelFunc) {
 	return chromedp.NewExecAllocator(ctx, e.buildExecAllocatorOptions(e.proxyURL)...)
 }
-
-// fixedExecAllocatorOptionCount is the number of options buildExecAllocatorOptions
-// appends unconditionally (Headless, DisableGPU, NoSandbox, disable-blink-features).
-// Tests use it to compute the baseline option count without a magic literal.
-const fixedExecAllocatorOptionCount = 4
 
 // buildExecAllocatorOptions constructs the full slice of chromedp allocator
 // options. A non-empty proxyURL appends a ProxyServer option; Chromium does not
@@ -233,6 +228,11 @@ func (e *ChromedpRateExtractor) recordFailedURL(url string, err error) {
 	defer e.failedURLsMu.Unlock()
 	e.failedURLs[url] = err
 }
+
+// fixedExecAllocatorOptionCount is the number of options buildExecAllocatorOptions
+// appends unconditionally (Headless, DisableGPU, NoSandbox, disable-blink-features).
+// Tests use it to compute the baseline option count without a magic literal.
+const fixedExecAllocatorOptionCount = 4
 
 const (
 	defaultChromedpTimeout       = 30 * time.Second

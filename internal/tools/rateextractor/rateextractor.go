@@ -21,10 +21,6 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/tools/threadsafe"
 )
 
-// maxResponseBytes caps the body read from any rate-source URL to guard against
-// OOM from unexpectedly large responses; rate-source pages are KBs (KASE ~540 KB).
-const maxResponseBytes = 10 << 20 // 10 MB
-
 // MinPlausibleRateValue rejects zero and negative extractions.
 const MinPlausibleRateValue = 0.0
 
@@ -140,11 +136,6 @@ type RateExtractor struct {
 	failedURLsMu        sync.Mutex
 }
 
-// rateValueRepository is the narrow persistence interface required by RateExtractor.
-type rateValueRepository interface {
-	RetainRateValue(ctx context.Context, rate *domain.RateValue) error
-}
-
 // Name returns the identifier used in scheduler and log output.
 func (extractor *RateExtractor) Name() string {
 	return "rate_extractor"
@@ -187,21 +178,6 @@ func (extractor *RateExtractor) recordFailedURL(key string, err error) {
 	extractor.failedURLsMu.Lock()
 	defer extractor.failedURLsMu.Unlock()
 	extractor.failedURLs[key] = err
-}
-
-// fetchKey identifies a fetch for both the response cache and the failure tombstone.
-//
-// The route is part of the key because the same URL fetched direct and through the
-// proxy are different requests that can legitimately give different answers — or one
-// answer and one failure. Keying on the URL alone would let whichever ran first decide
-// for both, and would let a direct failure tombstone a proxied source that would have
-// succeeded. Headers are still not in the key: see fetchHtmlPage.
-func fetchKey(rawURL string, useProxy bool) string {
-	route := "direct"
-	if useProxy {
-		route = "proxy"
-	}
-	return fmt.Sprintf("GET:%s:%s", route, rawURL)
 }
 
 // fetchHtmlPage fetches rawURL and returns its body. The response is cached in memory
@@ -300,6 +276,30 @@ func (extractor *RateExtractor) fetchHtmlPage(
 	}
 
 	return body, nil
+}
+
+// maxResponseBytes caps the body read from any rate-source URL to guard against
+// OOM from unexpectedly large responses; rate-source pages are KBs (KASE ~540 KB).
+const maxResponseBytes = 10 << 20 // 10 MB
+
+// rateValueRepository is the narrow persistence interface required by RateExtractor.
+type rateValueRepository interface {
+	RetainRateValue(ctx context.Context, rate *domain.RateValue) error
+}
+
+// fetchKey identifies a fetch for both the response cache and the failure tombstone.
+//
+// The route is part of the key because the same URL fetched direct and through the
+// proxy are different requests that can legitimately give different answers — or one
+// answer and one failure. Keying on the URL alone would let whichever ran first decide
+// for both, and would let a direct failure tombstone a proxied source that would have
+// succeeded. Headers are still not in the key: see fetchHtmlPage.
+func fetchKey(rawURL string, useProxy bool) string {
+	route := "direct"
+	if useProxy {
+		route = "proxy"
+	}
+	return fmt.Sprintf("GET:%s:%s", route, rawURL)
 }
 
 // applyRulesAndStore executes the extraction rule pipeline on payload and
