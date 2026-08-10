@@ -204,8 +204,9 @@ against an unmigrated database.
 Standard release layout: immutable `/opt/beacon/artifacts/<VERSION_ID>/` build sets and a `bin/release` channel symlink the units run through. **Security boundary**: the CI deploy user may write only under `artifacts/` and `bin/`; `.env`, the DB, and the base dir are root-owned and out of reach. The `release.yml` job (on an `r_*` tag) uploads a new `artifacts/<VERSION_ID>/`, flips the symlink, runs migrations via the **`beacon-migrate` one-shot unit (root, so the deploy user never writes the DB)**, restarts `beacon`, and health-gates on `/health/check` with one-symlink rollback. Schema reconciliation is deploy-time, not startup-time — the service unit has no `ExecStartPre` migrator. `make init` provisions the layout, both units, the narrow `/etc/sudoers.d/beacon-deploy`, and the nginx vhost. See `deploy/README.md`.
 
 There is **no staging**: an `r_*` tag, prerelease or not, flips the production symlink and
-restarts the service. Do not tag casually. Remote hosts are read-freely, mutate-never
-without explicit per-action approval.
+restarts the service. Tags are cut from `alpha`, not `main` — see the working agreement. Do
+not tag casually. Delete the superseded alpha tag, local and remote, once the new one is
+live. Remote hosts are read-freely, mutate-never without explicit per-action approval.
 
 ## Error Handling
 
@@ -260,6 +261,14 @@ All non-trivial work follows the plan-first pipeline:
 Plans live in `plans/` (active), `plans/completed/` (shipped, `YYMMDD.NNNN.slug.md`),
 `plans/history/` (abandoned/superseded). One plan per concern.
 
-Branch as `type/<issue>-<slug>`; never commit to `main` directly. `main` requires an
-approving review that GitHub will not let the PR author give, so merging needs the user's
-explicit say-so each time.
+Branch as `type/<issue>-<slug>` **off `alpha`**, and open the PR against `alpha` — that is
+where work integrates and where release tags are cut. `main` is not a development branch:
+it only ever moves to the latest **non-prerelease** tag, so it sits behind `alpha` by an
+entire alpha series and is force-moved forward when a stable release is cut. Never commit
+to either directly.
+
+Two consequences that are silent if missed. **A PR merged into `alpha` does not close its
+issue** — GitHub honours `Closes #N` only on the default branch, which is `main`; close the
+issue by hand, naming the squash commit and the tag it shipped in. And **`gh pr create`
+defaults to `main`**, which would target the stale release pointer, so pass `--base alpha`
+until the default branch changes.
