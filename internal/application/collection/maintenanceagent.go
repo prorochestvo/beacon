@@ -40,26 +40,6 @@ const (
 	DefaultVacuumInterval = 7 * 24 * time.Hour
 )
 
-// tieredRepository is one table pair the maintenance pass keeps bounded.
-type tieredRepository interface {
-	RolloverToArchive(ctx context.Context, cutoff time.Time) (int64, error)
-	PruneArchive(ctx context.Context, cutoff time.Time) (int64, error)
-	Name() string
-}
-
-// metaRepository stores the VACUUM cadence stamp.
-type metaRepository interface {
-	ObtainServiceMeta(ctx context.Context, key string) (string, bool, error)
-	RetainServiceMeta(ctx context.Context, key, value string) error
-}
-
-// vacuumer runs VACUUM. It is the raw SQLite client rather than a repository because
-// VACUUM is a whole-file operation that SQLite rejects inside a transaction, which is the
-// only thing repositories offer.
-type vacuumer interface {
-	Vacuum(ctx context.Context) error
-}
-
 // NewMaintenanceAgent constructs a MaintenanceAgent. meta and db are required and at least
 // one tiered repository must be given; zero values for the three durations fall back to
 // the defaults above, except retention, where zero is a meaningful value (keep forever)
@@ -121,26 +101,6 @@ type MaintenanceAgent struct {
 	vacuumInterval time.Duration
 	now            func() time.Time
 	logger         io.Writer
-}
-
-// MaintenanceReport is what one pass did.
-type MaintenanceReport struct {
-	// Moved counts rows relocated from a hot table into its archive twin, by table name.
-	Moved map[string]int64
-	// Pruned counts rows deleted from an archive twin, by table name. Empty when retention
-	// is off, which is the configured state.
-	Pruned map[string]int64
-	// Vacuumed reports whether this pass ran VACUUM and recorded its stamp.
-	Vacuumed bool
-}
-
-// Total is the number of rows the pass moved.
-func (r MaintenanceReport) Total() int64 {
-	var total int64
-	for _, n := range r.Moved {
-		total += n
-	}
-	return total
 }
 
 // Run performs one maintenance pass.
@@ -245,4 +205,44 @@ func (a *MaintenanceAgent) maybeVacuum(ctx context.Context, now time.Time) (bool
 		return false, errors.Join(fmt.Errorf("maintenance: record vacuum stamp: %w", err), loginjector.NewTraceError())
 	}
 	return true, nil
+}
+
+// MaintenanceReport is what one pass did.
+type MaintenanceReport struct {
+	// Moved counts rows relocated from a hot table into its archive twin, by table name.
+	Moved map[string]int64
+	// Pruned counts rows deleted from an archive twin, by table name. Empty when retention
+	// is off, which is the configured state.
+	Pruned map[string]int64
+	// Vacuumed reports whether this pass ran VACUUM and recorded its stamp.
+	Vacuumed bool
+}
+
+// Total is the number of rows the pass moved.
+func (r MaintenanceReport) Total() int64 {
+	var total int64
+	for _, n := range r.Moved {
+		total += n
+	}
+	return total
+}
+
+// tieredRepository is one table pair the maintenance pass keeps bounded.
+type tieredRepository interface {
+	RolloverToArchive(ctx context.Context, cutoff time.Time) (int64, error)
+	PruneArchive(ctx context.Context, cutoff time.Time) (int64, error)
+	Name() string
+}
+
+// metaRepository stores the VACUUM cadence stamp.
+type metaRepository interface {
+	ObtainServiceMeta(ctx context.Context, key string) (string, bool, error)
+	RetainServiceMeta(ctx context.Context, key, value string) error
+}
+
+// vacuumer runs VACUUM. It is the raw SQLite client rather than a repository because
+// VACUUM is a whole-file operation that SQLite rejects inside a transaction, which is the
+// only thing repositories offer.
+type vacuumer interface {
+	Vacuum(ctx context.Context) error
 }

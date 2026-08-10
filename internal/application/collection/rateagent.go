@@ -70,33 +70,6 @@ type RateAgent struct {
 	logger                     io.Writer
 }
 
-type rateExtractor interface {
-	Run(context.Context, *domain.RateSource) error
-}
-
-// chromedpBatchExtractor processes a slice of chromedp-kind sources under one
-// shared Chromium subprocess. Implementations must return one entry per source
-// keyed by source.Name; a nil or absent entry signals success. An empty batch
-// must be a fast no-op so plain-only ticks do not pay a Chromium cold-start.
-type chromedpBatchExtractor interface {
-	RunBatch(context.Context, []*domain.RateSource) map[string]error
-}
-
-type executionHistoryRepository interface {
-	RetainExecutionHistory(context.Context, *domain.ExecutionHistory) error
-	ObtainLastNExecutionHistoryBySourceName(context.Context, string, int64, bool) ([]domain.ExecutionHistory, error)
-}
-
-type rateSourceRepository interface {
-	ObtainRateSourceByName(context.Context, string) (*domain.RateSource, error)
-	ObtainAllRateSources(context.Context) ([]domain.RateSource, error)
-}
-
-type rateValueRepository interface {
-	ObtainLastNRateValuesBySourceName(context.Context, string, int64) ([]domain.RateValue, error)
-	RetainRateValue(context.Context, *domain.RateValue) error
-}
-
 // Run fetches all active, due rate sources and stores the results.
 // Returns a joined error containing all per-source failures; nil if all succeeded.
 func (a *RateAgent) Run(ctx context.Context) (err error) {
@@ -217,4 +190,31 @@ func (a *RateAgent) execution(ctx context.Context, sources []domain.RateSource) 
 	}
 
 	return errs
+}
+
+type rateExtractor interface {
+	Run(context.Context, *domain.RateSource) error
+}
+
+// chromedpBatchExtractor processes a slice of chromedp-kind sources under one
+// shared Chromium subprocess. Implementations must return one entry per source
+// keyed by source.Name; a nil or absent entry signals success. An empty batch
+// must be a fast no-op so plain-only ticks do not pay a Chromium cold-start.
+type chromedpBatchExtractor interface {
+	RunBatch(context.Context, []*domain.RateSource) map[string]error
+}
+
+type executionHistoryRepository interface {
+	RetainExecutionHistory(context.Context, *domain.ExecutionHistory) error
+	ObtainLastNExecutionHistoryBySourceName(context.Context, string, int64, bool) ([]domain.ExecutionHistory, error)
+}
+
+type rateSourceRepository interface {
+	ObtainRateSourceByName(context.Context, string) (*domain.RateSource, error)
+	ObtainAllRateSources(context.Context) ([]domain.RateSource, error)
+}
+
+type rateValueRepository interface {
+	ObtainLastNRateValuesBySourceName(context.Context, string, int64) ([]domain.RateValue, error)
+	RetainRateValue(context.Context, *domain.RateValue) error
 }
