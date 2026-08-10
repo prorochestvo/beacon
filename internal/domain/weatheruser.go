@@ -47,43 +47,6 @@ const (
 	WeatherNotifyAlertThaw WeatherNotifyKind = "alert_thaw"
 )
 
-// alertMinusSign is the U+2212 MINUS SIGN used in alert reason strings to format
-// negative temperatures, matching the notification package's visual style.
-const alertMinusSign = "−"
-
-// weatherRainWindow is the fixed look-ahead window for the rain alert. Any hourly
-// precipitation_probability point in [now, now+weatherRainWindow) at or above the
-// configured threshold fires the alert. A per-user window is deferred; if needed
-// later, switch condition_value to a compound "70@6h" encoding — that is exactly
-// why the column is TEXT, not a single REAL threshold.
-const weatherRainWindow = 6 * time.Hour
-
-// weatherRainClearMargin is the hysteresis dead band, in probability percentage points,
-// between the rain alert's fire threshold and its clear threshold: a latched rain alert
-// clears only once the window maximum falls to threshold−margin or below (floored at 0),
-// never on the threshold itself. Without a band, a forecast oscillating around the
-// threshold on consecutive hourly ticks would alternate "rain expected" and "rain cleared"
-// messages. The daily-metric kinds need no equivalent constant — their dead band is
-// emergent from the TempMin/TempMax split (see the fire/re-arm table in
-// plans/completed/260715.0002.weather-alert-edge-trigger-hysteresis.md).
-const weatherRainClearMargin = 20.0
-
-// AlertEdge is the latch transition a single alert evaluation produced. It exists so the
-// caller can distinguish the two notifiable directions — entering the condition and
-// leaving it — from the steady state, which notifies nothing.
-type AlertEdge uint8
-
-const (
-	// AlertEdgeNone means no notifiable transition: the latch either did not change or
-	// changed without a user-visible event (a re-arm on a kind that notifies one way only).
-	AlertEdgeNone AlertEdge = iota
-	// AlertEdgeEntered means the row transitioned into its alert condition.
-	AlertEdgeEntered
-	// AlertEdgeCleared means the row transitioned out of its alert condition. Only
-	// rain_alert produces it; the daily-metric kinds re-arm silently.
-	AlertEdgeCleared
-)
-
 // UsesForecastDateCap reports whether this kind is subject to the per-forecast_date fire
 // cap (at most one notification per forecast_date, tracked in LastNotifiedAt).
 //
@@ -102,6 +65,22 @@ func (k WeatherNotifyKind) UsesForecastDateCap() bool {
 		return false
 	}
 }
+
+// AlertEdge is the latch transition a single alert evaluation produced. It exists so the
+// caller can distinguish the two notifiable directions — entering the condition and
+// leaving it — from the steady state, which notifies nothing.
+type AlertEdge uint8
+
+const (
+	// AlertEdgeNone means no notifiable transition: the latch either did not change or
+	// changed without a user-visible event (a re-arm on a kind that notifies one way only).
+	AlertEdgeNone AlertEdge = iota
+	// AlertEdgeEntered means the row transitioned into its alert condition.
+	AlertEdgeEntered
+	// AlertEdgeCleared means the row transitioned out of its alert condition. Only
+	// rain_alert produces it; the daily-metric kinds re-arm silently.
+	AlertEdgeCleared
+)
 
 // WeatherUserCity records a user's per-city weather subscription.
 // NotifyHour is the local-time hour (0–23) at which the daily summary fires, in Timezone.
@@ -136,34 +115,6 @@ type WeatherUserCity struct {
 	UpdatedAt      time.Time
 	CreatedAt      time.Time
 }
-
-// ForecastDateKey parses a YYYY-MM-DD forecast_date (WeatherObservation.ForecastDate)
-// into a stable UTC-midnight instant used as the per-forecast_date fire cursor stored in
-// WeatherUserCity.LastNotifiedAt for alert kinds. It returns an error for a malformed date.
-// Both the stored cursor and the live comparison run through this one parse, so equality is
-// well-defined regardless of the forecast_date's local timezone — the key is a stable
-// token, not a timezone-correct instant, and that is intentional and sufficient for date
-// equality.
-func ForecastDateKey(forecastDate string) (time.Time, error) {
-	t, err := time.Parse("2006-01-02", forecastDate)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("parse forecast_date %q: %w", forecastDate, err)
-	}
-	return t, nil
-}
-
-// alertCondition is the tri-state result of evaluating an alert kind's fire predicate
-// against an observation. It exists so that "the condition is not met" (evaluable, clear)
-// and "the condition cannot be evaluated" (a required obs field is missing) are
-// distinguishable — collapsing them would let a data gap masquerade as a genuinely
-// cleared condition and wrongly re-arm a latch.
-type alertCondition int
-
-const (
-	alertConditionUnevaluable alertCondition = iota // a required obs field is missing
-	alertConditionNotMet                            // evaluable, fire predicate not satisfied
-	alertConditionMet                               // evaluable, fire predicate satisfied
-)
 
 // Validate reports whether ConditionValue is consistent with NotifyKind.
 // Returns a non-nil error with a human-readable message on mismatch so the
@@ -275,6 +226,52 @@ func (c *WeatherUserCity) EvaluateLatched(obs WeatherObservation, now time.Time,
 	}
 }
 
+// EvaluateRain scans obs.Hourly for hourly points in [now, now+weatherRainWindow)
+// and fires when the maximum precipitation probability in that window meets or
+// exceeds the configured threshold (ConditionValue percent). Returns fired=false
+// without error when:
+//   - obs.Hourly is empty or nil (no hourly data yet — the alert fires once data arrives)
+//   - no hourly points fall within the window
+//   - the max probability in the window is below the threshold
+//
+// Points with nil PrecipProb are skipped. Anti-spam is the caller's concern (see
+// EvaluateLatched for the stateful edge-trigger decorator).
+//
+// Use this method directly in tests to supply a deterministic now; EvaluateAlert
+// dispatches here (via evaluateAlertCondition) with time.Now().UTC() as the window
+// anchor for production use.
+func (c *WeatherUserCity) EvaluateRain(obs WeatherObservation, now time.Time) (bool, string, error) {
+	threshold, err := c.AlertThreshold()
+	if err != nil {
+		return false, "", err
+	}
+	cond, reason := evaluateRainCondition(obs, now, threshold)
+	return cond == alertConditionMet, reason, nil
+}
+
+// IsMorningDue reports whether the daily morning summary should fire now,
+// evaluated in the city's local timezone. now must be UTC. It fires once per
+// local calendar day at NotifyHour. Returns an error if the stored timezone
+// is not loadable.
+func (c *WeatherUserCity) IsMorningDue(now time.Time) (bool, error) {
+	if c.Timezone == "" {
+		return false, fmt.Errorf("weather city %s: timezone is empty", c.ID)
+	}
+	loc, err := time.LoadLocation(c.Timezone)
+	if err != nil {
+		return false, fmt.Errorf("weather city %s: load timezone %q: %w", c.ID, c.Timezone, err)
+	}
+	local := now.In(loc)
+	fire := time.Date(local.Year(), local.Month(), local.Day(), c.NotifyHour, 0, 0, 0, loc)
+	if local.Before(fire) {
+		return false, nil
+	}
+	if c.LastNotifiedAt.IsZero() {
+		return true, nil
+	}
+	return c.LastNotifiedAt.In(loc).Before(fire), nil
+}
+
 // evaluateRainLatched is the rain_alert latch decorator. It differs from the daily-metric
 // path in two ways, both required by this alert's semantics:
 //
@@ -313,14 +310,6 @@ func (c *WeatherUserCity) evaluateRainLatched(obs WeatherObservation, now time.T
 	default:
 		return AlertEdgeNone, prevLatched, "", nil // inside the dead band: hold the latch
 	}
-}
-
-// rainClearThreshold returns the probability at or below which a latched rain alert clears.
-// The floor at 0 keeps small thresholds usable: at threshold 10 the offset alone would put
-// the clear point below zero, which no probability can reach, and the alert would stay
-// latched forever.
-func rainClearThreshold(threshold float64) float64 {
-	return math.Max(threshold-weatherRainClearMargin, 0)
 }
 
 // evaluateAlertCondition is the single tri-state evaluator every alert kind routes
@@ -390,27 +379,61 @@ func (c *WeatherUserCity) evaluateAlertCondition(obs WeatherObservation, now tim
 	}
 }
 
-// EvaluateRain scans obs.Hourly for hourly points in [now, now+weatherRainWindow)
-// and fires when the maximum precipitation probability in that window meets or
-// exceeds the configured threshold (ConditionValue percent). Returns fired=false
-// without error when:
-//   - obs.Hourly is empty or nil (no hourly data yet — the alert fires once data arrives)
-//   - no hourly points fall within the window
-//   - the max probability in the window is below the threshold
-//
-// Points with nil PrecipProb are skipped. Anti-spam is the caller's concern (see
-// EvaluateLatched for the stateful edge-trigger decorator).
-//
-// Use this method directly in tests to supply a deterministic now; EvaluateAlert
-// dispatches here (via evaluateAlertCondition) with time.Now().UTC() as the window
-// anchor for production use.
-func (c *WeatherUserCity) EvaluateRain(obs WeatherObservation, now time.Time) (bool, string, error) {
-	threshold, err := c.AlertThreshold()
+// alertMinusSign is the U+2212 MINUS SIGN used in alert reason strings to format
+// negative temperatures, matching the notification package's visual style.
+const alertMinusSign = "−"
+
+// weatherRainWindow is the fixed look-ahead window for the rain alert. Any hourly
+// precipitation_probability point in [now, now+weatherRainWindow) at or above the
+// configured threshold fires the alert. A per-user window is deferred; if needed
+// later, switch condition_value to a compound "70@6h" encoding — that is exactly
+// why the column is TEXT, not a single REAL threshold.
+const weatherRainWindow = 6 * time.Hour
+
+// weatherRainClearMargin is the hysteresis dead band, in probability percentage points,
+// between the rain alert's fire threshold and its clear threshold: a latched rain alert
+// clears only once the window maximum falls to threshold−margin or below (floored at 0),
+// never on the threshold itself. Without a band, a forecast oscillating around the
+// threshold on consecutive hourly ticks would alternate "rain expected" and "rain cleared"
+// messages. The daily-metric kinds need no equivalent constant — their dead band is
+// emergent from the TempMin/TempMax split (see the fire/re-arm table in
+// plans/completed/260715.0002.weather-alert-edge-trigger-hysteresis.md).
+const weatherRainClearMargin = 20.0
+
+const (
+	alertConditionUnevaluable alertCondition = iota // a required obs field is missing
+	alertConditionNotMet                            // evaluable, fire predicate not satisfied
+	alertConditionMet                               // evaluable, fire predicate satisfied
+)
+
+// alertCondition is the tri-state result of evaluating an alert kind's fire predicate
+// against an observation. It exists so that "the condition is not met" (evaluable, clear)
+// and "the condition cannot be evaluated" (a required obs field is missing) are
+// distinguishable — collapsing them would let a data gap masquerade as a genuinely
+// cleared condition and wrongly re-arm a latch.
+type alertCondition int
+
+// ForecastDateKey parses a YYYY-MM-DD forecast_date (WeatherObservation.ForecastDate)
+// into a stable UTC-midnight instant used as the per-forecast_date fire cursor stored in
+// WeatherUserCity.LastNotifiedAt for alert kinds. It returns an error for a malformed date.
+// Both the stored cursor and the live comparison run through this one parse, so equality is
+// well-defined regardless of the forecast_date's local timezone — the key is a stable
+// token, not a timezone-correct instant, and that is intentional and sufficient for date
+// equality.
+func ForecastDateKey(forecastDate string) (time.Time, error) {
+	t, err := time.Parse("2006-01-02", forecastDate)
 	if err != nil {
-		return false, "", err
+		return time.Time{}, fmt.Errorf("parse forecast_date %q: %w", forecastDate, err)
 	}
-	cond, reason := evaluateRainCondition(obs, now, threshold)
-	return cond == alertConditionMet, reason, nil
+	return t, nil
+}
+
+// rainClearThreshold returns the probability at or below which a latched rain alert clears.
+// The floor at 0 keeps small thresholds usable: at threshold 10 the offset alone would put
+// the clear point below zero, which no probability can reach, and the alert would stay
+// latched forever.
+func rainClearThreshold(threshold float64) float64 {
+	return math.Max(threshold-weatherRainClearMargin, 0)
 }
 
 // evaluateRainCondition is the tri-state rain evaluator shared by EvaluateRain and
@@ -461,27 +484,4 @@ func formatAlertTemp(v float64) string {
 		return fmt.Sprintf("+%.1f°C", v)
 	}
 	return fmt.Sprintf("%s%.1f°C", alertMinusSign, -v)
-}
-
-// IsMorningDue reports whether the daily morning summary should fire now,
-// evaluated in the city's local timezone. now must be UTC. It fires once per
-// local calendar day at NotifyHour. Returns an error if the stored timezone
-// is not loadable.
-func (c *WeatherUserCity) IsMorningDue(now time.Time) (bool, error) {
-	if c.Timezone == "" {
-		return false, fmt.Errorf("weather city %s: timezone is empty", c.ID)
-	}
-	loc, err := time.LoadLocation(c.Timezone)
-	if err != nil {
-		return false, fmt.Errorf("weather city %s: load timezone %q: %w", c.ID, c.Timezone, err)
-	}
-	local := now.In(loc)
-	fire := time.Date(local.Year(), local.Month(), local.Day(), c.NotifyHour, 0, 0, 0, loc)
-	if local.Before(fire) {
-		return false, nil
-	}
-	if c.LastNotifiedAt.IsZero() {
-		return true, nil
-	}
-	return c.LastNotifiedAt.In(loc).Before(fire), nil
 }

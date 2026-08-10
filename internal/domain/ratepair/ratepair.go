@@ -10,6 +10,28 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
+const (
+	// ColorBid is the semantic line color for BID series across all pairs.
+	ColorBid = "#1D9E75"
+	// ColorAsk is the semantic line color for ASK series across all pairs.
+	ColorAsk = "#378ADD"
+	// ColorLast is the semantic line color for LAST (equity) series. Distinct
+	// from ColorBid/ColorAsk so a stock line reads as its own asset class.
+	ColorLast = "#D98E04"
+	// ColorDeltaUp is the hex color used for positive delta indicators.
+	ColorDeltaUp = "#3B6D11"
+	// ColorDeltaDown is the hex color used for negative delta indicators.
+	ColorDeltaDown = "#A32D2D"
+)
+
+// ChartWindow is the default rolling time window used for the sparkline chart.
+//
+// Deprecated: pass a periodDays parameter to the service methods that accept it
+// (ObtainMeChartForPeriod, ObtainPublicChartForPeriod). Kept as a semantic
+// default so existing call-sites and test fixtures still compile during the
+// migration.
+const ChartWindow = 7 * 24 * time.Hour
+
 // Category identifies the broad market type of a currency pair's base.
 type Category string
 
@@ -23,6 +45,17 @@ const (
 	CategoryEquity Category = "equity"
 )
 
+// Pair is a value object identifying a unique rate stream.
+type Pair struct {
+	// Base is the base currency code (e.g. "USD", "GOLD").
+	Base string
+	// Quote is the quote currency code (e.g. "KZT").
+	Quote string
+	// Kind is the rate direction; one of domain.RateSourceKindBID,
+	// domain.RateSourceKindASK, or domain.RateSourceKindLAST.
+	Kind domain.RateSourceKind
+}
+
 // metalSymbols is the set of uppercase base-currency codes treated as metals.
 // Exported access is via IsMetalSymbol.
 var metalSymbols = map[string]struct{}{
@@ -30,12 +63,6 @@ var metalSymbols = map[string]struct{}{
 	"SILVER":    {},
 	"PLATINUM":  {},
 	"PALLADIUM": {},
-}
-
-// IsMetalSymbol reports whether base (case-insensitive) is in the metal set.
-func IsMetalSymbol(base string) bool {
-	_, ok := metalSymbols[strings.ToUpper(base)]
-	return ok
 }
 
 // equitySymbols is the set of uppercase base codes treated as equities.
@@ -71,6 +98,25 @@ var equitySymbols = map[string]struct{}{
 	"DOGE":  {},
 }
 
+// categoryOrder assigns a numeric rank to each Category so Less sorts
+// fiat → metal → equity regardless of the strings' lexicographic order.
+// Every Category constant must have an entry here; a missing key silently
+// returns rank 0 (same as fiat), which would sort that category first instead
+// of at its intended position. Add a new constant to this map and to
+// TestLess/"categoryOrder is complete" in ratepair_test.go whenever a new
+// Category is introduced.
+var categoryOrder = map[Category]int{
+	CategoryFiat:   0,
+	CategoryMetal:  1,
+	CategoryEquity: 2,
+}
+
+// IsMetalSymbol reports whether base (case-insensitive) is in the metal set.
+func IsMetalSymbol(base string) bool {
+	_, ok := metalSymbols[strings.ToUpper(base)]
+	return ok
+}
+
 // IsEquitySymbol reports whether base (case-insensitive) is a known equity ticker.
 func IsEquitySymbol(base string) bool {
 	_, ok := equitySymbols[strings.ToUpper(base)]
@@ -88,30 +134,6 @@ func CategoryOf(base string) Category {
 		return CategoryMetal
 	}
 	return CategoryFiat
-}
-
-// Pair is a value object identifying a unique rate stream.
-type Pair struct {
-	// Base is the base currency code (e.g. "USD", "GOLD").
-	Base string
-	// Quote is the quote currency code (e.g. "KZT").
-	Quote string
-	// Kind is the rate direction; one of domain.RateSourceKindBID,
-	// domain.RateSourceKindASK, or domain.RateSourceKindLAST.
-	Kind domain.RateSourceKind
-}
-
-// categoryOrder assigns a numeric rank to each Category so Less sorts
-// fiat → metal → equity regardless of the strings' lexicographic order.
-// Every Category constant must have an entry here; a missing key silently
-// returns rank 0 (same as fiat), which would sort that category first instead
-// of at its intended position. Add a new constant to this map and to
-// TestLess/"categoryOrder is complete" in ratepair_test.go whenever a new
-// Category is introduced.
-var categoryOrder = map[Category]int{
-	CategoryFiat:   0,
-	CategoryMetal:  1,
-	CategoryEquity: 2,
 }
 
 // Less is the sort comparator for a slice of Pair values. Sort key:
@@ -159,28 +181,6 @@ func Dedupe(in []Pair) []Pair {
 	}
 	return out
 }
-
-const (
-	// ColorBid is the semantic line color for BID series across all pairs.
-	ColorBid = "#1D9E75"
-	// ColorAsk is the semantic line color for ASK series across all pairs.
-	ColorAsk = "#378ADD"
-	// ColorLast is the semantic line color for LAST (equity) series. Distinct
-	// from ColorBid/ColorAsk so a stock line reads as its own asset class.
-	ColorLast = "#D98E04"
-	// ColorDeltaUp is the hex color used for positive delta indicators.
-	ColorDeltaUp = "#3B6D11"
-	// ColorDeltaDown is the hex color used for negative delta indicators.
-	ColorDeltaDown = "#A32D2D"
-)
-
-// ChartWindow is the default rolling time window used for the sparkline chart.
-//
-// Deprecated: pass a periodDays parameter to the service methods that accept it
-// (ObtainMeChartForPeriod, ObtainPublicChartForPeriod). Kept as a semantic
-// default so existing call-sites and test fixtures still compile during the
-// migration.
-const ChartWindow = 7 * 24 * time.Hour
 
 // canonicalPair returns "MIN/MAX" of the two codes (uppercased) so that
 // USD/KZT and KZT/USD share the same canonical key.
