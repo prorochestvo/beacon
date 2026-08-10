@@ -261,14 +261,12 @@ All non-trivial work follows the plan-first pipeline:
 Plans live in `plans/` (active), `plans/completed/` (shipped, `YYMMDD.NNNN.slug.md`),
 `plans/history/` (abandoned/superseded). One plan per concern.
 
-Branch as `type/<issue>-<slug>` **off `alpha`**, and open the PR against `alpha` — that is
-where work integrates and where release tags are cut. `main` is not a development branch:
-it only ever moves to the latest **non-prerelease** tag, so it sits behind `alpha` by an
-entire alpha series and is force-moved forward when a stable release is cut. Never commit
-to either directly.
+Branch as `type/<issue>-<slug>` **off `alpha`** and open the PR against `alpha` — work
+integrates there and release tags are cut from it. `main` only ever moves to the latest
+**non-prerelease** tag, so it trails `alpha` by a whole alpha series. Never commit to
+either directly.
 
-Two consequences that are silent if missed. **A PR merged into `alpha` does not close its
-issue** — GitHub honours `Closes #N` only on the default branch, which is `main`; close the
-issue by hand, naming the squash commit and the tag it shipped in. And **`gh pr create`
-defaults to `main`**, which would target the stale release pointer, so pass `--base alpha`
-until the default branch changes.
+Two silent traps. **A merge into `alpha` does not close its issue** — GitHub honours
+`Closes #N` only on the default branch, `main`; close it by hand, naming the squash commit
+and its tag. And **`gh pr create` defaults to `main`**, the stale release pointer, so pass
+`--base alpha`.
