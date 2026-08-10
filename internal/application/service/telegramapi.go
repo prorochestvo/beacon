@@ -54,41 +54,29 @@ type TelegramApi struct {
 	webAppURL      string
 }
 
-// telegramClient is the subset of the Telegram client surface this handler
-// needs. *integration.TelegramBotClient satisfies it.
-type telegramClient interface {
-	Listen(context.Context, integration.UpdateHandler)
-	SendPlainTextMessage(context.Context, integration.TelegramChatID, string) error
-	SendMarkdownMessage(context.Context, integration.TelegramChatID, string) error
-	SendHTMLMessage(context.Context, integration.TelegramChatID, string) error
-	SendHTMLMessageReturning(context.Context, integration.TelegramChatID, string) (int, error)
-	SendHTMLMessageWithKeyboard(context.Context, integration.TelegramChatID, string, tgbotapi.InlineKeyboardMarkup) error
-	EditHTMLMessageWithKeyboard(context.Context, integration.TelegramChatID, int, string, tgbotapi.InlineKeyboardMarkup) error
-	EditMessageText(context.Context, integration.TelegramChatID, int, string) error
-	AnswerCallbackQuery(context.Context, string, string) error
-}
+// Run starts the Telegram bot update loop in the background.
+// It returns immediately; the loop runs until ctx is cancelled.
+func (h *TelegramApi) Run(ctx context.Context) {
+	handle := func(ctx context.Context, update tgbotapi.Update) {
+		switch {
+		case update.CallbackQuery != nil:
+			cb := update.CallbackQuery
+			log.Printf("telegram: update id=%d chat=%d kind=callback data=%q",
+				update.UpdateID, cb.Message.Chat.ID, cb.Data)
+			h.handleCallback(ctx, cb)
+		case update.Message != nil:
+			m := update.Message
+			// Log metadata only; the body may contain PII or operator-supplied
+			// tokens. The handler decides what to record about the content.
+			log.Printf("telegram: update id=%d chat=%d kind=message text_len=%d",
+				update.UpdateID, m.Chat.ID, len(m.Text))
+			h.handleMessage(ctx, m)
+		default:
+			log.Printf("telegram: update id=%d kind=other", update.UpdateID)
+		}
+	}
 
-type subscriptionRepository interface {
-	ObtainRateUserSubscriptionsByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.RateUserSubscription, error)
-}
-
-// telegramRateValueRepository is the narrow read-only interface for loading recent
-// rate values needed by handleLatestUpdates.
-type telegramRateValueRepository interface {
-	ObtainLastNRateValuesBySourceName(ctx context.Context, name string, n int64) ([]domain.RateValue, error)
-}
-
-// telegramRateSourceRepository is the narrow read-only interface for batch-loading
-// source metadata by name. One round-trip replaces per-subscription N+1 queries.
-type telegramRateSourceRepository interface {
-	ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error)
-}
-
-// rateUserProfileRepository looks up per-user preferences such as timezone.
-// Implementations return (nil, internal.ErrNotFound) when no row exists; that
-// absence is normal and the handler treats it as "use UTC".
-type rateUserProfileRepository interface {
-	ObtainRateUserProfileByUserID(ctx context.Context, userType domain.UserType, userID string) (*domain.RateUserProfile, error)
+	go h.telegramClient.Listen(ctx, handle)
 }
 
 // resolveUserTimezone returns the time.Location stored for userID, or nil when
@@ -120,31 +108,6 @@ func (h *TelegramApi) resolveUserTimezone(ctx context.Context, userID string) *t
 		return nil
 	}
 	return loc
-}
-
-// Run starts the Telegram bot update loop in the background.
-// It returns immediately; the loop runs until ctx is cancelled.
-func (h *TelegramApi) Run(ctx context.Context) {
-	handle := func(ctx context.Context, update tgbotapi.Update) {
-		switch {
-		case update.CallbackQuery != nil:
-			cb := update.CallbackQuery
-			log.Printf("telegram: update id=%d chat=%d kind=callback data=%q",
-				update.UpdateID, cb.Message.Chat.ID, cb.Data)
-			h.handleCallback(ctx, cb)
-		case update.Message != nil:
-			m := update.Message
-			// Log metadata only; the body may contain PII or operator-supplied
-			// tokens. The handler decides what to record about the content.
-			log.Printf("telegram: update id=%d chat=%d kind=message text_len=%d",
-				update.UpdateID, m.Chat.ID, len(m.Text))
-			h.handleMessage(ctx, m)
-		default:
-			log.Printf("telegram: update id=%d kind=other", update.UpdateID)
-		}
-	}
-
-	go h.telegramClient.Listen(ctx, handle)
 }
 
 // handleMessage replies with the main menu for every inbound message — slash
@@ -382,6 +345,43 @@ const (
 	commandStart         = "/start"
 	commandSubscriptions = "/subscriptions"
 )
+
+// telegramClient is the subset of the Telegram client surface this handler
+// needs. *integration.TelegramBotClient satisfies it.
+type telegramClient interface {
+	Listen(context.Context, integration.UpdateHandler)
+	SendPlainTextMessage(context.Context, integration.TelegramChatID, string) error
+	SendMarkdownMessage(context.Context, integration.TelegramChatID, string) error
+	SendHTMLMessage(context.Context, integration.TelegramChatID, string) error
+	SendHTMLMessageReturning(context.Context, integration.TelegramChatID, string) (int, error)
+	SendHTMLMessageWithKeyboard(context.Context, integration.TelegramChatID, string, tgbotapi.InlineKeyboardMarkup) error
+	EditHTMLMessageWithKeyboard(context.Context, integration.TelegramChatID, int, string, tgbotapi.InlineKeyboardMarkup) error
+	EditMessageText(context.Context, integration.TelegramChatID, int, string) error
+	AnswerCallbackQuery(context.Context, string, string) error
+}
+
+type subscriptionRepository interface {
+	ObtainRateUserSubscriptionsByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.RateUserSubscription, error)
+}
+
+// telegramRateValueRepository is the narrow read-only interface for loading recent
+// rate values needed by handleLatestUpdates.
+type telegramRateValueRepository interface {
+	ObtainLastNRateValuesBySourceName(ctx context.Context, name string, n int64) ([]domain.RateValue, error)
+}
+
+// telegramRateSourceRepository is the narrow read-only interface for batch-loading
+// source metadata by name. One round-trip replaces per-subscription N+1 queries.
+type telegramRateSourceRepository interface {
+	ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error)
+}
+
+// rateUserProfileRepository looks up per-user preferences such as timezone.
+// Implementations return (nil, internal.ErrNotFound) when no row exists; that
+// absence is normal and the handler treats it as "use UTC".
+type rateUserProfileRepository interface {
+	ObtainRateUserProfileByUserID(ctx context.Context, userType domain.UserType, userID string) (*domain.RateUserProfile, error)
+}
 
 func backKeyboard() tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(

@@ -14,26 +14,6 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
-// NewRateRestAPI returns a RateRestApi wired to the given repository implementations.
-func NewRateRestAPI(
-	rExecutionHistory executionHistoryRepository,
-	rRateSource rateSourceRepository,
-	rRateValue rateValueRepository,
-	rRateUserSubscription rateUserSubscriptionRepository,
-	rRateUserEvent rateUserEventRepository,
-) (*RateRestApi, error) {
-
-	h := &RateRestApi{
-		executionHistoryRepository:     rExecutionHistory,
-		rateSourceRepository:           rRateSource,
-		rateValueRepository:            rRateValue,
-		rateUserSubscriptionRepository: rRateUserSubscription,
-		rateUserEventRepository:        rRateUserEvent,
-	}
-
-	return h, nil
-}
-
 // RateRestApi groups all v1 HTTP handlers and their repository dependencies.
 type RateRestApi struct {
 	executionHistoryRepository     executionHistoryRepository
@@ -41,36 +21,6 @@ type RateRestApi struct {
 	rateValueRepository            rateValueRepository
 	rateUserSubscriptionRepository rateUserSubscriptionRepository
 	rateUserEventRepository        rateUserEventRepository
-}
-
-type executionHistoryRepository interface {
-	ObtainLastNExecutionHistoryBySourceName(context.Context, string, int64, bool) ([]domain.ExecutionHistory, error)
-	ObtainLatestExecutionHistoryBySources(context.Context, []string) (map[string]domain.ExecutionHistory, error)
-	ObtainExecutionHistoryErrorCount(context.Context) (int64, error)
-	ObtainLastNExecutionHistoryErrors(context.Context, int64, int64) ([]domain.ExecutionHistory, error)
-}
-
-type rateSourceRepository interface {
-	CheckUP(context.Context) error
-	ObtainAllRateSources(context.Context) ([]domain.RateSource, error)
-	ObtainRateSourceByName(context.Context, string) (*domain.RateSource, error)
-	RetainRateSource(context.Context, *domain.RateSource) error
-}
-
-type rateValueRepository interface {
-	ObtainLastNRateValuesBySourceName(context.Context, string, int64) ([]domain.RateValue, error)
-}
-
-type rateUserSubscriptionRepository interface {
-	ObtainRateUserSubscriptionsBySource(context.Context, string) ([]domain.RateUserSubscription, error)
-	ObtainSubscriptionSummaryBySource(context.Context, string) ([]domain.RateUserSubscriptionSummary, error)
-	ObtainRateUserSubscriptionsBySourcePaged(context.Context, string, int64, int64) ([]domain.RateUserSubscriptionDetail, error)
-}
-
-type rateUserEventRepository interface {
-	ObtainLastNRateUserEvents(context.Context, int64, int64, ...domain.RateUserEventStatus) ([]domain.RateUserEvent, error)
-	ObtainRateUserEventsBySourceName(context.Context, string, int64, int64, ...domain.RateUserEventStatus) ([]domain.RateUserEvent, error)
-	ObtainDailyEventSummaryBySource(context.Context, string, int64, int64) ([]domain.RateUserEventDailySummary, error)
 }
 
 // ObtainLastNExecutionHistoryBySourceName returns the most recent limit execution history records
@@ -278,4 +228,54 @@ func (h *RateRestApi) ObtainSubscriptionSummaryBySource(ctx context.Context, sou
 		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	return items, nil
+}
+
+type executionHistoryRepository interface {
+	ObtainLastNExecutionHistoryBySourceName(context.Context, string, int64, bool) ([]domain.ExecutionHistory, error)
+	ObtainLatestExecutionHistoryBySources(context.Context, []string) (map[string]domain.ExecutionHistory, error)
+	ObtainExecutionHistoryErrorCount(context.Context) (int64, error)
+	ObtainLastNExecutionHistoryErrors(context.Context, int64, int64) ([]domain.ExecutionHistory, error)
+}
+
+type rateSourceRepository interface {
+	CheckUP(context.Context) error
+	ObtainAllRateSources(context.Context) ([]domain.RateSource, error)
+	ObtainRateSourceByName(context.Context, string) (*domain.RateSource, error)
+	RetainRateSource(context.Context, *domain.RateSource) error
+}
+
+type rateValueRepository interface {
+	ObtainLastNRateValuesBySourceName(context.Context, string, int64) ([]domain.RateValue, error)
+}
+
+type rateUserSubscriptionRepository interface {
+	ObtainRateUserSubscriptionsBySource(context.Context, string) ([]domain.RateUserSubscription, error)
+	ObtainSubscriptionSummaryBySource(context.Context, string) ([]domain.RateUserSubscriptionSummary, error)
+	ObtainRateUserSubscriptionsBySourcePaged(context.Context, string, int64, int64) ([]domain.RateUserSubscriptionDetail, error)
+}
+
+type rateUserEventRepository interface {
+	ObtainLastNRateUserEvents(context.Context, int64, int64, ...domain.RateUserEventStatus) ([]domain.RateUserEvent, error)
+	ObtainRateUserEventsBySourceName(context.Context, string, int64, int64, ...domain.RateUserEventStatus) ([]domain.RateUserEvent, error)
+	ObtainDailyEventSummaryBySource(context.Context, string, int64, int64) ([]domain.RateUserEventDailySummary, error)
+}
+
+// NewRateRestAPI returns a RateRestApi wired to the given repository implementations.
+func NewRateRestAPI(
+	rExecutionHistory executionHistoryRepository,
+	rRateSource rateSourceRepository,
+	rRateValue rateValueRepository,
+	rRateUserSubscription rateUserSubscriptionRepository,
+	rRateUserEvent rateUserEventRepository,
+) (*RateRestApi, error) {
+
+	h := &RateRestApi{
+		executionHistoryRepository:     rExecutionHistory,
+		rateSourceRepository:           rRateSource,
+		rateValueRepository:            rRateValue,
+		rateUserSubscriptionRepository: rRateUserSubscription,
+		rateUserEventRepository:        rRateUserEvent,
+	}
+
+	return h, nil
 }
