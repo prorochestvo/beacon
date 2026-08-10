@@ -28,14 +28,6 @@ var ErrSourceNotFound = errors.New("rulegen: source not found")
 // was made and none produced a rule that executed against the live body.
 var ErrAttemptsExhausted = errors.New("rulegen: all attempts exhausted")
 
-// Fetcher performs HTTP GETs and returns the raw response body. rulegen defines
-// its own narrow interface rather than importing sourceaudit.Fetcher to avoid a
-// cross-application dependency.
-// headers are per-source overrides forwarded from RateSourceOptions.Headers; nil is safe.
-type Fetcher interface {
-	Fetch(ctx context.Context, url string, headers map[string]string) ([]byte, error)
-}
-
 // Result holds the outcome of a successful Generate call.
 type Result struct {
 	// Source is the persisted rate source with its Rules and RuleMetadata updated.
@@ -50,26 +42,6 @@ type Result struct {
 	AttemptsUsed int
 	// Escalated is true when the primary model was exhausted and the fallback model succeeded.
 	Escalated bool
-}
-
-// Generator orchestrates the LLM audit loop that produces an extraction rule
-// for a given rate source.
-type Generator struct {
-	primary            artificialintelligence.AIClient
-	fallback           artificialintelligence.AIClient
-	plainFetcher       Fetcher
-	chromedpFetcherFor func(waitSelector string) Fetcher
-	executor           RuleExecutor
-	sourceRepo         rateSourceRepository
-	maxPrimary         int
-	maxFallback        int
-	logger             io.Writer
-}
-
-// rateSourceRepository is the minimal persistence interface the generator needs.
-type rateSourceRepository interface {
-	ObtainRateSourceByName(ctx context.Context, name string) (*domain.RateSource, error)
-	RetainRateSource(ctx context.Context, record *domain.RateSource) error
 }
 
 // NewGenerator constructs a Generator. maxPrimaryAttempts and
@@ -117,6 +89,20 @@ func NewGenerator(
 		maxFallback:        maxFallbackAttempts,
 		logger:             logger,
 	}, nil
+}
+
+// Generator orchestrates the LLM audit loop that produces an extraction rule
+// for a given rate source.
+type Generator struct {
+	primary            artificialintelligence.AIClient
+	fallback           artificialintelligence.AIClient
+	plainFetcher       Fetcher
+	chromedpFetcherFor func(waitSelector string) Fetcher
+	executor           RuleExecutor
+	sourceRepo         rateSourceRepository
+	maxPrimary         int
+	maxFallback        int
+	logger             io.Writer
 }
 
 // Generate runs the audit loop for the named source. forceFallback skips
@@ -388,6 +374,20 @@ func (g *Generator) buildUserMessage(src *domain.RateSource, body []byte, origin
 		}
 	}
 	return b.String()
+}
+
+// Fetcher performs HTTP GETs and returns the raw response body. rulegen defines
+// its own narrow interface rather than importing sourceaudit.Fetcher to avoid a
+// cross-application dependency.
+// headers are per-source overrides forwarded from RateSourceOptions.Headers; nil is safe.
+type Fetcher interface {
+	Fetch(ctx context.Context, url string, headers map[string]string) ([]byte, error)
+}
+
+// rateSourceRepository is the minimal persistence interface the generator needs.
+type rateSourceRepository interface {
+	ObtainRateSourceByName(ctx context.Context, name string) (*domain.RateSource, error)
+	RetainRateSource(ctx context.Context, record *domain.RateSource) error
 }
 
 // transcriptEntry records one failed attempt for inclusion in the next prompt.

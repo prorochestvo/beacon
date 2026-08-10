@@ -99,6 +99,30 @@ func (f *ChromedpFetcher) networkIdleMillisForTest() int {
 	return f.networkIdleMs
 }
 
+// buildExecAllocatorOptions builds the full chromedp allocator option slice.
+// A non-empty proxyURL appends a ProxyServer option — Chromium does not inherit
+// the Go proxy env, so the URL must be passed explicitly.
+func (f *ChromedpFetcher) buildExecAllocatorOptions(proxyURL string) []chromedp.ExecAllocatorOption {
+	// slices.Clone — never alias chromedp.DefaultExecAllocatorOptions; an
+	// upstream array-length change would otherwise let append() stomp the global.
+	opts := append(slices.Clone(chromedp.DefaultExecAllocatorOptions[:]),
+		chromedp.Headless,
+		chromedp.DisableGPU,
+		// NoSandbox is required when Chrome runs as root (systemd unit on the
+		// ARM deploy host) or inside a container. Without it Chrome aborts at
+		// startup with "Running as root without --no-sandbox is not supported."
+		chromedp.NoSandbox,
+		chromedp.Flag("disable-blink-features", "AutomationControlled"),
+	)
+	if proxyURL != "" {
+		opts = append(opts, chromedp.ProxyServer(proxyURL))
+	}
+	if f.chromiumPath != "" {
+		opts = append(opts, chromedp.ExecPath(f.chromiumPath))
+	}
+	return opts
+}
+
 // ChromedpFetcherOptions carries construction parameters for ChromedpFetcher.
 // Zero values for numeric fields default to the package constants below.
 type ChromedpFetcherOptions struct {
@@ -133,27 +157,3 @@ const (
 // appends unconditionally (Headless, DisableGPU, NoSandbox, disable-blink-features).
 // Tests use it to compute the baseline option count without a magic literal.
 const fixedExecAllocatorOptionCount = 4
-
-// buildExecAllocatorOptions builds the full chromedp allocator option slice.
-// A non-empty proxyURL appends a ProxyServer option — Chromium does not inherit
-// the Go proxy env, so the URL must be passed explicitly.
-func (f *ChromedpFetcher) buildExecAllocatorOptions(proxyURL string) []chromedp.ExecAllocatorOption {
-	// slices.Clone — never alias chromedp.DefaultExecAllocatorOptions; an
-	// upstream array-length change would otherwise let append() stomp the global.
-	opts := append(slices.Clone(chromedp.DefaultExecAllocatorOptions[:]),
-		chromedp.Headless,
-		chromedp.DisableGPU,
-		// NoSandbox is required when Chrome runs as root (systemd unit on the
-		// ARM deploy host) or inside a container. Without it Chrome aborts at
-		// startup with "Running as root without --no-sandbox is not supported."
-		chromedp.NoSandbox,
-		chromedp.Flag("disable-blink-features", "AutomationControlled"),
-	)
-	if proxyURL != "" {
-		opts = append(opts, chromedp.ProxyServer(proxyURL))
-	}
-	if f.chromiumPath != "" {
-		opts = append(opts, chromedp.ExecPath(f.chromiumPath))
-	}
-	return opts
-}

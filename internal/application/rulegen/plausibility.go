@@ -1,19 +1,5 @@
 package rulegen
 
-// currencyPair is the map key. A struct rather than a "USD/KZT" string avoids
-// format ambiguity and gives allocation-free lookups.
-type currencyPair struct {
-	Base  string
-	Quote string
-}
-
-// valueRange holds an inclusive [Lo, Hi] plausibility window. A rate value v
-// is accepted when Lo <= v <= Hi.
-type valueRange struct {
-	Lo float64
-	Hi float64
-}
-
 // plausibleRanges maps every (base, quote) pair seeded in
 // migrations/202605.007.rate_sources.seed_initial.sql to an inclusive [Lo, Hi]
 // float64 window (see migrations/ for the current seed filename). Pairs absent
@@ -47,6 +33,20 @@ var plausibleRanges = map[currencyPair]valueRange{
 	// survive multi-decade price swings.
 	{Base: "GOLD", Quote: "KZT"}:   {Lo: 100_000, Hi: 5_000_000},
 	{Base: "SILVER", Quote: "KZT"}: {Lo: 1_000, Hi: 100_000},
+}
+
+// currencyPair is the map key. A struct rather than a "USD/KZT" string avoids
+// format ambiguity and gives allocation-free lookups.
+type currencyPair struct {
+	Base  string
+	Quote string
+}
+
+// valueRange holds an inclusive [Lo, Hi] plausibility window. A rate value v
+// is accepted when Lo <= v <= Hi.
+type valueRange struct {
+	Lo float64
+	Hi float64
 }
 
 // plausibleRangeFor returns the inclusive plausibility window [lo, hi] for the

@@ -6,6 +6,25 @@ import (
 	"regexp"
 )
 
+const (
+	maxRawBodyBytes    = 5 * 1024 * 1024 // 5 MB hard reject before stripping
+	maxBodyBytesForLLM = 80 * 1024       // 80 KB sent to the LLM after locate/truncate
+	locateWindowBytes  = 80 * 1024       // ±40 KB centred on the earliest anchor match
+
+	// defaultCoLocationBytes is the radius around a tier-1 anchor hit within
+	// which a currency anchor must appear for the hit to qualify. 5 KB gives
+	// ~12× headroom over the few-hundred-byte slack of the production seed
+	// regexes ([\s\S]{0,400}?), while still rejecting a marketing heading
+	// 280 KB away from the rate table.
+	defaultCoLocationBytes = 5 * 1024
+)
+
+var (
+	scriptRe = regexp.MustCompile(`(?is)<script\b[^>]*>.*?</script>`)
+	styleRe  = regexp.MustCompile(`(?is)<style\b[^>]*>.*?</style>`)
+	headRe   = regexp.MustCompile(`(?is)<head\b[^>]*>.*?</head>`)
+)
+
 // Locate returns the smallest window of body centred on the earliest qualifying
 // structural anchor match. A tier-1 hit at offset i qualifies only when a
 // non-empty currency anchor occurs inside [i-coLocationBytes, i+coLocationBytes];
@@ -62,25 +81,6 @@ func Sanitize(body []byte, structural, currency []string) ([]byte, int, error) {
 
 	return out, original, nil
 }
-
-const (
-	maxRawBodyBytes    = 5 * 1024 * 1024 // 5 MB hard reject before stripping
-	maxBodyBytesForLLM = 80 * 1024       // 80 KB sent to the LLM after locate/truncate
-	locateWindowBytes  = 80 * 1024       // ±40 KB centred on the earliest anchor match
-
-	// defaultCoLocationBytes is the radius around a tier-1 anchor hit within
-	// which a currency anchor must appear for the hit to qualify. 5 KB gives
-	// ~12× headroom over the few-hundred-byte slack of the production seed
-	// regexes ([\s\S]{0,400}?), while still rejecting a marketing heading
-	// 280 KB away from the rate table.
-	defaultCoLocationBytes = 5 * 1024
-)
-
-var (
-	scriptRe = regexp.MustCompile(`(?is)<script\b[^>]*>.*?</script>`)
-	styleRe  = regexp.MustCompile(`(?is)<style\b[^>]*>.*?</style>`)
-	headRe   = regexp.MustCompile(`(?is)<head\b[^>]*>.*?</head>`)
-)
 
 // smallestQualifyingTier1Hit scans every occurrence of each distinct structural
 // anchor and returns the smallest offset passing the co-location check;
