@@ -61,19 +61,6 @@ type WeatherCheckAgent struct {
 	logger    io.Writer
 }
 
-// weatherCheckCityRepository is the narrow city-repository surface the check agent needs.
-type weatherCheckCityRepository interface {
-	ObtainDueWeatherUserCities(ctx context.Context, notifyKind domain.WeatherNotifyKind) ([]domain.WeatherUserCity, error)
-	AdvanceLastNotifiedAt(ctx context.Context, id string, when time.Time) error
-	SetWeatherAlertLatched(ctx context.Context, id string, latched bool) error
-	MarkWeatherAlertFired(ctx context.Context, id string, firedForDate time.Time) error
-}
-
-// weatherCheckObsRepository is the narrow observation-repository surface the check agent needs.
-type weatherCheckObsRepository interface {
-	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
-}
-
 // Run loads all morning-summary city subscriptions, evaluates which are due in
 // each city's local timezone, loads the latest Open-Meteo observation, renders the
 // summary, and queues it as a RateUserEvent.
@@ -297,4 +284,17 @@ func (a *WeatherCheckAgent) loadCachedObservation(
 	}
 	obsCache[locationID] = obs
 	return obs, nil
+}
+
+// weatherCheckCityRepository is the narrow city-repository surface the check agent needs.
+type weatherCheckCityRepository interface {
+	ObtainDueWeatherUserCities(ctx context.Context, notifyKind domain.WeatherNotifyKind) ([]domain.WeatherUserCity, error)
+	AdvanceLastNotifiedAt(ctx context.Context, id string, when time.Time) error
+	SetWeatherAlertLatched(ctx context.Context, id string, latched bool) error
+	MarkWeatherAlertFired(ctx context.Context, id string, firedForDate time.Time) error
+}
+
+// weatherCheckObsRepository is the narrow observation-repository surface the check agent needs.
+type weatherCheckObsRepository interface {
+	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
 }

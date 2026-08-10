@@ -39,18 +39,6 @@ type RateDispatchAgent struct {
 	ttl                     time.Duration
 }
 
-// rateUserEventRepository is the narrow storage interface required by this service.
-type rateUserEventRepository interface {
-	ObtainUnprocessedRateUserEvents(context.Context) ([]domain.RateUserEvent, error)
-	RetainRateUserEvent(context.Context, *domain.RateUserEvent) error
-	RemoveRateUserEventOlderThan(ctx context.Context, duration time.Duration) error
-}
-
-// telegramClient is the narrow Telegram transport interface required by this service.
-type telegramClient interface {
-	SendHTMLMessage(context.Context, integration.TelegramChatID, string) error
-}
-
 // Run fetches all unprocessed events and attempts delivery, updating each
 // event's status. Returns a joined error containing all delivery failures.
 func (a *RateDispatchAgent) Run(ctx context.Context) error {
@@ -134,4 +122,16 @@ func (a *RateDispatchAgent) runUserTypeTelegram(ctx context.Context, event *doma
 	}
 
 	return nil
+}
+
+// rateUserEventRepository is the narrow storage interface required by this service.
+type rateUserEventRepository interface {
+	ObtainUnprocessedRateUserEvents(context.Context) ([]domain.RateUserEvent, error)
+	RetainRateUserEvent(context.Context, *domain.RateUserEvent) error
+	RemoveRateUserEventOlderThan(ctx context.Context, duration time.Duration) error
+}
+
+// telegramClient is the narrow Telegram transport interface required by this service.
+type telegramClient interface {
+	SendHTMLMessage(context.Context, integration.TelegramChatID, string) error
 }

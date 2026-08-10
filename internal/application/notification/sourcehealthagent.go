@@ -106,31 +106,6 @@ type SourceHealthAgent struct {
 	logger      io.Writer
 }
 
-// sourceHealthSourceRepository supplies the sources to judge and their declared cadence.
-type sourceHealthSourceRepository interface {
-	ObtainAllRateSources(ctx context.Context) ([]domain.RateSource, error)
-}
-
-// sourceHealthHistoryRepository supplies the collection outcomes health is derived from.
-type sourceHealthHistoryRepository interface {
-	ObtainSourceCollectionHealth(ctx context.Context) ([]domain.SourceCollectionHealth, error)
-}
-
-// sourceHealthStateRepository holds which sources have already been alerted about.
-type sourceHealthStateRepository interface {
-	ObtainAlertedSources(ctx context.Context) (map[string]time.Time, error)
-	RetainAlertedSource(ctx context.Context, sourceName string, at time.Time) error
-	RemoveAlertedSource(ctx context.Context, sourceName string) error
-}
-
-// SourceHealthReport is what one evaluation decided.
-type SourceHealthReport struct {
-	// Alerted names the sources that just went bad.
-	Alerted []string
-	// Recovered names the sources that just came back.
-	Recovered []string
-}
-
 // Run evaluates every active source and queues a message for each transition.
 //
 // It continues past a per-source failure rather than aborting: one source whose alert
@@ -265,4 +240,29 @@ func (a *SourceHealthAgent) announce(ctx context.Context, sourceName, message st
 		return errors.Join(fmt.Errorf("source health: queue alert for %s: %w", sourceName, err), loginjector.NewTraceError())
 	}
 	return nil
+}
+
+// SourceHealthReport is what one evaluation decided.
+type SourceHealthReport struct {
+	// Alerted names the sources that just went bad.
+	Alerted []string
+	// Recovered names the sources that just came back.
+	Recovered []string
+}
+
+// sourceHealthSourceRepository supplies the sources to judge and their declared cadence.
+type sourceHealthSourceRepository interface {
+	ObtainAllRateSources(ctx context.Context) ([]domain.RateSource, error)
+}
+
+// sourceHealthHistoryRepository supplies the collection outcomes health is derived from.
+type sourceHealthHistoryRepository interface {
+	ObtainSourceCollectionHealth(ctx context.Context) ([]domain.SourceCollectionHealth, error)
+}
+
+// sourceHealthStateRepository holds which sources have already been alerted about.
+type sourceHealthStateRepository interface {
+	ObtainAlertedSources(ctx context.Context) (map[string]time.Time, error)
+	RetainAlertedSource(ctx context.Context, sourceName string, at time.Time) error
+	RemoveAlertedSource(ctx context.Context, sourceName string) error
 }
