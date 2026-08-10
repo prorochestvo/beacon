@@ -14,11 +14,6 @@ import (
 	"github.com/prorochestvo/loginjector"
 )
 
-// Committer is the minimal DB interface required by NewMigrator.
-type Committer interface {
-	Transaction(context.Context) (*sql.Tx, error)
-}
-
 // NewMigrator creates a Migrator that will apply all .sql files from fsys
 // (read via fs.ReadDir(fsys, ".")) followed by any migrations returned by the
 // optional sources. Call Run to execute pending migrations.
@@ -82,10 +77,6 @@ type Migrator struct {
 	db      committer
 	items   []migration
 	applied int
-}
-
-type source interface {
-	Migration() (map[string]string, error)
 }
 
 // Run executes all pending migration statements from every source in order.
@@ -229,6 +220,28 @@ func (m *Migrator) Verify(ctx context.Context) error {
 	return nil
 }
 
+// Committer is the minimal DB interface required by NewMigrator.
+type Committer interface {
+	Transaction(context.Context) (*sql.Tx, error)
+}
+
+const (
+	migrationTableName = "__schema_migrations"
+)
+
+type source interface {
+	Migration() (map[string]string, error)
+}
+
+// committer is kept as a type alias so internal call sites are unaffected.
+type committer = Committer
+
+// migration is a sqlAction that executes a single SQL statement.
+type migration struct {
+	name    string
+	content string
+}
+
 // RequireMigratedSchema returns nil only when __schema_migrations exists and
 // has at least one row. Service binaries call it right after opening the DB so a
 // missing migrator step surfaces as a loud startup failure rather than a
@@ -262,19 +275,6 @@ func RequireMigratedSchema(ctx context.Context, db Committer) error {
 		return errors.New("schema not initialised: run cmd/migrator before starting the service")
 	}
 	return nil
-}
-
-const (
-	migrationTableName = "__schema_migrations"
-)
-
-// committer is kept as a type alias so internal call sites are unaffected.
-type committer = Committer
-
-// migration is a sqlAction that executes a single SQL statement.
-type migration struct {
-	name    string
-	content string
 }
 
 func newDefaultMigrations(fsys fs.FS) ([]migration, error) {

@@ -45,63 +45,6 @@ var OpenAIModels = []string{
 	openaisdk.ChatModelGPT4o,
 }
 
-// newOpenAIClient parses the DSN and returns a ready-to-use openAIClient.
-//
-// DSN: openai://_:<base64url(KEY)>@<host>/<path>?model=<model>&timeout=<duration>
-//
-// proxyURL is an optional HTTP proxy URL (e.g. "http://127.0.0.1:7788"); pass ""
-// for none. The HTTP client is built via buildHTTPClient and injected into the
-// SDK via option.WithHTTPClient so all SDK requests honour the explicit proxy
-// setting without falling back to HTTPS_PROXY env vars.
-func newOpenAIClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (AIClient, error) {
-	apiKey, err := parseDSNKey(dns)
-	if err != nil {
-		return nil, errors.Join(err, loginjector.NewTraceError())
-	}
-
-	model := shared.ChatModel(openaisdk.ChatModelGPT4o)
-	if v := dns.Option("model"); v != "" {
-		found := false
-		for _, m := range OpenAIModels {
-			if m == v {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil, errors.Join(
-				fmt.Errorf("unsupported model %q", v),
-				loginjector.NewTraceError(),
-			)
-		}
-		model = shared.ChatModel(v)
-	}
-
-	timeout, err := parseDSNTimeout(dns)
-	if err != nil {
-		return nil, errors.Join(err, loginjector.NewTraceError())
-	}
-
-	httpClient, err := buildHTTPClient(timeout, proxyURL)
-	if err != nil {
-		return nil, errors.Join(err, loginjector.NewTraceError())
-	}
-
-	api := openaisdk.NewClient(
-		option.WithEnvironmentProduction(),
-		option.WithAPIKey(apiKey),
-		option.WithHTTPClient(httpClient),
-	)
-
-	return &openAIClient{
-		model:      model,
-		api:        api,
-		logger:     log.New(logger, "openai ", log.LstdFlags),
-		timeout:    timeout,
-		httpClient: httpClient,
-	}, nil
-}
-
 type openAIClient struct {
 	model      shared.ChatModel
 	api        openaisdk.Client
@@ -167,4 +110,61 @@ func (c *openAIClient) Complete(ctx context.Context, systemPrompt, userMessage s
 	}
 
 	return result.OutputText(), nil
+}
+
+// newOpenAIClient parses the DSN and returns a ready-to-use openAIClient.
+//
+// DSN: openai://_:<base64url(KEY)>@<host>/<path>?model=<model>&timeout=<duration>
+//
+// proxyURL is an optional HTTP proxy URL (e.g. "http://127.0.0.1:7788"); pass ""
+// for none. The HTTP client is built via buildHTTPClient and injected into the
+// SDK via option.WithHTTPClient so all SDK requests honour the explicit proxy
+// setting without falling back to HTTPS_PROXY env vars.
+func newOpenAIClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (AIClient, error) {
+	apiKey, err := parseDSNKey(dns)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+
+	model := shared.ChatModel(openaisdk.ChatModelGPT4o)
+	if v := dns.Option("model"); v != "" {
+		found := false
+		for _, m := range OpenAIModels {
+			if m == v {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, errors.Join(
+				fmt.Errorf("unsupported model %q", v),
+				loginjector.NewTraceError(),
+			)
+		}
+		model = shared.ChatModel(v)
+	}
+
+	timeout, err := parseDSNTimeout(dns)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+
+	httpClient, err := buildHTTPClient(timeout, proxyURL)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+
+	api := openaisdk.NewClient(
+		option.WithEnvironmentProduction(),
+		option.WithAPIKey(apiKey),
+		option.WithHTTPClient(httpClient),
+	)
+
+	return &openAIClient{
+		model:      model,
+		api:        api,
+		logger:     log.New(logger, "openai ", log.LstdFlags),
+		timeout:    timeout,
+		httpClient: httpClient,
+	}, nil
 }

@@ -32,6 +32,30 @@ import (
 
 const groqDefaultModel = "openai/gpt-oss-20b"
 
+type groqClient struct {
+	inner openAICompatibleClient
+}
+
+func (c *groqClient) Name() string {
+	return fmt.Sprintf("Groq[%s]", c.inner.model)
+}
+
+func (c *groqClient) Model() string {
+	return c.inner.model
+}
+
+// CheckUP verifies the Groq API is reachable and credentials are valid by
+// sending a minimal chat completion request.
+func (c *groqClient) CheckUP(ctx context.Context) error {
+	return c.inner.ping(ctx, c.inner.model, chatPingPrompt, chatPingExpectedToken, chatPingMaxTokens)
+}
+
+// Complete sends a chat completion request to Groq and returns the content of
+// the first choice message. A json_schema response_format is always attached.
+func (c *groqClient) Complete(ctx context.Context, systemPrompt, userMessage string) (string, error) {
+	return c.inner.complete(ctx, systemPrompt, userMessage, true)
+}
+
 // newGroqClient parses the DSN and returns a ready-to-use groqClient.
 //
 // DSN: groq://_:<base64url(KEY)>@api.groq.com/openai/v1?model=<model>&timeout=<dur>
@@ -73,28 +97,4 @@ func newGroqClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string
 			providerName: "groq",
 		},
 	}, nil
-}
-
-type groqClient struct {
-	inner openAICompatibleClient
-}
-
-func (c *groqClient) Name() string {
-	return fmt.Sprintf("Groq[%s]", c.inner.model)
-}
-
-func (c *groqClient) Model() string {
-	return c.inner.model
-}
-
-// CheckUP verifies the Groq API is reachable and credentials are valid by
-// sending a minimal chat completion request.
-func (c *groqClient) CheckUP(ctx context.Context) error {
-	return c.inner.ping(ctx, c.inner.model, chatPingPrompt, chatPingExpectedToken, chatPingMaxTokens)
-}
-
-// Complete sends a chat completion request to Groq and returns the content of
-// the first choice message. A json_schema response_format is always attached.
-func (c *groqClient) Complete(ctx context.Context, systemPrompt, userMessage string) (string, error) {
-	return c.inner.complete(ctx, systemPrompt, userMessage, true)
 }
