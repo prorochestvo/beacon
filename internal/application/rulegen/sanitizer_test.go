@@ -1,7 +1,6 @@
 package rulegen
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -133,12 +132,18 @@ func TestSanitize(t *testing.T) {
 		assert.Contains(t, string(out), "<table")
 	})
 
-	t.Run("bcc fixture structural anchor takes priority over currency tier", func(t *testing.T) {
+	t.Run("currency anchor outside the co-location radius does not steal the window", func(t *testing.T) {
 		t.Parallel()
-		data, err := os.ReadFile("../../../tmp/testdata/sources/bcc.html")
-		if err != nil {
-			t.Skip("bcc.html fixture not present; skipping fixture-based test")
-		}
+		// The shape of a real bank page, rebuilt to scale: a bare "USD" in the nav
+		// near the top, then half a megabyte of markup, then the rate table where
+		// the tier-1 marker sits beside "KZT". The nav hit is ~500 KB from the
+		// marker, far outside defaultCoLocationBytes, so it cannot qualify a tier-1
+		// hit of its own — and tier 2, which takes the *earliest* currency anchor,
+		// would centre the window on it and miss the table entirely.
+		nav := strings.Repeat("n", 100) + "USD" + strings.Repeat("n", 500*1024)
+		rateTable := `<div class="text-lg">KZT 469.00</div>` + strings.Repeat("t", 500*1024)
+		body := []byte(nav + rateTable)
+
 		structural := []string{
 			"<table", "<tbody", "<tr ",
 			`<div class="text-lg`,
@@ -147,16 +152,15 @@ func TestSanitize(t *testing.T) {
 			`class="exchange"`,
 			`data-currency=`,
 		}
-		out, _, err := Sanitize(data, structural, []string{"USD", "KZT"})
+		out, _, err := Sanitize(body, structural, []string{"USD", "KZT"})
 		require.NoError(t, err)
+
 		// Output must fit within the locate window regardless of body size.
 		assert.LessOrEqual(t, len(out), locateWindowBytes, "output must fit within the locate window")
-		// A structural Tier 1 anchor (<div class="text-lg) was found; the window
-		// is centred on it, not on the first bare "USD" which sits ~495 KB later
-		// in this fixture.  The tier-priority mechanism is verified: if currency
-		// tier had won, the window would be centred ~536 KB into the body and
-		// would not contain the structural marker.
 		assert.Contains(t, string(out), `<div class="text-lg`)
+		assert.Contains(t, string(out), "KZT 469.00")
+		// The tell that tier 1 won: the nav "USD" is nowhere near the window.
+		assert.NotContains(t, string(out), "USD")
 	})
 
 	t.Run("text-lg anchor appears twice only co-located occurrence wins", func(t *testing.T) {

@@ -8,12 +8,16 @@ import (
 )
 
 func TestCache_Push(t *testing.T) {
+	t.Parallel()
+
 	c := NewCache(time.Minute)
 	require.NoError(t, c.Push("k", "v"))
 	require.Error(t, c.Push("k", "v")) // duplicate key → Add fails
 }
 
 func TestCache_Fetch(t *testing.T) {
+	t.Parallel()
+
 	c := NewCache(time.Minute)
 	require.NoError(t, c.Push("k", "hello"))
 
@@ -30,6 +34,8 @@ func TestCache_Fetch(t *testing.T) {
 }
 
 func TestCache_Pull(t *testing.T) {
+	t.Parallel()
+
 	c := NewCache(time.Minute)
 	require.NoError(t, c.Push("k", 42))
 
