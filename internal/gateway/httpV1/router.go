@@ -26,6 +26,61 @@ type WeatherGatewayDeps struct {
 	ObsRepo meWeatherObsRepo
 }
 
+// healthCheckAgent is the contract for the dependency-health aggregator, threaded
+// through the router to the HealthCheck handler. Nil is allowed; the handler
+// returns 503 when no agent is wired.
+type healthCheckAgent interface {
+	CheckUp(ctx context.Context) (healthy bool, report map[string]string)
+}
+
+// meSubscriptionRepo threads the subscription repository through the router
+// without depending on the concrete repository package.
+type meSubscriptionRepo interface {
+	ObtainRateUserSubscriptionsByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.RateUserSubscription, error)
+	ObtainRateUserSubscriptionByID(ctx context.Context, id string) (*domain.RateUserSubscription, error)
+	RetainRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
+	RemoveRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
+}
+
+// meSourceRepo is a thin interface for source look-ups in the Mini App handler.
+type meSourceRepo interface {
+	ObtainRateSourceByName(ctx context.Context, name string) (*domain.RateSource, error)
+	ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error)
+}
+
+// meRateValueRepo is a thin interface for rate value look-ups in the Mini App handler.
+type meRateValueRepo interface {
+	ObtainLastNRateValuesBySourceName(ctx context.Context, name string, limit int64) ([]domain.RateValue, error)
+	ObtainLatestRateValuesBySourceNames(ctx context.Context, names []string) (map[string]domain.RateValue, error)
+}
+
+// meProfileRepo is a thin interface for user-profile upserts (timezone).
+type meProfileRepo interface {
+	UpsertRateUserProfile(ctx context.Context, record *domain.RateUserProfile) error
+}
+
+// meWeatherCityRepo threads the weather city repository through the router layer.
+type meWeatherCityRepo interface {
+	RetainWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
+	ObtainWeatherUserCitiesByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.WeatherUserCity, error)
+	ObtainWeatherUserCityByID(ctx context.Context, id string) (*domain.WeatherUserCity, error)
+	RemoveWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
+	RemoveWeatherUserCitiesByLocation(ctx context.Context, userType domain.UserType, userID, locationID string) error
+}
+
+// weatherGeocoder threads the geocoding provider through the router layer.
+// The return type matches the handler's interface exactly ([]dto.WeatherCitySearchItem),
+// so the adapter lives in cmd/web and not in this package.
+type weatherGeocoder interface {
+	Geocode(ctx context.Context, name string, count int) ([]dto.WeatherCitySearchItem, error)
+}
+
+// meWeatherObsRepo threads the weather observation repository through the router
+// layer for the on-demand current-weather endpoint.
+type meWeatherObsRepo interface {
+	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
+}
+
 // NewRouter registers all v1 HTTP routes on mux and returns it.
 func NewRouter(
 	mux *http.ServeMux,
@@ -107,59 +162,4 @@ func NewRouter(
 	mux.HandleFunc("GET "+routes.HealthCheck, h.HealthCheck)
 
 	return mux, nil
-}
-
-// healthCheckAgent is the contract for the dependency-health aggregator, threaded
-// through the router to the HealthCheck handler. Nil is allowed; the handler
-// returns 503 when no agent is wired.
-type healthCheckAgent interface {
-	CheckUp(ctx context.Context) (healthy bool, report map[string]string)
-}
-
-// meSubscriptionRepo threads the subscription repository through the router
-// without depending on the concrete repository package.
-type meSubscriptionRepo interface {
-	ObtainRateUserSubscriptionsByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.RateUserSubscription, error)
-	ObtainRateUserSubscriptionByID(ctx context.Context, id string) (*domain.RateUserSubscription, error)
-	RetainRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
-	RemoveRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
-}
-
-// meSourceRepo is a thin interface for source look-ups in the Mini App handler.
-type meSourceRepo interface {
-	ObtainRateSourceByName(ctx context.Context, name string) (*domain.RateSource, error)
-	ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error)
-}
-
-// meRateValueRepo is a thin interface for rate value look-ups in the Mini App handler.
-type meRateValueRepo interface {
-	ObtainLastNRateValuesBySourceName(ctx context.Context, name string, limit int64) ([]domain.RateValue, error)
-	ObtainLatestRateValuesBySourceNames(ctx context.Context, names []string) (map[string]domain.RateValue, error)
-}
-
-// meProfileRepo is a thin interface for user-profile upserts (timezone).
-type meProfileRepo interface {
-	UpsertRateUserProfile(ctx context.Context, record *domain.RateUserProfile) error
-}
-
-// meWeatherCityRepo threads the weather city repository through the router layer.
-type meWeatherCityRepo interface {
-	RetainWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
-	ObtainWeatherUserCitiesByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.WeatherUserCity, error)
-	ObtainWeatherUserCityByID(ctx context.Context, id string) (*domain.WeatherUserCity, error)
-	RemoveWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
-	RemoveWeatherUserCitiesByLocation(ctx context.Context, userType domain.UserType, userID, locationID string) error
-}
-
-// weatherGeocoder threads the geocoding provider through the router layer.
-// The return type matches the handler's interface exactly ([]dto.WeatherCitySearchItem),
-// so the adapter lives in cmd/web and not in this package.
-type weatherGeocoder interface {
-	Geocode(ctx context.Context, name string, count int) ([]dto.WeatherCitySearchItem, error)
-}
-
-// meWeatherObsRepo threads the weather observation repository through the router
-// layer for the on-demand current-weather endpoint.
-type meWeatherObsRepo interface {
-	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
 }
