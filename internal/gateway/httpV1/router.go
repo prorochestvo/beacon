@@ -41,12 +41,24 @@ func NewRouter(
 	serverStart time.Time,
 	weather WeatherGatewayDeps,
 ) (*http.ServeMux, error) {
-	h, err := v1.NewHandler(srvRateRestApi, botToken, subRepo, sourceRepo, rateValueRepo, profileRepo, chartSvc, healthAgent, serverVersion, serverStart)
+	h, err := v1.NewHandler(v1.Config{
+		RateService:     srvRateRestApi,
+		BotToken:        botToken,
+		MeSubRepo:       subRepo,
+		MeSourceRepo:    sourceRepo,
+		MeRateValueRepo: rateValueRepo,
+		MeProfileRepo:   profileRepo,
+		WeatherCityRepo: weather.CityRepo,
+		WeatherGeocoder: weather.Geocoder,
+		WeatherObsRepo:  weather.ObsRepo,
+		MeChartSvc:      chartSvc,
+		HealthAgent:     healthAgent,
+		ServerVersion:   serverVersion,
+		ServerStart:     serverStart,
+	})
 	if err != nil {
 		return nil, err
 	}
-	h.WithWeatherDeps(weather.CityRepo, weather.Geocoder)
-	h.WithWeatherObsRepo(weather.ObsRepo)
 
 	// MeSubscriptionsRaw must be registered before MeSubscriptions so Go 1.22+
 	// ServeMux longest-path matching selects the more specific route.

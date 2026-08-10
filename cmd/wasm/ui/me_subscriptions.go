@@ -69,19 +69,12 @@ func RenderMeSubscriptions(state application.MeSubscriptionsState) string {
 	var b strings.Builder
 	b.WriteString(renderManageGearButton("Manage subscriptions"))
 	b.WriteString(`<div id="me-sparkline-chart">`)
-	b.WriteString(renderSparklineSlot(state))
+	b.WriteString(RenderSparklineSlot(state))
 	b.WriteString(`</div>`)
 	b.WriteString(`<div id="me-pair-modal-slot">`)
 	b.WriteString(RenderPairModal(state))
 	b.WriteString(`</div>`)
 	return RenderSectionShell(SectionRates, b.String())
-}
-
-// RenderSparklineSlot returns the HTML content for the #me-sparkline-chart div.
-// Exported so main.go can update the chart slot in-place after the async fetch
-// without re-rendering the whole page.
-func RenderSparklineSlot(state application.MeSubscriptionsState) string {
-	return renderSparklineSlot(state)
 }
 
 // RenderPairModal returns the HTML for the open-pair detail overlay, or the
@@ -172,8 +165,10 @@ func renderModalDetailBody(row dto.MeChartPairRow, lastGrab time.Time, hasGrab b
 	return b.String()
 }
 
-// renderSparklineSlot returns the content for the #me-sparkline-chart div.
-func renderSparklineSlot(state application.MeSubscriptionsState) string {
+// RenderSparklineSlot returns the content for the #me-sparkline-chart div. Exported
+// so main.go can update the chart slot in-place after the async fetch without
+// re-rendering the whole page.
+func RenderSparklineSlot(state application.MeSubscriptionsState) string {
 	if state.ChartError != nil {
 		return `<p class="sparkline-error">Chart unavailable</p>`
 	}

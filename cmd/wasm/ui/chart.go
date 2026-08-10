@@ -38,14 +38,7 @@ var allowedUIPeriods = []int{7, 30, 90, 180, 360}
 // The period selector defaults to 7 days; use RenderSparklineListForPeriod to
 // supply the active selection.
 func RenderSparklineList(chart dto.MeChartResponse) string {
-	return renderSparklineListInternal(chart, 7)
-}
-
-// RenderSparklineListForPeriod is like RenderSparklineList but marks the chip
-// for period as active. period must be one of {7, 30, 90, 180, 360}; an
-// unrecognised value is silently treated as 7.
-func RenderSparklineListForPeriod(chart dto.MeChartResponse, period int) string {
-	return renderSparklineListInternal(chart, period)
+	return RenderSparklineListForPeriod(chart, 7)
 }
 
 // effectiveDaysForChart returns the maximum EffectiveDays across all series of
@@ -64,9 +57,10 @@ func effectiveDaysForChart(chart dto.MeChartResponse) int {
 	return best
 }
 
-// renderSparklineListInternal renders the full chart list with the given active
-// period chip highlighted.
-func renderSparklineListInternal(chart dto.MeChartResponse, period int) string {
+// RenderSparklineListForPeriod renders the full chart list with the chip for
+// period highlighted. period must be one of {7, 30, 90, 180, 360}; an
+// unrecognised value is silently treated as 7.
+func RenderSparklineListForPeriod(chart dto.MeChartResponse, period int) string {
 	if len(chart.Pairs) == 0 {
 		return `<div class="sparkline-empty"><p>No chart data yet.</p></div>`
 	}

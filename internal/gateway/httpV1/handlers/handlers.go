@@ -22,41 +22,105 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/tools/tgwebapp"
 )
 
-// NewHandler constructs a Handler wired to the rate service and, optionally,
-// the Mini App auth dependencies. botToken, meSubRepo, meSourceRepo, and
-// meRateValueRepo are required for ListMeSubscriptions; meProfileRepo for
-// UpsertMeProfile; remaining handlers need only srvRate. meChartSvc is required
-// for GetMeRatesChart and GetPublicRatesChart and may be nil (those return 503).
-// healthAgent drives GET /health/check; when nil the endpoint returns 503.
-// serverVersion and serverStart populate the "server" block in the health response.
-func NewHandler(
-	srvRate rateService,
-	botToken string,
-	meSubRepo meSubscriptionRepository,
-	meSourceRepo meSourceRepository,
-	meRateValueRepo meRateValueRepository,
-	meProfileRepo meProfileRepository,
-	meChartSvc meChartService,
-	healthAgent healthCheckAgent,
-	serverVersion string,
-	serverStart time.Time,
-) (*Handler, error) {
-	h := &Handler{
-		rateService:      srvRate,
-		botToken:         botToken,
-		meSubRepo:        meSubRepo,
-		meSourceRepo:     meSourceRepo,
-		meRateValueRepo:  meRateValueRepo,
-		meProfileRepo:    meProfileRepo,
-		meChartSvc:       meChartSvc,
-		healthAgent:      healthAgent,
-		serverVersion:    serverVersion,
-		serverStart:      serverStart,
-		validateInitData: tgwebapp.ValidateInitData,
-		nowFn:            time.Now,
-		logger:           log.Default(),
+// Config carries every dependency a Handler needs.
+//
+// Named fields rather than a positional parameter list: among thirteen
+// dependencies sit four repository interfaces and two strings, so a transposed
+// pair compiles cleanly and misbehaves only in production.
+//
+// Everything is required except MeChartSvc, HealthAgent, BotToken and Logger.
+// The weather trio is required for a specific reason: it used to be attached
+// after construction by two setters, and every weather handler opened with a
+// nil check answering 503 — a per-request runtime failure standing in for a
+// wiring mistake that startup should refuse outright.
+type Config struct {
+	// RateService backs every public and admin rate endpoint.
+	RateService rateService
+	// BotToken is the Telegram bot token the initData HMAC is verified against.
+	// Empty is accepted: handlers outside /api/me never read it.
+	BotToken string
+
+	// MeSubRepo, MeSourceRepo, MeRateValueRepo and MeProfileRepo back the
+	// /api/me subscription, source, rate-value and profile endpoints.
+	MeSubRepo       meSubscriptionRepository
+	MeSourceRepo    meSourceRepository
+	MeRateValueRepo meRateValueRepository
+	MeProfileRepo   meProfileRepository
+
+	// WeatherCityRepo, WeatherGeocoder and WeatherObsRepo back /api/me/weather.
+	WeatherCityRepo meWeatherCityRepository
+	WeatherGeocoder weatherGeocoder
+	WeatherObsRepo  meWeatherObsRepository
+
+	// MeChartSvc drives GetMeRatesChart and GetPublicRatesChart. Optional: those
+	// endpoints answer 503 when it is absent, which is how a deployment without
+	// charting is meant to behave.
+	MeChartSvc meChartService
+	// HealthAgent drives GET /health/check, on the same optional terms.
+	HealthAgent healthCheckAgent
+
+	// ServerVersion and ServerStart populate the "server" block of the health
+	// response.
+	ServerVersion string
+	ServerStart   time.Time
+
+	// Logger receives the detail behind a 500 (see internalError). Defaults to
+	// log.Default() when nil.
+	Logger *log.Logger
+}
+
+// NewHandler constructs a Handler from cfg, or reports every required
+// dependency cfg left nil. The Handler it returns is finished: nothing has to
+// be attached to it afterwards before it can serve.
+func NewHandler(cfg Config) (*Handler, error) {
+	required := []struct {
+		name    string
+		present bool
+	}{
+		{"RateService", cfg.RateService != nil},
+		{"MeSubRepo", cfg.MeSubRepo != nil},
+		{"MeSourceRepo", cfg.MeSourceRepo != nil},
+		{"MeRateValueRepo", cfg.MeRateValueRepo != nil},
+		{"MeProfileRepo", cfg.MeProfileRepo != nil},
+		{"WeatherCityRepo", cfg.WeatherCityRepo != nil},
+		{"WeatherGeocoder", cfg.WeatherGeocoder != nil},
+		{"WeatherObsRepo", cfg.WeatherObsRepo != nil},
 	}
-	return h, nil
+	// Report every absentee at once: a composition root that forgot one
+	// dependency has usually forgotten its neighbours too.
+	var missing []string
+	for _, dep := range required {
+		if !dep.present {
+			missing = append(missing, dep.name)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("handlers: config is missing %s", strings.Join(missing, ", "))
+	}
+
+	logger := cfg.Logger
+	if logger == nil {
+		logger = log.Default()
+	}
+
+	return &Handler{
+		rateService:       cfg.RateService,
+		botToken:          cfg.BotToken,
+		meSubRepo:         cfg.MeSubRepo,
+		meSourceRepo:      cfg.MeSourceRepo,
+		meRateValueRepo:   cfg.MeRateValueRepo,
+		meProfileRepo:     cfg.MeProfileRepo,
+		meChartSvc:        cfg.MeChartSvc,
+		healthAgent:       cfg.HealthAgent,
+		serverVersion:     cfg.ServerVersion,
+		serverStart:       cfg.ServerStart,
+		meWeatherCityRepo: cfg.WeatherCityRepo,
+		weatherGeocoder:   cfg.WeatherGeocoder,
+		meWeatherObsRepo:  cfg.WeatherObsRepo,
+		validateInitData:  tgwebapp.ValidateInitData,
+		nowFn:             time.Now,
+		logger:            logger,
+	}, nil
 }
 
 // Handler groups all v1 HTTP handlers and their repository dependencies.
@@ -72,19 +136,22 @@ type Handler struct {
 	serverVersion   string
 	serverStart     time.Time
 
-	// Weather city endpoints — nil when not wired; handlers return 503 in that case.
+	// Weather endpoints. NewHandler rejects a Config leaving any of these nil, so
+	// the handlers below may use them without a wiring check.
 	meWeatherCityRepo meWeatherCityRepository
 	weatherGeocoder   weatherGeocoder
-	// meWeatherObsRepo is required by GetMeWeatherCurrent; nil until WithWeatherObsRepo is called.
-	meWeatherObsRepo meWeatherObsRepository
+	meWeatherObsRepo  meWeatherObsRepository
 
-	// validateInitData is the Telegram WebApp initData verifier. A field so tests
-	// can inject a fake without real bot tokens.
+	// validateInitData and nowFn are the two sanctioned test seams on this type
+	// (CLAUDE.md, Key Patterns). Both serve the same problem: initData carries an
+	// HMAC over a real bot token and an age checked against the wall clock, so a
+	// test that cannot substitute the verifier or stop the clock can only cover
+	// the auth path by holding a production token and sleeping.
 	validateInitData func(initData, botToken string, maxAge time.Duration, now time.Time) (int64, error)
-	// nowFn returns the current time. Injected for deterministic tests.
-	nowFn func() time.Time
-	// logger is used by internalError. Defaults to log.Default() so tests can
-	// inject a per-test logger without touching the global writer.
+	nowFn            func() time.Time
+
+	// logger receives the detail behind a 500 (see internalError). Ordinary
+	// wiring from Config.Logger, defaulted to log.Default() by NewHandler.
 	logger *log.Logger
 }
 

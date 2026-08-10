@@ -141,44 +141,28 @@ func (m *mockWeatherObsRepo) ObtainLatestObservation(_ context.Context, location
 }
 
 // newWeatherHandler builds a Handler wired with the given weather test doubles
-// and silenced logger so test output is clean.
+// and a silenced logger so test output stays clean.
 func newWeatherHandler(t *testing.T, cityRepo meWeatherCityRepository, geo weatherGeocoder) *Handler {
 	t.Helper()
-	h, err := NewHandler(
-		&mockRateService{}, "", &mockMeSubRepo{}, &mockMeSourceRepo{},
-		&mockMeRateValueRepo{}, &mockMeProfileRepo{}, nil, nil, "", time.Time{},
-	)
-	require.NoError(t, err)
-	h.WithWeatherDeps(cityRepo, geo)
-	h.logger = log.New(io.Discard, "", 0)
-	return h
+	return newWeatherHandlerWithObs(t, cityRepo, geo, &mockWeatherObsRepo{})
 }
 
 // newWeatherHandlerWithObs builds a Handler wired with city repo, geocoder, and
-// obs repo. Extends newWeatherHandler so tests for GetMeWeatherCurrent do not
-// have to wire the obs dep manually.
+// obs repo, for the tests of GetMeWeatherCurrent that care about the last one.
 func newWeatherHandlerWithObs(t *testing.T, cityRepo meWeatherCityRepository, geo weatherGeocoder, obsRepo meWeatherObsRepository) *Handler {
 	t.Helper()
-	h := newWeatherHandler(t, cityRepo, geo)
-	h.WithWeatherObsRepo(obsRepo)
-	return h
+	return newTestHandler(t, Config{
+		WeatherCityRepo: cityRepo,
+		WeatherGeocoder: geo,
+		WeatherObsRepo:  obsRepo,
+		Logger:          log.New(io.Discard, "", 0),
+	})
 }
 
 func TestHandler_SearchWeatherCities(t *testing.T) {
 	t.Parallel()
 
 	const callerUserID = int64(77)
-
-	t.Run("nil geocoder returns 503", func(t *testing.T) {
-		t.Parallel()
-		h := newWeatherHandler(t, &mockWeatherCityRepo{}, nil)
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
-		rr := httptest.NewRecorder()
-		h.SearchWeatherCities(rr, httptest.NewRequest(http.MethodGet, "/api/me/weather/cities/search?q=Almaty", nil))
-
-		require.Equal(t, http.StatusServiceUnavailable, rr.Code)
-	})
 
 	t.Run("missing auth header returns 401", func(t *testing.T) {
 		t.Parallel()
@@ -291,17 +275,6 @@ func TestHandler_ListMeWeatherCities(t *testing.T) {
 	const callerUserID = int64(99)
 	const callerIDStr = "99"
 
-	t.Run("nil repo returns 503", func(t *testing.T) {
-		t.Parallel()
-		h := newWeatherHandler(t, nil, nil)
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
-		rr := httptest.NewRecorder()
-		h.ListMeWeatherCities(rr, httptest.NewRequest(http.MethodGet, "/api/me/weather/cities", nil))
-
-		require.Equal(t, http.StatusServiceUnavailable, rr.Code)
-	})
-
 	t.Run("missing auth returns 401", func(t *testing.T) {
 		t.Parallel()
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
@@ -390,18 +363,6 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		b, _ := json.Marshal(r)
 		return strings.NewReader(string(b))
 	}
-
-	t.Run("nil repo returns 503", func(t *testing.T) {
-		t.Parallel()
-		h := newWeatherHandler(t, nil, nil)
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
-		req := httptest.NewRequest(http.MethodPost, "/api/me/weather/cities", bodyJSON(validBody))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, req)
-
-		require.Equal(t, http.StatusServiceUnavailable, rr.Code)
-	})
 
 	t.Run("missing auth returns 401", func(t *testing.T) {
 		t.Parallel()
@@ -925,19 +886,6 @@ func TestHandler_DeleteMeWeatherCity(t *testing.T) {
 		LocationID: "5678", DisplayName: "Moscow",
 	}
 
-	t.Run("nil repo returns 503", func(t *testing.T) {
-		t.Parallel()
-		h := newWeatherHandler(t, nil, nil)
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/me/weather/cities/city-1", nil)
-		req.SetPathValue("id", "city-1")
-		rr := httptest.NewRecorder()
-		h.DeleteMeWeatherCity(rr, req)
-
-		require.Equal(t, http.StatusServiceUnavailable, rr.Code)
-	})
-
 	t.Run("missing auth returns 401", func(t *testing.T) {
 		t.Parallel()
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
@@ -1124,17 +1072,6 @@ func TestHandler_DeleteMeWeatherLocation(t *testing.T) {
 		return req
 	}
 
-	t.Run("nil repo returns 503", func(t *testing.T) {
-		t.Parallel()
-		h := newWeatherHandler(t, nil, nil)
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
-		rr := httptest.NewRecorder()
-		h.DeleteMeWeatherLocation(rr, newReq("loc-1"))
-
-		require.Equal(t, http.StatusServiceUnavailable, rr.Code)
-	})
-
 	t.Run("missing auth returns 401", func(t *testing.T) {
 		t.Parallel()
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
@@ -1235,28 +1172,6 @@ func TestHandler_GetMeWeatherCurrent(t *testing.T) {
 			CapturedAt:  time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC),
 		}
 	}
-
-	t.Run("nil city repo returns 503", func(t *testing.T) {
-		t.Parallel()
-		h := newWeatherHandlerWithObs(t, nil, nil, &mockWeatherObsRepo{})
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
-		rr := httptest.NewRecorder()
-		h.GetMeWeatherCurrent(rr, httptest.NewRequest(http.MethodGet, "/api/me/weather/current", nil))
-
-		require.Equal(t, http.StatusServiceUnavailable, rr.Code)
-	})
-
-	t.Run("nil obs repo returns 503", func(t *testing.T) {
-		t.Parallel()
-		h := newWeatherHandlerWithObs(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{}, nil)
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
-		rr := httptest.NewRecorder()
-		h.GetMeWeatherCurrent(rr, httptest.NewRequest(http.MethodGet, "/api/me/weather/current", nil))
-
-		require.Equal(t, http.StatusServiceUnavailable, rr.Code)
-	})
 
 	t.Run("missing auth returns 401", func(t *testing.T) {
 		t.Parallel()

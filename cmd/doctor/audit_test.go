@@ -40,7 +40,7 @@ func TestRunAudit(t *testing.T) {
 		t.Parallel()
 
 		var out, errOut bytes.Buffer
-		code := runAudit(nil, &out, &errOut)
+		code := runAudit(nil, nil, nil, &out, &errOut)
 
 		assert.Equal(t, 2, code)
 		assert.Contains(t, errOut.String(), "specify --all, --source, or --only")
@@ -51,7 +51,7 @@ func TestRunAudit(t *testing.T) {
 		t.Parallel()
 
 		var out, errOut bytes.Buffer
-		code := runAudit([]string{"--all", "--source", "halyk_usd"}, &out, &errOut)
+		code := runAudit([]string{"--all", "--source", "halyk_usd"}, nil, nil, &out, &errOut)
 
 		assert.Equal(t, 2, code)
 		assert.Contains(t, errOut.String(), "mutually exclusive")
@@ -61,7 +61,7 @@ func TestRunAudit(t *testing.T) {
 		t.Parallel()
 
 		var out, errOut bytes.Buffer
-		code := runAudit([]string{"--all", "--only", "^halyk"}, &out, &errOut)
+		code := runAudit([]string{"--all", "--only", "^halyk"}, nil, nil, &out, &errOut)
 
 		assert.Equal(t, 2, code)
 		assert.Contains(t, errOut.String(), "mutually exclusive")
@@ -71,7 +71,7 @@ func TestRunAudit(t *testing.T) {
 		t.Parallel()
 
 		var out, errOut bytes.Buffer
-		code := runAudit([]string{"--source", "halyk_usd", "--only", "^halyk"}, &out, &errOut)
+		code := runAudit([]string{"--source", "halyk_usd", "--only", "^halyk"}, nil, nil, &out, &errOut)
 
 		assert.Equal(t, 2, code)
 		assert.Contains(t, errOut.String(), "mutually exclusive")
@@ -81,7 +81,7 @@ func TestRunAudit(t *testing.T) {
 		t.Parallel()
 
 		var out, errOut bytes.Buffer
-		code := runAudit([]string{"--only", "[invalid"}, &out, &errOut)
+		code := runAudit([]string{"--only", "[invalid"}, nil, nil, &out, &errOut)
 
 		assert.Equal(t, 2, code)
 		assert.Contains(t, errOut.String(), "compile --only regex")
@@ -93,7 +93,7 @@ func TestRunAudit(t *testing.T) {
 		dir := t.TempDir()
 		var out, errOut bytes.Buffer
 		// Point seed-glob at an empty temp dir so ParseSeedFiles finds nothing.
-		code := runAudit([]string{"--all", "--seed-glob", filepath.Join(dir, "*.sql")}, &out, &errOut)
+		code := runAudit([]string{"--all", "--seed-glob", filepath.Join(dir, "*.sql")}, nil, nil, &out, &errOut)
 
 		assert.Equal(t, 3, code)
 		assert.Contains(t, errOut.String(), "no sources found")
@@ -103,7 +103,7 @@ func TestRunAudit(t *testing.T) {
 		t.Parallel()
 
 		var out, errOut bytes.Buffer
-		code := runAudit([]string{"--help"}, &out, &errOut)
+		code := runAudit([]string{"--help"}, nil, nil, &out, &errOut)
 
 		assert.Equal(t, 0, code)
 	})
@@ -189,7 +189,7 @@ func TestRunAudit(t *testing.T) {
 		assert.Greater(t, failures, 0, "expected at least one MISS when fetch fails")
 	})
 
-	t.Run("fetch failure produces exit code 1 via runAuditWith", func(t *testing.T) {
+	t.Run("fetch failure produces exit code 1 via runAudit", func(t *testing.T) {
 		t.Parallel()
 
 		dir := t.TempDir()
@@ -209,7 +209,7 @@ func TestRunAudit(t *testing.T) {
 		}
 
 		var out, errOut bytes.Buffer
-		code := runAuditWith(
+		code := runAudit(
 			[]string{"--all", "--seed-glob", "*.sql"},
 			fetcher,
 			os.DirFS(dir),
@@ -220,7 +220,7 @@ func TestRunAudit(t *testing.T) {
 		assert.Equal(t, 1, code, "expected exit 1 when at least one source is a MISS; stdout: %s", out.String())
 	})
 
-	t.Run("--source with dots only matches exact name via runAuditWith", func(t *testing.T) {
+	t.Run("--source with dots only matches exact name via runAudit", func(t *testing.T) {
 		t.Parallel()
 
 		dir := t.TempDir()
@@ -249,7 +249,7 @@ func TestRunAudit(t *testing.T) {
 		var out, errOut bytes.Buffer
 		// -v makes WriteReport emit the per-source table with source names; the
 		// non-verbose OK line ("OK: audited N sources across N URLs") does not.
-		code := runAuditWith(
+		code := runAudit(
 			[]string{"--source", "src.with.dots", "--seed-glob", "*.sql", "-v"},
 			fetcher,
 			os.DirFS(dir),

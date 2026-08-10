@@ -43,23 +43,6 @@ type weatherGeocoder interface {
 	Geocode(ctx context.Context, name string, count int) ([]dto.WeatherCitySearchItem, error)
 }
 
-// WithWeatherDeps injects the weather city repository and geocoder into the
-// handler. Returns h to allow chaining after NewHandler. Both deps are
-// nil-safe: if either is nil the weather endpoints return 503.
-func (h *Handler) WithWeatherDeps(cityRepo meWeatherCityRepository, geocoder weatherGeocoder) *Handler {
-	h.meWeatherCityRepo = cityRepo
-	h.weatherGeocoder = geocoder
-	return h
-}
-
-// WithWeatherObsRepo injects the weather observation repository for the
-// on-demand current-weather endpoint. Returns h to allow chaining. Nil-safe:
-// GetMeWeatherCurrent returns 503 when the repo is not wired.
-func (h *Handler) WithWeatherObsRepo(obsRepo meWeatherObsRepository) *Handler {
-	h.meWeatherObsRepo = obsRepo
-	return h
-}
-
 // SearchWeatherCities calls the geocoding provider and returns the top matches
 // for the q query parameter. Auth is required so the endpoint cannot be used
 // as an open geocoding proxy.
@@ -70,13 +53,7 @@ func (h *Handler) WithWeatherObsRepo(obsRepo meWeatherObsRepository) *Handler {
 // 200 with WeatherCitySearchResponse on success.
 // 400 when q is absent or empty.
 // 401 on auth failure.
-// 503 when the weather service is not wired.
 func (h *Handler) SearchWeatherCities(w http.ResponseWriter, r *http.Request) {
-	if h.weatherGeocoder == nil {
-		http.Error(w, `{"error":"weather service unavailable"}`, http.StatusServiceUnavailable)
-		return
-	}
-
 	initData := r.Header.Get("X-Telegram-Init-Data")
 	if _, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn()); err != nil {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
@@ -111,11 +88,6 @@ func (h *Handler) SearchWeatherCities(w http.ResponseWriter, r *http.Request) {
 // GET /api/me/weather/cities
 // Auth: X-Telegram-Init-Data header only.
 func (h *Handler) ListMeWeatherCities(w http.ResponseWriter, r *http.Request) {
-	if h.meWeatherCityRepo == nil {
-		http.Error(w, `{"error":"weather service unavailable"}`, http.StatusServiceUnavailable)
-		return
-	}
-
 	initData := r.Header.Get("X-Telegram-Init-Data")
 	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
 	if err != nil {
@@ -163,11 +135,6 @@ func (h *Handler) ListMeWeatherCities(w http.ResponseWriter, r *http.Request) {
 // 401 on auth failure.
 // 500 on persistence failure.
 func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
-	if h.meWeatherCityRepo == nil {
-		http.Error(w, `{"error":"weather service unavailable"}`, http.StatusServiceUnavailable)
-		return
-	}
-
 	initData := r.Header.Get("X-Telegram-Init-Data")
 	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
 	if err != nil {
@@ -385,11 +352,6 @@ func forcedWeatherKindNotice(kind domain.WeatherNotifyKind) (notice string, ok b
 // 404 on missing city or cross-user access (same response — no existence disclosure).
 // 500 on persistence failure.
 func (h *Handler) DeleteMeWeatherCity(w http.ResponseWriter, r *http.Request) {
-	if h.meWeatherCityRepo == nil {
-		http.Error(w, `{"error":"weather service unavailable"}`, http.StatusServiceUnavailable)
-		return
-	}
-
 	initData := r.Header.Get("X-Telegram-Init-Data")
 	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
 	if err != nil {
@@ -440,13 +402,8 @@ func (h *Handler) DeleteMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 // 401 on auth failure.
 // 404 when the caller has no rows at this location (missing or cross-user — same response,
 // no existence disclosure): the repository's atomic delete reports zero rows affected.
-// 503 when the weather service is not wired. 500 on persistence failure.
+// 500 on persistence failure.
 func (h *Handler) DeleteMeWeatherLocation(w http.ResponseWriter, r *http.Request) {
-	if h.meWeatherCityRepo == nil {
-		http.Error(w, `{"error":"weather service unavailable"}`, http.StatusServiceUnavailable)
-		return
-	}
-
 	initData := r.Header.Get("X-Telegram-Init-Data")
 	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
 	if err != nil {
@@ -523,14 +480,8 @@ func (h *Handler) meWeatherCityOwnershipCheck(w http.ResponseWriter, r *http.Req
 //
 // 200 with WeatherCurrentResponse on success.
 // 401 on auth failure.
-// 503 when the weather service is not wired.
 // 500 on unexpected repo errors.
 func (h *Handler) GetMeWeatherCurrent(w http.ResponseWriter, r *http.Request) {
-	if h.meWeatherCityRepo == nil || h.meWeatherObsRepo == nil {
-		http.Error(w, `{"error":"weather service unavailable"}`, http.StatusServiceUnavailable)
-		return
-	}
-
 	initData := r.Header.Get("X-Telegram-Init-Data")
 	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
 	if err != nil {

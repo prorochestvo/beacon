@@ -21,16 +21,10 @@ func RenderSources(state application.SourcesState) string {
 	b.WriteString(renderStatsLine(state.Stats))
 	b.WriteString(renderFilters())
 	b.WriteString(`<div id="sources-table">`)
-	b.WriteString(renderSourcesTable(state))
+	b.WriteString(RenderSourcesTable(state))
 	b.WriteString(`</div>`)
 
 	return b.String()
-}
-
-// RenderSourcesTable returns only the inner table HTML so the DOM can be
-// updated in-place without re-rendering the filters.
-func RenderSourcesTable(state application.SourcesState) string {
-	return renderSourcesTable(state)
 }
 
 func renderStatsLine(stats dto.StatsResponse) string {
@@ -61,7 +55,7 @@ func renderFilters() string {
 		`</div>`
 }
 
-func renderSourcesTable(state application.SourcesState) string {
+func RenderSourcesTable(state application.SourcesState) string {
 	visible := state.Visible()
 
 	arrow := " ↓"
