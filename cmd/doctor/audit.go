@@ -37,15 +37,11 @@ import (
 //	1  at least one source reported MISS
 //	2  usage error (missing or mutually exclusive flags, bad regex)
 //	3  infrastructure error (glob failure, no sources found, auditor or report error)
-func runAudit(args []string, out, errOut io.Writer) int {
-	return runAuditWith(args, nil, nil, out, errOut)
-}
-
-// runAuditWith is the internal implementation of runAudit. A non-nil fetcher
-// replaces the default HTTP fetcher; a non-nil seedFS replaces os.DirFS(".") for
-// seed-glob resolution. Both exist so tests can inject stubs without hitting the
-// network or relying on CWD layout.
-func runAuditWith(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out, errOut io.Writer) int {
+//
+// A nil fetcher selects the default HTTP fetcher; a nil seedFS selects
+// os.DirFS(".") for seed-glob resolution. Callers that have no reason to
+// override either pass nil for both — see cmd/doctor/main.go.
+func runAudit(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out, errOut io.Writer) int {
 	var (
 		seedGlob string
 		onlyRe   string

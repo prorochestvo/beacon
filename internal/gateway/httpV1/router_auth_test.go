@@ -40,26 +40,30 @@ var meRoutes = []struct {
 	{http.MethodDelete, strings.Replace(routes.MeWeatherLocationByID, "{location_id}", "abc", 1)},
 }
 
-// newAuthTestRouter builds the real router with nil dependencies throughout.
+// newAuthTestRouter builds the real router with dependencies that refuse to be used.
 //
-// Nil is the assertion, not a shortcut: every /api/me/* handler validates before it
-// touches a repository, so an unauthenticated request must never reach one. A handler
-// that skipped the check would panic on a nil dependency instead of quietly returning
-// data — which the subtests below catch and report as the auth failure it is.
+// The booby-trapped stubs are the assertion, not a shortcut: every /api/me/* handler
+// authenticates before it touches a repository, so an unauthenticated request must
+// never reach one. A handler that skipped the check panics on its first repository
+// call instead of quietly returning data — which the subtests below catch and report
+// as the auth failure it is.
 func newAuthTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 	mux, err := httpV1.NewRouter(
 		http.NewServeMux(),
-		nil,                // rate service
-		"test-bot-token",   // botToken
-		nil, nil, nil, nil, // me repos
+		// A nil *service.RateRestApi: a typed nil, so any method call on it is a nil
+		// dereference — the same trap the stubs set, without needing to restate the
+		// whole rate-service surface here.
+		nil,              // rate service
+		"test-bot-token", // botToken
+		stubMeSubRepo{},
+		stubMeSourceRepo{},
+		stubMeRateValueRepo{},
+		stubMeProfileRepo{},
 		nil,        // chart service
 		nil,        // health agent
 		"test",     // server version
 		time.Now(), // server start
-		// Weather deps must be non-nil: those handlers answer 503 for missing wiring
-		// *before* they authenticate, so nil would mask the auth branch this test is
-		// here to exercise. Their methods are never reached — auth rejects first.
 		httpV1.WeatherGatewayDeps{
 			CityRepo: stubWeatherCityRepo{},
 			Geocoder: stubGeocoder{},
@@ -98,8 +102,8 @@ func TestEveryMeRouteRejectsUnauthenticated(t *testing.T) {
 
 				defer func() {
 					if rec := recover(); rec != nil {
-						t.Fatalf("handler panicked on a nil dependency (%v) — it reached its "+
-							"repository, which means the auth check did not run first", rec)
+						t.Fatalf("handler panicked reaching a dependency (%v) — the auth "+
+							"check did not run first", rec)
 					}
 				}()
 				mux.ServeHTTP(rec, req)
@@ -142,9 +146,50 @@ func TestMeRouteTableIsComplete(t *testing.T) {
 			"require authentication:\n  %s", strings.Join(missing, "\n  "))
 }
 
-// The weather stubs exist only so the handlers get past their nil-dependency guard.
-// Every method panics: reaching one would mean the auth check did not run first, and
-// the subtests report that as the failure it is.
+// The stubs below satisfy NewHandler, which refuses a Config missing any required
+// dependency. Every method panics: reaching one would mean the auth check did not run
+// first, and the subtests report that as the failure it is. A panicking stub is a
+// sharper trap than an untyped nil — it names what went wrong instead of surfacing an
+// anonymous nil dereference.
+
+type stubMeSubRepo struct{}
+
+func (stubMeSubRepo) ObtainRateUserSubscriptionsByUserID(context.Context, domain.UserType, string) ([]domain.RateUserSubscription, error) {
+	panic("reached the repository without authenticating")
+}
+func (stubMeSubRepo) ObtainRateUserSubscriptionByID(context.Context, string) (*domain.RateUserSubscription, error) {
+	panic("reached the repository without authenticating")
+}
+func (stubMeSubRepo) RetainRateUserSubscription(context.Context, *domain.RateUserSubscription) error {
+	panic("reached the repository without authenticating")
+}
+func (stubMeSubRepo) RemoveRateUserSubscription(context.Context, *domain.RateUserSubscription) error {
+	panic("reached the repository without authenticating")
+}
+
+type stubMeSourceRepo struct{}
+
+func (stubMeSourceRepo) ObtainRateSourceByName(context.Context, string) (*domain.RateSource, error) {
+	panic("reached the repository without authenticating")
+}
+func (stubMeSourceRepo) ObtainRateSourcesByNames(context.Context, []string) (map[string]domain.RateSource, error) {
+	panic("reached the repository without authenticating")
+}
+
+type stubMeRateValueRepo struct{}
+
+func (stubMeRateValueRepo) ObtainLastNRateValuesBySourceName(context.Context, string, int64) ([]domain.RateValue, error) {
+	panic("reached the repository without authenticating")
+}
+func (stubMeRateValueRepo) ObtainLatestRateValuesBySourceNames(context.Context, []string) (map[string]domain.RateValue, error) {
+	panic("reached the repository without authenticating")
+}
+
+type stubMeProfileRepo struct{}
+
+func (stubMeProfileRepo) UpsertRateUserProfile(context.Context, *domain.RateUserProfile) error {
+	panic("reached the repository without authenticating")
+}
 
 type stubWeatherCityRepo struct{}
 

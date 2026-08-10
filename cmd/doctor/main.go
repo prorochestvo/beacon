@@ -60,7 +60,8 @@ func run(args []string, out, errOut io.Writer) int {
 	case "rulegen":
 		return runRulegen(args[1:], out, errOut)
 	case "audit":
-		return runAudit(args[1:], out, errOut)
+		// nil fetcher and nil seedFS select the real HTTP fetcher and os.DirFS(".").
+		return runAudit(args[1:], nil, nil, out, errOut)
 	case "--help", "-h", "help":
 		printUsage(out)
 		return 0
