@@ -422,6 +422,11 @@ const (
 		" FROM " + weatherUserCityTableName
 )
 
+// weatherUserCityScanner is satisfied by *sql.Row and *sql.Rows.
+type weatherUserCityScanner interface {
+	Scan(dest ...any) error
+}
+
 func weatherUserCityQueryContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) ([]domain.WeatherUserCity, error) {
 	query := weatherUserCitySQLSelect + " " + condition
 
@@ -443,11 +448,6 @@ func weatherUserCityQueryContext(tx *sql.Tx, ctx context.Context, condition stri
 		items = []domain.WeatherUserCity{}
 	}
 	return items, nil
-}
-
-// weatherUserCityScanner is satisfied by *sql.Row and *sql.Rows.
-type weatherUserCityScanner interface {
-	Scan(dest ...any) error
 }
 
 func weatherUserCityScan(s weatherUserCityScanner) (domain.WeatherUserCity, error) {
