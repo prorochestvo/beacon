@@ -9,6 +9,8 @@ import (
 var _ error = &PublicError{}
 
 func TestNewPublicError(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		details  []string
@@ -33,6 +35,7 @@ func TestNewPublicError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := NewPublicError(tt.details...)
 			require.Equal(t, tt.expected, err.Details())
 			require.Equal(t, tt.expected, err.Error())
@@ -41,18 +44,24 @@ func TestNewPublicError(t *testing.T) {
 }
 
 func TestPublicError_Details(t *testing.T) {
+	t.Parallel()
+
 	details := "user not found"
 	err := NewPublicError(details)
 	require.Equal(t, details, err.Details())
 }
 
 func TestPublicError_Error(t *testing.T) {
+	t.Parallel()
+
 	details := "invalid request"
 	err := NewPublicError(details)
 	require.Equal(t, details, err.Error())
 }
 
 func TestRuntimeDetails(t *testing.T) {
+	t.Parallel()
+
 	got := runtimeDetails()
 	for _, part := range []string{"Go version:", "GOOS:", "GOARCH:", "PID:", "PPID:"} {
 		require.Contains(t, got, part)

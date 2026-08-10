@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,6 +18,21 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/repository"
 	"github.com/seilbekskindirov/beacon/internal/tools/threadsafe"
 	"github.com/stretchr/testify/require"
+)
+
+// Response bodies captured from live validation of the two seeded sources. They are
+// fed to an httptest server rather than read from disk: nothing here exercises file
+// I/O, and at this size a separate testdata file only hides what the test asserts.
+const (
+	// kaseLastDealHTML keeps the Angular SSR _ngcontent attributes, which prove the
+	// regex tolerates attribute prefixes, and the "4 630,00" comma decimal with a
+	// space thousands-separator, which the normaliser has to reduce to 4630.00.
+	kaseLastDealHTML = `<div _ngcontent-ng-c179376686 class="price"><div _ngcontent-ng-c179376686 class="last-deal">` +
+		`<div _ngcontent-ng-c179376686 class="value"> 4 630,00 </div>` +
+		`<div _ngcontent-ng-c179376686 class="label"> price of the last deal </div></div></div>`
+
+	// yahooV8AAPLJSON is the shape the seed rule's json_path walks.
+	yahooV8AAPLJSON = `{"chart":{"result":[{"meta":{"regularMarketPrice":282.0}}]}}`
 )
 
 // compile-time interface checks
@@ -588,14 +602,8 @@ func TestRateExtractor_Run(t *testing.T) {
 	t.Run("KASE last-deal comma-decimal format parses correctly", func(t *testing.T) {
 		t.Parallel()
 
-		// Real KASE HTML fixture from live validation — see testdata/kase_ccbn_last_deal.html.
-		// The Angular SSR _ngcontent attributes prove the regex is robust to attribute prefixes.
-		// Comma decimal and space thousands-separator (4 630,00) validate end-of-pipeline normalisation.
-		kaseFixture, err := os.ReadFile("testdata/kase_ccbn_last_deal.html")
-		require.NoError(t, err, "testdata/kase_ccbn_last_deal.html must exist")
-
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write(kaseFixture)
+			_, _ = w.Write([]byte(kaseLastDealHTML))
 		}))
 		defer srv.Close()
 
@@ -627,13 +635,8 @@ func TestRateExtractor_Run(t *testing.T) {
 	t.Run("Yahoo v8 JSON regularMarketPrice extracted via json path", func(t *testing.T) {
 		t.Parallel()
 
-		// Real Yahoo Finance v8 JSON fixture from live validation — see testdata/yahoo_v8_aapl.json.
-		// Uses the seed rule's json_path to validate the extraction path end-to-end.
-		yahooFixture, err := os.ReadFile("testdata/yahoo_v8_aapl.json")
-		require.NoError(t, err, "testdata/yahoo_v8_aapl.json must exist")
-
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write(yahooFixture)
+			_, _ = w.Write([]byte(yahooV8AAPLJSON))
 		}))
 		defer srv.Close()
 

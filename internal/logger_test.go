@@ -13,48 +13,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// readLogFile returns the lines the rotating handler wrote into dir.
-func readLogFile(t *testing.T, dir string) []string {
-	t.Helper()
+// Every test in this file is serial on purpose: NewLogger calls log.SetOutput and
+// log.SetFlags (logger.go), which are process-global, so a parallel sibling would
+// read another test's handler. Each therefore carries a `not t.Parallel()` marker —
+// without it a serial test is indistinguishable from one where the call was simply
+// forgotten.
 
-	matches, err := filepath.Glob(filepath.Join(dir, "*.log"))
-	require.NoError(t, err)
-	require.NotEmpty(t, matches, "the handler wrote no log file")
-
-	raw, err := os.ReadFile(matches[0])
-	require.NoError(t, err)
-
-	var lines []string
-	for _, l := range strings.Split(string(raw), "\n") {
-		if strings.TrimSpace(l) != "" {
-			lines = append(lines, l)
-		}
-	}
-	require.NotEmpty(t, lines, "the log file is empty")
-	return lines
-}
-
-// newLoggerInTempDir builds a logger writing into a fresh directory and restores the
-// global standard-logger state NewLogger mutates.
-//
-// Not parallel on purpose: NewLogger calls log.SetOutput and log.SetFlags, which are
-// process-wide.
-func newLoggerInTempDir(t *testing.T) string {
-	t.Helper()
-
-	prevFlags := log.Flags()
-	prevOutput := log.Writer()
-	t.Cleanup(func() {
-		log.SetFlags(prevFlags)
-		log.SetOutput(prevOutput)
-	})
-
-	dir := t.TempDir()
-	_, err := NewLogger(dir, "test", LogLevelCritical) // critical: keep stdout quiet during tests
-	require.NoError(t, err)
-	return dir
-}
-
+// not t.Parallel(): NewLogger rebinds the global standard logger.
 func TestNewLogger_FileTimestamps(t *testing.T) {
 	dir := newLoggerInTempDir(t)
 
@@ -103,6 +68,7 @@ func TestNewLogger_FileTimestamps(t *testing.T) {
 	})
 }
 
+// not t.Parallel(): NewLogger rebinds the global standard logger.
 func TestNewLogger_BuildLineReachesTheFile(t *testing.T) {
 	dir := newLoggerInTempDir(t)
 
@@ -116,6 +82,7 @@ func TestNewLogger_BuildLineReachesTheFile(t *testing.T) {
 	assert.Contains(t, joined, "deadbeef")
 }
 
+// not t.Parallel(): NewLogger rebinds the global standard logger.
 func TestNewLogger_MultiLineMessages(t *testing.T) {
 	dir := newLoggerInTempDir(t)
 
@@ -137,6 +104,7 @@ func TestNewLogger_MultiLineMessages(t *testing.T) {
 	t.Fatal("the continuation line never reached the file")
 }
 
+// not t.Parallel(): NewLogger rebinds the global standard logger.
 func TestNewLogger_DefaultsAndDirectoryCreation(t *testing.T) {
 	prevFlags := log.Flags()
 	prevOutput := log.Writer()
@@ -164,6 +132,8 @@ func TestNewLogger_DefaultsAndDirectoryCreation(t *testing.T) {
 	})
 }
 
+// not t.Parallel(): NewLogger rebinds the global standard logger, and this one
+// additionally swaps os.Stdout to capture the printer hook.
 func TestNewLogger_StdoutIsTimestampedOnce(t *testing.T) {
 	prevFlags := log.Flags()
 	prevOutput := log.Writer()
@@ -201,4 +171,43 @@ func TestNewLogger_StdoutIsTimestampedOnce(t *testing.T) {
 		_, parseErr := time.Parse(time.RFC3339, stamp)
 		assert.NoError(t, parseErr, "stdout must use the same layout as the file: %q", line)
 	}
+}
+
+// readLogFile returns the lines the rotating handler wrote into dir.
+func readLogFile(t *testing.T, dir string) []string {
+	t.Helper()
+
+	matches, err := filepath.Glob(filepath.Join(dir, "*.log"))
+	require.NoError(t, err)
+	require.NotEmpty(t, matches, "the handler wrote no log file")
+
+	raw, err := os.ReadFile(matches[0])
+	require.NoError(t, err)
+
+	var lines []string
+	for _, l := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	require.NotEmpty(t, lines, "the log file is empty")
+	return lines
+}
+
+// newLoggerInTempDir builds a logger writing into a fresh directory and restores the
+// global standard-logger state NewLogger mutates.
+func newLoggerInTempDir(t *testing.T) string {
+	t.Helper()
+
+	prevFlags := log.Flags()
+	prevOutput := log.Writer()
+	t.Cleanup(func() {
+		log.SetFlags(prevFlags)
+		log.SetOutput(prevOutput)
+	})
+
+	dir := t.TempDir()
+	_, err := NewLogger(dir, "test", LogLevelCritical) // critical: keep stdout quiet during tests
+	require.NoError(t, err)
+	return dir
 }
