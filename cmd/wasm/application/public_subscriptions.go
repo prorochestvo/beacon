@@ -50,18 +50,6 @@ type PublicSubscriptionsState struct {
 	Period int
 }
 
-// PublicSubscriptionsPage is the page controller for the unauthenticated guest
-// landing page. Pure Go, no syscall/js dependencies, testable under the host
-// toolchain via make test.
-//
-// Concurrency note: Go-WASM runs on a single OS thread, so state mutations
-// within a single goroutine are safe without a mutex. If the project ever
-// moves to multi-threaded WASM, add a sync.Mutex around state reads/writes.
-type PublicSubscriptionsPage struct {
-	client *apiclient.Client
-	state  PublicSubscriptionsState
-}
-
 // NewPublicSubscriptionsPage constructs a controller backed by the given client.
 func NewPublicSubscriptionsPage(client *apiclient.Client) *PublicSubscriptionsPage {
 	return &PublicSubscriptionsPage{
@@ -72,6 +60,18 @@ func NewPublicSubscriptionsPage(client *apiclient.Client) *PublicSubscriptionsPa
 			Period: PublicChartDefaultPeriod,
 		},
 	}
+}
+
+// PublicSubscriptionsPage is the page controller for the unauthenticated guest
+// landing page. Pure Go, no syscall/js dependencies, testable under the host
+// toolchain via make test.
+//
+// Concurrency note: Go-WASM runs on a single OS thread, so state mutations
+// within a single goroutine are safe without a mutex. If the project ever
+// moves to multi-threaded WASM, add a sync.Mutex around state reads/writes.
+type PublicSubscriptionsPage struct {
+	client *apiclient.Client
+	state  PublicSubscriptionsState
 }
 
 // State returns a snapshot of the current controller state. The caller must

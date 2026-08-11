@@ -108,20 +108,6 @@ type MeSubscriptionDraft struct {
 	ConditionValue string
 }
 
-// MeSubscriptionsEditPage is the page controller for the subscription editor
-// screen. Pure Go, no syscall/js dependencies, testable under the host
-// toolchain via make test.
-//
-// Client-side validation in SaveDraft mirrors domain.RateUserSubscription.Validate()
-// for delta, interval, and daily to give immediate feedback without a round-trip.
-// Cron expressions pass a non-empty check only; full structural validation is
-// delegated to the server to keep the WASM bundle small.
-type MeSubscriptionsEditPage struct {
-	client   *apiclient.Client
-	initData string
-	state    MeSubscriptionsEditState
-}
-
 // NewMeSubscriptionsEditPage constructs a controller. initData is the Telegram
 // WebApp initData string forwarded unchanged on every authenticated call.
 // The default view is the list (EditViewList).
@@ -134,6 +120,20 @@ func NewMeSubscriptionsEditPage(client *apiclient.Client, initData string) *MeSu
 			ListPage:   1,
 		},
 	}
+}
+
+// MeSubscriptionsEditPage is the page controller for the subscription editor
+// screen. Pure Go, no syscall/js dependencies, testable under the host
+// toolchain via make test.
+//
+// Client-side validation in SaveDraft mirrors domain.RateUserSubscription.Validate()
+// for delta, interval, and daily to give immediate feedback without a round-trip.
+// Cron expressions pass a non-empty check only; full structural validation is
+// delegated to the server to keep the WASM bundle small.
+type MeSubscriptionsEditPage struct {
+	client   *apiclient.Client
+	initData string
+	state    MeSubscriptionsEditState
 }
 
 // State returns a snapshot of the current controller state.
@@ -326,105 +326,6 @@ func (p *MeSubscriptionsEditPage) SetDraftDirection(sourceName string) {
 	}
 }
 
-// resolvePairDirections returns every source sharing (Title, Base, Quote) with
-// anchor, sorted by SourceName ASC for deterministic radio order. With more than
-// one direction, each Label is the segment of its Name that DIFFERS from the
-// others in the bucket (longest common prefix and suffix stripped). For the
-// project's KZ_<bank>_<dir>_<base>_<quote> data this yields "BID"/"ASK"; for any
-// other scheme it falls back to whatever non-shared substring distinguishes the
-// rows. Single-direction pairs return one entry with an empty Label — no radio.
-func resolvePairDirections(sources []dto.SourceResponse, anchor dto.SourceResponse) []PairDirection {
-	if anchor.Name == "" {
-		return nil
-	}
-	matches := make([]dto.SourceResponse, 0, 2)
-	for _, s := range sources {
-		if s.Title != anchor.Title {
-			continue
-		}
-		if s.BaseCurrency != anchor.BaseCurrency || s.QuoteCurrency != anchor.QuoteCurrency {
-			continue
-		}
-		matches = append(matches, s)
-	}
-	sort.Slice(matches, func(i, j int) bool { return matches[i].Name < matches[j].Name })
-	if len(matches) == 0 {
-		return nil
-	}
-	if len(matches) == 1 {
-		return []PairDirection{{Label: "", SourceName: matches[0].Name}}
-	}
-	names := make([]string, len(matches))
-	for i, m := range matches {
-		names[i] = m.Name
-	}
-	prefix, suffix := longestCommonPrefix(names), longestCommonSuffix(names)
-	out := make([]PairDirection, 0, len(matches))
-	for i, m := range matches {
-		mid := strings.TrimPrefix(m.Name, prefix)
-		mid = strings.TrimSuffix(mid, suffix)
-		mid = strings.Trim(mid, "_-")
-		if mid == "" {
-			// Names collapse to empty after stripping shared affixes — use a
-			// positional label so the radio remains clickable.
-			mid = fmt.Sprintf("Option %d", i+1)
-		}
-		out = append(out, PairDirection{
-			Label:      strings.ToUpper(mid),
-			SourceName: m.Name,
-		})
-	}
-	return out
-}
-
-// longestCommonPrefix returns the longest string that is a prefix of every
-// input. Returns "" on empty input or no shared prefix.
-func longestCommonPrefix(ss []string) string {
-	if len(ss) == 0 {
-		return ""
-	}
-	p := ss[0]
-	for _, s := range ss[1:] {
-		max := len(p)
-		if len(s) < max {
-			max = len(s)
-		}
-		i := 0
-		for i < max && p[i] == s[i] {
-			i++
-		}
-		p = p[:i]
-		if p == "" {
-			return ""
-		}
-	}
-	return p
-}
-
-// longestCommonSuffix returns the longest string that is a suffix of every
-// input. Returns "" on empty input or no shared suffix.
-func longestCommonSuffix(ss []string) string {
-	if len(ss) == 0 {
-		return ""
-	}
-	p := ss[0]
-	for _, s := range ss[1:] {
-		max := len(p)
-		if len(s) < max {
-			max = len(s)
-		}
-		i := 0
-		for i < max && p[len(p)-1-i] == s[len(s)-1-i] {
-			i++
-		}
-		p = p[len(p)-i:]
-		if p == "" {
-			return ""
-		}
-	}
-	return p
-}
-
 // ClosePickers hides both overlays. Used as the outside-click handler.
 func (p *MeSubscriptionsEditPage) ClosePickers() {
 	p.state.ProviderPickerOpen = false
@@ -568,6 +469,105 @@ func (p *MeSubscriptionsEditPage) reloadList(ctx context.Context) error {
 		p.state.Items = []dto.MeSubscriptionEditRow{}
 	}
 	return nil
+}
+
+// resolvePairDirections returns every source sharing (Title, Base, Quote) with
+// anchor, sorted by SourceName ASC for deterministic radio order. With more than
+// one direction, each Label is the segment of its Name that DIFFERS from the
+// others in the bucket (longest common prefix and suffix stripped). For the
+// project's KZ_<bank>_<dir>_<base>_<quote> data this yields "BID"/"ASK"; for any
+// other scheme it falls back to whatever non-shared substring distinguishes the
+// rows. Single-direction pairs return one entry with an empty Label — no radio.
+func resolvePairDirections(sources []dto.SourceResponse, anchor dto.SourceResponse) []PairDirection {
+	if anchor.Name == "" {
+		return nil
+	}
+	matches := make([]dto.SourceResponse, 0, 2)
+	for _, s := range sources {
+		if s.Title != anchor.Title {
+			continue
+		}
+		if s.BaseCurrency != anchor.BaseCurrency || s.QuoteCurrency != anchor.QuoteCurrency {
+			continue
+		}
+		matches = append(matches, s)
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].Name < matches[j].Name })
+	if len(matches) == 0 {
+		return nil
+	}
+	if len(matches) == 1 {
+		return []PairDirection{{Label: "", SourceName: matches[0].Name}}
+	}
+	names := make([]string, len(matches))
+	for i, m := range matches {
+		names[i] = m.Name
+	}
+	prefix, suffix := longestCommonPrefix(names), longestCommonSuffix(names)
+	out := make([]PairDirection, 0, len(matches))
+	for i, m := range matches {
+		mid := strings.TrimPrefix(m.Name, prefix)
+		mid = strings.TrimSuffix(mid, suffix)
+		mid = strings.Trim(mid, "_-")
+		if mid == "" {
+			// Names collapse to empty after stripping shared affixes — use a
+			// positional label so the radio remains clickable.
+			mid = fmt.Sprintf("Option %d", i+1)
+		}
+		out = append(out, PairDirection{
+			Label:      strings.ToUpper(mid),
+			SourceName: m.Name,
+		})
+	}
+	return out
+}
+
+// longestCommonPrefix returns the longest string that is a prefix of every
+// input. Returns "" on empty input or no shared prefix.
+func longestCommonPrefix(ss []string) string {
+	if len(ss) == 0 {
+		return ""
+	}
+	p := ss[0]
+	for _, s := range ss[1:] {
+		max := len(p)
+		if len(s) < max {
+			max = len(s)
+		}
+		i := 0
+		for i < max && p[i] == s[i] {
+			i++
+		}
+		p = p[:i]
+		if p == "" {
+			return ""
+		}
+	}
+	return p
+}
+
+// longestCommonSuffix returns the longest string that is a suffix of every
+// input. Returns "" on empty input or no shared suffix.
+func longestCommonSuffix(ss []string) string {
+	if len(ss) == 0 {
+		return ""
+	}
+	p := ss[0]
+	for _, s := range ss[1:] {
+		max := len(p)
+		if len(s) < max {
+			max = len(s)
+		}
+		i := 0
+		for i < max && p[len(p)-1-i] == s[len(s)-1-i] {
+			i++
+		}
+		p = p[len(p)-i:]
+		if p == "" {
+			return ""
+		}
+	}
+	return p
 }
 
 // ValidateSubscriptionDraft mirrors domain.RateUserSubscription.Validate() for

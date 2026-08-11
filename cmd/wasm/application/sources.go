@@ -58,14 +58,6 @@ func (s SourcesState) Visible() []dto.SourceResponse {
 	return out
 }
 
-// SourcesPage is the page controller for the Sources List screen. It owns
-// SourcesState and exposes a method per user action. No DOM dependencies;
-// testable as plain Go.
-type SourcesPage struct {
-	state  SourcesState
-	client *apiclient.Client
-}
-
 // NewSourcesPage constructs a controller seeded with the given data. The
 // client is used only by ToggleActive (network round-trip + re-fetch).
 func NewSourcesPage(sources []dto.SourceResponse, stats dto.StatsResponse, client *apiclient.Client) *SourcesPage {
@@ -79,6 +71,14 @@ func NewSourcesPage(sources []dto.SourceResponse, stats dto.StatsResponse, clien
 		},
 		client: client,
 	}
+}
+
+// SourcesPage is the page controller for the Sources List screen. It owns
+// SourcesState and exposes a method per user action. No DOM dependencies;
+// testable as plain Go.
+type SourcesPage struct {
+	state  SourcesState
+	client *apiclient.Client
 }
 
 // State returns a copy of the current state for reading by the UI layer.

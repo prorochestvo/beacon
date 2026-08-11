@@ -13,6 +13,17 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/dto"
 )
 
+// WeatherCityGroup holds all subscription rows for a single physical city,
+// grouped by location_id for display.
+type WeatherCityGroup struct {
+	LocationID  string
+	DisplayName string
+	Country     string
+	Admin1      string
+	Timezone    string
+	Rows        []dto.WeatherCityRow
+}
+
 // RenderMeWeatherCities returns the full HTML for the city weather subscription
 // screen. Auth-failure and load-error states short-circuit the content.
 //
@@ -132,17 +143,6 @@ func renderWeatherSearchResults(state application.WeatherCitiesState) string {
 		b.WriteString(`</div>`)
 	}
 	return b.String()
-}
-
-// WeatherCityGroup holds all subscription rows for a single physical city,
-// grouped by location_id for display.
-type WeatherCityGroup struct {
-	LocationID  string
-	DisplayName string
-	Country     string
-	Admin1      string
-	Timezone    string
-	Rows        []dto.WeatherCityRow
 }
 
 // GroupWeatherCities groups a flat city list by location_id, preserving the

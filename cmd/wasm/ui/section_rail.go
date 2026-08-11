@@ -33,6 +33,17 @@ const (
 	SectionWeather Section = "weather"
 )
 
+// sectionTabs is the rail's tab order. Extending the Mini App with a third section
+// means adding one entry here and one route in cmd/wasm/main.go's rail handlers.
+var sectionTabs = []struct {
+	section Section
+	label   string
+	glyph   string
+}{
+	{SectionRates, "Rates", sectionRatesSVG},
+	{SectionWeather, "Weather", sectionWeatherSVG},
+}
+
 // sectionRatesSVG is the inline glyph for the rates tab: a rising line chart.
 // Viewbox 24×24 px; rendered at 20×20 px via CSS.
 const sectionRatesSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">` +
@@ -45,17 +56,6 @@ const sectionRatesSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24
 const sectionWeatherSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">` +
 	`<path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/>` +
 	`</svg>`
-
-// sectionTabs is the rail's tab order. Extending the Mini App with a third section
-// means adding one entry here and one route in cmd/wasm/main.go's rail handlers.
-var sectionTabs = []struct {
-	section Section
-	label   string
-	glyph   string
-}{
-	{SectionRates, "Rates", sectionRatesSVG},
-	{SectionWeather, "Weather", sectionWeatherSVG},
-}
 
 // RenderSectionShell wraps a screen body in the two-column layout: the vertical
 // section rail on the left, the screen's own content on the right. active marks the

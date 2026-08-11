@@ -64,14 +64,6 @@ func (s SourceDetailState) VisibleRates() []dto.RateResponse {
 	return out
 }
 
-// SourceDetailPage is the page controller for the Source Detail screen. It owns
-// SourceDetailState and exposes a method per user action. No DOM dependencies;
-// testable as plain Go.
-type SourceDetailPage struct {
-	state  SourceDetailState
-	client *apiclient.Client
-}
-
 // NewSourceDetailPage constructs a controller seeded with the initial fetches.
 // Subscriptions and daily events arrive later via LoadSubsPage /
 // LoadDailyEventsPage after the skeleton is in the DOM.
@@ -103,6 +95,14 @@ func NewSourceDetailPage(name string, sources []dto.SourceResponse, rates []dto.
 		},
 		client: client,
 	}
+}
+
+// SourceDetailPage is the page controller for the Source Detail screen. It owns
+// SourceDetailState and exposes a method per user action. No DOM dependencies;
+// testable as plain Go.
+type SourceDetailPage struct {
+	state  SourceDetailState
+	client *apiclient.Client
 }
 
 // State returns a copy of the current state for reading by the UI layer.

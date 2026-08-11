@@ -33,6 +33,12 @@ const svgYMax = 52.0
 // cycle with application.
 var allowedUIPeriods = []int{7, 30, 90, 180, 360}
 
+// spreadGlyph is the single-character prefix denoting bid/ask spread in the list
+// row and modal. The double-headed arrow ↔ (U+2194) renders as a font glyph in
+// every targeted Telegram client and pairs visually with the Δ on single-series
+// rows.
+const spreadGlyph = "↔"
+
 // RenderSparklineList returns the full HTML for the sparkline-list chart view,
 // one row per pair in chart.Pairs. An empty Pairs slice renders the empty-state.
 // The period selector defaults to 7 days; use RenderSparklineListForPeriod to
@@ -404,9 +410,3 @@ func formatSparklineDelta(v float64, sparse bool) string {
 func formatSpreadPct(v float64) string {
 	return strconv.FormatFloat(v, 'f', 2, 64) + "%"
 }
-
-// spreadGlyph is the single-character prefix denoting bid/ask spread in the list
-// row and modal. The double-headed arrow ↔ (U+2194) renders as a font glyph in
-// every targeted Telegram client and pairs visually with the Δ on single-series
-// rows.
-const spreadGlyph = "↔"

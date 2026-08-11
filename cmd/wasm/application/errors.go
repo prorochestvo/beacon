@@ -27,13 +27,6 @@ type ErrorsState struct {
 	EventPage   int
 }
 
-// ErrorsPage is the page controller for the Errors screen. It owns ErrorsState
-// and exposes a load method per table. No DOM dependencies; testable as plain Go.
-type ErrorsPage struct {
-	state  ErrorsState
-	client *apiclient.Client
-}
-
 // NewErrorsPage constructs an empty ErrorsPage. Data arrives via LoadExecPage
 // and LoadEventPage after construction.
 func NewErrorsPage(client *apiclient.Client) *ErrorsPage {
@@ -44,6 +37,13 @@ func NewErrorsPage(client *apiclient.Client) *ErrorsPage {
 		},
 		client: client,
 	}
+}
+
+// ErrorsPage is the page controller for the Errors screen. It owns ErrorsState
+// and exposes a load method per table. No DOM dependencies; testable as plain Go.
+type ErrorsPage struct {
+	state  ErrorsState
+	client *apiclient.Client
 }
 
 // State returns a copy of the current state for reading by the UI layer.
