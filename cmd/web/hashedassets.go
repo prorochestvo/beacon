@@ -39,29 +39,6 @@ type hashedAssetRegistry struct {
 	byURL map[string]hashedAssetEntry
 }
 
-// newHashedAssetRegistry returns a registry built from specs against fsys, or an
-// error if any spec's source file cannot be read. The hash is over raw
-// (uncompressed) bytes, so a gzip-level change alone does not change the hashed URL.
-func newHashedAssetRegistry(fsys fs.FS, specs []assetSpec) (*hashedAssetRegistry, error) {
-	r := &hashedAssetRegistry{byURL: make(map[string]hashedAssetEntry, len(specs))}
-	for _, s := range specs {
-		b, err := fs.ReadFile(fsys, s.sourcePath)
-		if err != nil {
-			return nil, fmt.Errorf("hashed asset: read %s: %w", s.sourcePath, err)
-		}
-		sum := sha256.Sum256(b)
-		prefix := hex.EncodeToString(sum[:4]) // 8 hex characters
-		hashedURL := insertHash(s.sourcePath, prefix)
-		r.byURL[hashedURL] = hashedAssetEntry{
-			sourcePath:  s.sourcePath,
-			hashedURL:   hashedURL,
-			contentType: s.contentType,
-			gzipPath:    s.gzipPath,
-		}
-	}
-	return r, nil
-}
-
 // lookup returns the entry for a given hashed URL, or false if not registered.
 func (reg *hashedAssetRegistry) lookup(url string) (hashedAssetEntry, bool) {
 	e, ok := reg.byURL[url]
@@ -88,24 +65,6 @@ func (reg *hashedAssetRegistry) logEntries() {
 	log.Printf("hashed assets: %s", strings.Join(parts, " "))
 }
 
-// insertHash derives the public hashed URL from a source path.
-// "app.wasm" → "/app.<hash>.wasm"; "wasm_exec.js" → "/wasm_exec.<hash>.js".
-func insertHash(sourcePath, hashPrefix string) string {
-	ext := path.Ext(sourcePath)
-	base := strings.TrimSuffix(path.Base(sourcePath), ext)
-	return "/" + base + "." + hashPrefix + ext
-}
-
-// extractHashFromBase extracts the 8-hex segment from a base filename.
-// "app.deadbeef.wasm" → "deadbeef".
-func extractHashFromBase(base string) string {
-	parts := strings.Split(base, ".")
-	if len(parts) >= 3 {
-		return parts[len(parts)-2]
-	}
-	return base
-}
-
 // htmlCache holds the boot-time rewritten HTML body for a single entry point.
 type htmlCache struct {
 	body     []byte
@@ -123,6 +82,47 @@ func (c *htmlCache) serve(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	http.ServeContent(w, r, c.filename, c.modTime, bytes.NewReader(c.body))
 	return true
+}
+
+// newHashedAssetRegistry returns a registry built from specs against fsys, or an
+// error if any spec's source file cannot be read. The hash is over raw
+// (uncompressed) bytes, so a gzip-level change alone does not change the hashed URL.
+func newHashedAssetRegistry(fsys fs.FS, specs []assetSpec) (*hashedAssetRegistry, error) {
+	r := &hashedAssetRegistry{byURL: make(map[string]hashedAssetEntry, len(specs))}
+	for _, s := range specs {
+		b, err := fs.ReadFile(fsys, s.sourcePath)
+		if err != nil {
+			return nil, fmt.Errorf("hashed asset: read %s: %w", s.sourcePath, err)
+		}
+		sum := sha256.Sum256(b)
+		prefix := hex.EncodeToString(sum[:4]) // 8 hex characters
+		hashedURL := insertHash(s.sourcePath, prefix)
+		r.byURL[hashedURL] = hashedAssetEntry{
+			sourcePath:  s.sourcePath,
+			hashedURL:   hashedURL,
+			contentType: s.contentType,
+			gzipPath:    s.gzipPath,
+		}
+	}
+	return r, nil
+}
+
+// insertHash derives the public hashed URL from a source path.
+// "app.wasm" → "/app.<hash>.wasm"; "wasm_exec.js" → "/wasm_exec.<hash>.js".
+func insertHash(sourcePath, hashPrefix string) string {
+	ext := path.Ext(sourcePath)
+	base := strings.TrimSuffix(path.Base(sourcePath), ext)
+	return "/" + base + "." + hashPrefix + ext
+}
+
+// extractHashFromBase extracts the 8-hex segment from a base filename.
+// "app.deadbeef.wasm" → "deadbeef".
+func extractHashFromBase(base string) string {
+	parts := strings.Split(base, ".")
+	if len(parts) >= 3 {
+		return parts[len(parts)-2]
+	}
+	return base
 }
 
 // newHTMLCache reads filePath from fsys, replaces /app.wasm and /wasm_exec.js with

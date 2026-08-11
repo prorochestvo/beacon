@@ -33,33 +33,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var (
-	// BuildVersion is the application version string, injected at link time via -ldflags.
-	BuildVersion = "dev"
-	// BuildTime is the build timestamp, injected at link time via -ldflags.
-	BuildTime = "unknown"
-	// BuildHash is the VCS commit hash, injected at link time via -ldflags.
-	BuildHash = "undefined"
-	// LogsDir is the directory where log files are written.
-	LogsDir = path.Join(os.TempDir(), "logs")
-	// ChromiumPath is the absolute path to the Chromium/Chrome binary read from
-	// BEACON_CHROMIUM_PATH. When empty, chromedp searches PATH (chromium, chromium-browser,
-	// google-chrome, chrome).
-	ChromiumPath = os.Getenv(internal.EnvChromiumPath)
-	// ProxyURL is the outbound proxy resolved from BEACON_PROXY_URL. It says only that
-	// a proxy exists; nothing is routed through it until a source sets
-	// options.use_proxy, so setting it alone leaves all 56 sources direct — the
-	// measured default from issue #16.
-	//
-	// Assigned in main after the logger exists, not here: proxyutil.ResolveURL logs the
-	// resolved value and log.Fatalf's on a malformed one, and a package initialiser runs
-	// before the file logger is wired, where both would go to a stderr the cron wrappers
-	// discard.
-	ProxyURL string
-	// LogVerbosity controls the minimum log level emitted by the logger.
-	LogVerbosity = internal.LogLevelWarning
-)
-
 func main() {
 	flag.Parse()
 	initFlags()
@@ -199,13 +172,6 @@ func main() {
 	log.Println("execution: done")
 }
 
-// flagLogsDir and flagVerbosity hold the raw flag values populated by flag.Parse in
-// main. They are package-level so initFlags can apply them after parsing.
-var (
-	flagLogsDir   *string
-	flagVerbosity *string
-)
-
 func init() {
 	// Register flags here so the test binary can see them, but do NOT call flag.Parse()
 	// in init() — it would consume go test's own flags before the testing package
@@ -213,6 +179,47 @@ func init() {
 	// tests never invoke main().
 	flagLogsDir = flag.String("logs-dir", LogsDir, "path to logs directory")
 	flagVerbosity = flag.String("verbosity", "warning", "minimum stdout log level (debug, info, warning, error, severe, critical)")
+}
+
+var (
+	// BuildVersion is the application version string, injected at link time via -ldflags.
+	BuildVersion = "dev"
+	// BuildTime is the build timestamp, injected at link time via -ldflags.
+	BuildTime = "unknown"
+	// BuildHash is the VCS commit hash, injected at link time via -ldflags.
+	BuildHash = "undefined"
+	// LogsDir is the directory where log files are written.
+	LogsDir = path.Join(os.TempDir(), "logs")
+	// ChromiumPath is the absolute path to the Chromium/Chrome binary read from
+	// BEACON_CHROMIUM_PATH. When empty, chromedp searches PATH (chromium, chromium-browser,
+	// google-chrome, chrome).
+	ChromiumPath = os.Getenv(internal.EnvChromiumPath)
+	// ProxyURL is the outbound proxy resolved from BEACON_PROXY_URL. It says only that
+	// a proxy exists; nothing is routed through it until a source sets
+	// options.use_proxy, so setting it alone leaves all 56 sources direct — the
+	// measured default from issue #16.
+	//
+	// Assigned in main after the logger exists, not here: proxyutil.ResolveURL logs the
+	// resolved value and log.Fatalf's on a malformed one, and a package initialiser runs
+	// before the file logger is wired, where both would go to a stderr the cron wrappers
+	// discard.
+	ProxyURL string
+	// LogVerbosity controls the minimum log level emitted by the logger.
+	LogVerbosity = internal.LogLevelWarning
+)
+
+// flagLogsDir and flagVerbosity hold the raw flag values populated by flag.Parse in
+// main. They are package-level so initFlags can apply them after parsing.
+var (
+	flagLogsDir   *string
+	flagVerbosity *string
+)
+
+// runner is the minimal interface the collector needs from each agent.
+// One Run call per binary invocation; the loop in main wraps each call in a
+// panic-recover shim.
+type runner interface {
+	Run(context.Context) error
 }
 
 // initFlags applies the parsed flag values to the exported globals. Called once from
@@ -225,13 +232,6 @@ func initFlags() {
 	if v := *flagVerbosity; v != "" {
 		LogVerbosity = internal.ParseLogLevel(v)
 	}
-}
-
-// runner is the minimal interface the collector needs from each agent.
-// One Run call per binary invocation; the loop in main wraps each call in a
-// panic-recover shim.
-type runner interface {
-	Run(context.Context) error
 }
 
 func buildRunners(

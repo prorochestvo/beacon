@@ -75,6 +75,21 @@ type ruleGenerator interface {
 	Generate(ctx context.Context, sourceName string, forceFallback bool) (*rulegen.Result, error)
 }
 
+// sourceAuditFetcherAdapter adapts sourceaudit.Fetcher to rulegen.Fetcher, which
+// returns only the body bytes. Headers are forwarded to the inner Fetcher so
+// per-source header-dependent sources (e.g. Yahoo Finance) work correctly in rulegen.
+type sourceAuditFetcherAdapter struct {
+	inner sourceaudit.Fetcher
+}
+
+func (a *sourceAuditFetcherAdapter) Fetch(ctx context.Context, url string, headers map[string]string) ([]byte, error) {
+	result, err := a.inner.Fetch(ctx, url, headers)
+	if err != nil {
+		return nil, err
+	}
+	return result.Body, nil
+}
+
 // runAll invokes gen.Generate for every active rate source. It fetches all sources
 // (active and inactive) via ObtainAllRateSources and counts inactive rows as skipped,
 // filtering in Go not SQL so the summary line reflects the full inventory (plan
@@ -323,21 +338,6 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 		res.Metadata.Model,
 	)
 	return 0
-}
-
-// sourceAuditFetcherAdapter adapts sourceaudit.Fetcher to rulegen.Fetcher, which
-// returns only the body bytes. Headers are forwarded to the inner Fetcher so
-// per-source header-dependent sources (e.g. Yahoo Finance) work correctly in rulegen.
-type sourceAuditFetcherAdapter struct {
-	inner sourceaudit.Fetcher
-}
-
-func (a *sourceAuditFetcherAdapter) Fetch(ctx context.Context, url string, headers map[string]string) ([]byte, error) {
-	result, err := a.inner.Fetch(ctx, url, headers)
-	if err != nil {
-		return nil, err
-	}
-	return result.Body, nil
 }
 
 func printRulegenUsage(w io.Writer) {
