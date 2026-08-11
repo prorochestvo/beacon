@@ -108,6 +108,22 @@ func NewRateExtractorWithHTTPClients(
 		return nil, err
 	}
 
+	// Announced once here rather than per fetch: a default nobody can see is the
+	// standing objection to defaulting at all, and a client handed over without a
+	// timeout is nearly always an oversight — httptest.Server.Client() returns one.
+	if logger != nil {
+		for _, c := range []struct {
+			route  string
+			client *http.Client
+		}{{"direct", httpClient}, {"proxy", proxyClient}} {
+			if c.client != nil && c.client.Timeout <= 0 {
+				_, _ = fmt.Fprintf(logger,
+					"rate_extractor: %s http client has no timeout; fetches bounded at %s\n",
+					c.route, defaultFetchTimeout)
+			}
+		}
+	}
+
 	p := &RateExtractor{
 		RateValueRepository: rateValueRepository,
 		cache:               threadsafe.NewCache(30 * time.Minute),
@@ -220,7 +236,7 @@ func (extractor *RateExtractor) fetchHtmlPage(
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, httpClient.Timeout)
+	ctx, cancel := context.WithTimeout(ctx, fetchTimeout(httpClient))
 	defer cancel()
 
 	if page, err := extractor.cache.Fetch(key); err == nil {
@@ -282,6 +298,18 @@ func (extractor *RateExtractor) fetchHtmlPage(
 // OOM from unexpectedly large responses; rate-source pages are KBs (KASE ~540 KB).
 const maxResponseBytes = 10 << 20 // 10 MB
 
+// defaultFetchTimeout bounds a fetch whose client carries no timeout of its own.
+//
+// The zero value cannot simply be forwarded, because the two sides read it in
+// opposite directions: http.Client.Timeout == 0 means "no timeout" to net/http,
+// while context.WithTimeout(ctx, 0) yields a deadline already in the past. An
+// extractor built with such a client failed every fetch in under a millisecond,
+// which reads like a network fault rather than the configuration one it is.
+//
+// A minute is what cmd/collector passes, so a client without an opinion gets the
+// same bound as the production one rather than an invented number.
+const defaultFetchTimeout = time.Minute
+
 // rateValueRepository is the narrow persistence interface required by RateExtractor.
 type rateValueRepository interface {
 	RetainRateValue(ctx context.Context, rate *domain.RateValue) error
@@ -300,6 +328,16 @@ func fetchKey(rawURL string, useProxy bool) string {
 		route = "proxy"
 	}
 	return fmt.Sprintf("GET:%s:%s", route, rawURL)
+}
+
+// fetchTimeout is the deadline for one request: the client's own Timeout when it
+// states one, and defaultFetchTimeout when it does not. See defaultFetchTimeout for
+// why the zero cannot be passed through.
+func fetchTimeout(client *http.Client) time.Duration {
+	if client.Timeout > 0 {
+		return client.Timeout
+	}
+	return defaultFetchTimeout
 }
 
 // applyRulesAndStore executes the extraction rule pipeline on payload and
