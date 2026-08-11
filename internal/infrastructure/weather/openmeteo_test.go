@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -411,6 +412,16 @@ func TestOpenMeteo_Retry(t *testing.T) {
 		// otherwise a degrading provider looks exactly like a healthy one.
 		assert.Contains(t, log.String(), "attempt 1 of 3 failed")
 		assert.Contains(t, log.String(), "recovered on attempt 2")
+
+		// The recovery time is the point of the line: it bounds how long the fault
+		// lasted, which is the only evidence that says whether the retry budget is
+		// the right size. Parsed rather than pattern-matched, because a stuck timer
+		// printing "0s" would satisfy any regexp for "a number followed by a unit"
+		// while reporting nothing. One backoff has elapsed by here, jittered down to
+		// 200ms at worst.
+		elapsed := loggedDuration(t, log.String(), `recovered on attempt 2 of 3 after (\S+)`)
+		assert.Greater(t, elapsed, 150*time.Millisecond,
+			"the recovery time must be real; a zero means the clock is not being read")
 	})
 
 	t.Run("a persistent 503 fails after exactly the attempt budget", func(t *testing.T) {
@@ -425,6 +436,11 @@ func TestOpenMeteo_Retry(t *testing.T) {
 		assert.Contains(t, err.Error(), "503")
 		assert.Contains(t, err.Error(), "giving up after 3 attempt(s)",
 			"an outright failure must say how hard it tried, or it reads like one unlucky request")
+		// Two backoffs have elapsed by the time this gives up — 600ms at worst after
+		// jitter — so anything smaller means the elapsed is not being measured.
+		spent := loggedDuration(t, err.Error(), `giving up after 3 attempt\(s\) in (\S+):`)
+		assert.Greater(t, spent, 500*time.Millisecond,
+			"the budget actually spent must be real, or the log cannot say how narrow it was")
 		assert.NotContains(t, log.String(), "recovered")
 	})
 
@@ -578,4 +594,17 @@ func TestRetryBackoff(t *testing.T) {
 		}
 		assert.Greater(t, len(seen), 1, "jitter must actually vary the wait")
 	})
+}
+
+// loggedDuration pulls the duration captured by pattern out of text and parses it,
+// failing the test when the line is absent or the value is not a duration at all.
+func loggedDuration(t *testing.T, text, pattern string) time.Duration {
+	t.Helper()
+
+	m := regexp.MustCompile(pattern).FindStringSubmatch(text)
+	require.Len(t, m, 2, "no timed line matching %q in:\n%s", pattern, text)
+
+	d, err := time.ParseDuration(m[1])
+	require.NoError(t, err, "%q is not a duration", m[1])
+	return d
 }

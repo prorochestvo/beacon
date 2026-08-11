@@ -193,11 +193,21 @@ func (o *OpenMeteo) Forecast(ctx context.Context, lat, lng float64) (*domain.Wea
 func (o *OpenMeteo) get(ctx context.Context, rawURL string) ([]byte, error) {
 	var lastErr error
 
+	// Both exits carry the elapsed time because nothing recorded how long an
+	// Open-Meteo fault actually lasts, and the whole question of whether this
+	// budget is the right size turns on that number. A recovery time is the
+	// informative half — it is an upper bound on an outage this window did absorb,
+	// so a log full of sub-second recoveries says the budget is already right and
+	// their absence says it is always too narrow. The give-up time only confirms
+	// what was spent.
+	start := time.Now()
+
 	for attempt := 1; attempt <= openMeteoMaxAttempts; attempt++ {
 		body, err := o.attempt(ctx, rawURL)
 		if err == nil {
 			if attempt > 1 {
-				fmt.Fprintf(o.logger, "open-meteo: recovered on attempt %d of %d\n", attempt, openMeteoMaxAttempts)
+				fmt.Fprintf(o.logger, "open-meteo: recovered on attempt %d of %d after %s\n",
+					attempt, openMeteoMaxAttempts, retryElapsed(start))
 			}
 			return body, nil
 		}
@@ -217,7 +227,8 @@ func (o *OpenMeteo) get(ctx context.Context, rawURL string) ([]byte, error) {
 	// The attempt count rides in the message so an outright failure in the log says how
 	// hard it tried, rather than looking identical to a single unlucky request.
 	return nil, errors.Join(
-		fmt.Errorf("open-meteo: giving up after %d attempt(s): %w", attemptsMade(lastErr), lastErr),
+		fmt.Errorf("open-meteo: giving up after %d attempt(s) in %s: %w",
+			attemptsMade(lastErr), retryElapsed(start), lastErr),
 		loginjector.NewTraceError(),
 	)
 }
@@ -490,6 +501,14 @@ func retryBackoff(attempt int) time.Duration {
 	spread := float64(base) * openMeteoRetryJitter
 	// rand is fine here: this randomises timing, it does not protect anything.
 	return time.Duration(float64(base) - spread + rand.Float64()*2*spread)
+}
+
+// retryElapsed reports how long a retried request has been running, rounded to
+// milliseconds: these numbers are read off log lines and compared against each
+// other, and the nanosecond tail time.Duration prints by default makes two of
+// them hard to rank at a glance.
+func retryElapsed(start time.Time) time.Duration {
+	return time.Since(start).Round(time.Millisecond)
 }
 
 // sleepWithContext waits for d, or returns ctx's error the moment it is cancelled.
