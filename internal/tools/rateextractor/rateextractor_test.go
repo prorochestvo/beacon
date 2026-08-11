@@ -65,6 +65,46 @@ func TestNewRateExtractorWithHTTPClient(t *testing.T) {
 		)
 		require.Error(t, err)
 	})
+
+	t.Run("a client with no timeout fetches instead of expiring instantly", func(t *testing.T) {
+		t.Parallel()
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = fmt.Fprint(w, `<span class="rate">450.75</span>`)
+		}))
+		defer srv.Close()
+
+		// srv.Client() leaves Timeout at zero, and it is the client these tests must
+		// pass — a bare &http.Client{} shares http.DefaultTransport across parallel
+		// tests. Forwarding that zero to context.WithTimeout produced a deadline
+		// already in the past, so every fetch died in under a millisecond looking
+		// like a network fault.
+		client := srv.Client()
+		require.Zero(t, client.Timeout, "the case under test is a client with no timeout")
+
+		rateRepo := &mockRateValueRepository{}
+		ownLogger := threadsafe.NewBuffer(nil)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, client, ownLogger)
+		require.NoError(t, err)
+
+		source := &domain.RateSource{
+			Name:          "no_timeout_src",
+			URL:           srv.URL,
+			BaseCurrency:  "USD",
+			QuoteCurrency: "KZT",
+			Rules: []domain.RateSourceRule{
+				{Method: domain.MethodRegex, Pattern: `class="rate">([\d.]+)`},
+			},
+		}
+		require.NoError(t, ext.Run(t.Context(), source))
+		require.Len(t, rateRepo.retained, 1)
+		require.InDelta(t, 450.75, rateRepo.retained[0].Price, 0.001)
+
+		// Defaulting silently is the standing objection to defaulting at all, so the
+		// substitution has to be visible somewhere.
+		require.Contains(t, ownLogger.String(), "direct http client has no timeout",
+			"the substituted bound must be announced, not applied in silence")
+	})
 }
 
 func TestNewRateExtractor(t *testing.T) {
@@ -1110,9 +1150,8 @@ func TestRateExtractorPerSourceProxy(t *testing.T) {
 		ext, err = NewRateExtractorWithHTTPClients(
 			&mockRateValueRepository{},
 			// srv.Client() rather than a bare &http.Client{}: a nil Transport shares
-			// http.DefaultTransport across parallel tests. Its Timeout must be set —
-			// fetchHtmlPage derives the request context deadline from it, and a zero
-			// http.Client.Timeout ("no timeout") becomes an already-expired context.
+			// http.DefaultTransport across parallel tests. The explicit timeout keeps
+			// a hung routing test failing in seconds — see timedClient.
 			timedClient(origin.Client()),
 			&http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(proxyTarget)}},
 			log,
@@ -1253,8 +1292,10 @@ func TestRateSourceOptionsUseProxyDefault(t *testing.T) {
 		"the default must not be written back into stored options")
 }
 
-// timedClient gives an httptest client a request timeout. httptest.Server.Client()
-// leaves Timeout at zero, which fetchHtmlPage turns into an expired context.
+// timedClient gives an httptest client a short request timeout. A zero Timeout is no
+// longer a trap — fetchHtmlPage substitutes defaultFetchTimeout for it — but that
+// default is a minute, and a routing test that somehow hangs should fail in seconds
+// rather than sit there. The zero-timeout path has its own test on the constructor.
 func timedClient(c *http.Client) *http.Client {
 	c.Timeout = 5 * time.Second
 	return c
