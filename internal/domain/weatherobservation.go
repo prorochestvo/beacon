@@ -57,14 +57,6 @@ type WeatherObservation struct {
 	Hourly []WeatherHourlyPoint
 }
 
-// hourlyWire is the compact JSON representation for a single WeatherHourlyPoint stored
-// in the hourly_json column. Short field names keep the column small.
-type hourlyWire struct {
-	Time       string   `json:"t"`
-	PrecipProb *int     `json:"p,omitempty"`
-	Temp       *float64 `json:"c,omitempty"`
-}
-
 // MarshalHourlyJSON serialises the Hourly slice to a compact JSON byte slice for
 // the hourly_json column. Returns nil, nil when Hourly is empty (the repository
 // stores NULL). The caller must not assume that nil bytes means an error.
@@ -111,12 +103,6 @@ func (o *WeatherObservation) UnmarshalHourlyJSON(data []byte) error {
 	return nil
 }
 
-// wmoEntry pairs a human-readable description with a display emoji.
-type wmoEntry struct {
-	text  string
-	emoji string
-}
-
 // wmoTable maps WMO Weather Interpretation Codes to descriptions and emojis.
 // Declared at package level so the map is allocated once, not on every WMOWeatherCode call.
 var wmoTable = map[int]wmoEntry{
@@ -148,6 +134,20 @@ var wmoTable = map[int]wmoEntry{
 	95: {"Thunderstorm", "⛈️"},
 	96: {"Thunderstorm with slight hail", "⛈️"},
 	99: {"Thunderstorm with heavy hail", "⛈️"},
+}
+
+// hourlyWire is the compact JSON representation for a single WeatherHourlyPoint stored
+// in the hourly_json column. Short field names keep the column small.
+type hourlyWire struct {
+	Time       string   `json:"t"`
+	PrecipProb *int     `json:"p,omitempty"`
+	Temp       *float64 `json:"c,omitempty"`
+}
+
+// wmoEntry pairs a human-readable description with a display emoji.
+type wmoEntry struct {
+	text  string
+	emoji string
 }
 
 // WMOWeatherCode returns a human-readable description and display emoji for the

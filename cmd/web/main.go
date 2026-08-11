@@ -37,27 +37,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var (
-	// BuildVersion is the application version string, injected at link time via -ldflags.
-	BuildVersion = "dev"
-	// BuildTime is the build timestamp, injected at link time via -ldflags.
-	BuildTime = "unknown"
-	// BuildHash is the VCS commit hash, injected at link time via -ldflags.
-	BuildHash = "undefined"
-	// LogsDir is the directory where log files are written.
-	LogsDir = path.Join(os.TempDir(), "logs")
-	// LogVerbosity controls the minimum log level emitted by the logger.
-	LogVerbosity = internal.LogLevelWarning
-	// HttpPort is the TCP port the HTTP server listens on.
-	HttpPort = 8080
-	// HttpTimeOut is the read/write/idle timeout for the HTTP server.
-	HttpTimeOut = 30 * time.Second
-	// StaticDir overrides the embedded static file system when non-empty.
-	StaticDir = ""
-	// APIDsn is the public HTTPS origin passed via --api-dsn; used by the WASM client.
-	APIDsn = ""
-)
-
 func main() {
 	serviceStart := time.Now()
 	flag.Parse()
@@ -320,8 +299,54 @@ func main() {
 	}
 }
 
+func init() {
+	// Register flags here so the test binary can see them, but do NOT call
+	// flag.Parse() in init() — it would consume go test's own flags before the
+	// testing package registers them ("flag provided but not defined"). main()
+	// calls flag.Parse() once; tests never invoke main().
+	flagPort = flag.Int("port", HttpPort, "http server port")
+	flagTimeout = flag.String("timeout", HttpTimeOut.String(), "HTTP read/write/idle timeout duration")
+	flagLogsDir = flag.String("logs-dir", LogsDir, "path to logs directory")
+	flagVerbosity = flag.String("verbosity", "warning", "minimum stdout log level (debug, info, warning, error, severe, critical)")
+	flagStaticDir = flag.String("static-dir", StaticDir, "path to static files directory")
+	flagAPIDsn = flag.String("api-dsn", APIDsn, "public HTTPS origin DSN, format: https://<host>/")
+}
+
+var (
+	// BuildVersion is the application version string, injected at link time via -ldflags.
+	BuildVersion = "dev"
+	// BuildTime is the build timestamp, injected at link time via -ldflags.
+	BuildTime = "unknown"
+	// BuildHash is the VCS commit hash, injected at link time via -ldflags.
+	BuildHash = "undefined"
+	// LogsDir is the directory where log files are written.
+	LogsDir = path.Join(os.TempDir(), "logs")
+	// LogVerbosity controls the minimum log level emitted by the logger.
+	LogVerbosity = internal.LogLevelWarning
+	// HttpPort is the TCP port the HTTP server listens on.
+	HttpPort = 8080
+	// HttpTimeOut is the read/write/idle timeout for the HTTP server.
+	HttpTimeOut = 30 * time.Second
+	// StaticDir overrides the embedded static file system when non-empty.
+	StaticDir = ""
+	// APIDsn is the public HTTPS origin passed via --api-dsn; used by the WASM client.
+	APIDsn = ""
+)
+
 //go:embed static
 var staticFS embed.FS
+
+// flagPort, flagTimeout, etc. hold the raw flag values populated by flag.Parse in
+// main. They are package-level so initFlags can apply them to the exported globals,
+// keeping the flag-registration init() free of flag.Parse.
+var (
+	flagPort      *int
+	flagTimeout   *string
+	flagLogsDir   *string
+	flagVerbosity *string
+	flagStaticDir *string
+	flagAPIDsn    *string
+)
 
 // openMeteoGeoAdapter adapts *weatherinfra.OpenMeteo to the gateway's
 // weatherGeocoder interface, which expects []dto.WeatherCitySearchItem rather
@@ -351,31 +376,6 @@ func (a *openMeteoGeoAdapter) Geocode(ctx context.Context, name string, count in
 		})
 	}
 	return items, nil
-}
-
-// flagPort, flagTimeout, etc. hold the raw flag values populated by flag.Parse in
-// main. They are package-level so initFlags can apply them to the exported globals,
-// keeping the flag-registration init() free of flag.Parse.
-var (
-	flagPort      *int
-	flagTimeout   *string
-	flagLogsDir   *string
-	flagVerbosity *string
-	flagStaticDir *string
-	flagAPIDsn    *string
-)
-
-func init() {
-	// Register flags here so the test binary can see them, but do NOT call
-	// flag.Parse() in init() — it would consume go test's own flags before the
-	// testing package registers them ("flag provided but not defined"). main()
-	// calls flag.Parse() once; tests never invoke main().
-	flagPort = flag.Int("port", HttpPort, "http server port")
-	flagTimeout = flag.String("timeout", HttpTimeOut.String(), "HTTP read/write/idle timeout duration")
-	flagLogsDir = flag.String("logs-dir", LogsDir, "path to logs directory")
-	flagVerbosity = flag.String("verbosity", "warning", "minimum stdout log level (debug, info, warning, error, severe, critical)")
-	flagStaticDir = flag.String("static-dir", StaticDir, "path to static files directory")
-	flagAPIDsn = flag.String("api-dsn", APIDsn, "public HTTPS origin DSN, format: https://<host>/")
 }
 
 // initFlags applies the parsed flag values to the exported globals. Called once

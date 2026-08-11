@@ -89,30 +89,6 @@ func (a *Auditor) Run(ctx context.Context, sources []SeededSource) ([]ProbeResul
 	return results, nil
 }
 
-// fetchCacheKey returns a stable dedup key for (rawURL, headers). Sources sharing
-// the same URL and empty/nil headers reuse the same fetch (the existing "shared
-// URL fetched once" optimization). Sources that differ in their per-source headers
-// each receive an independent fetch.
-func fetchCacheKey(rawURL string, headers map[string]string) string {
-	if len(headers) == 0 {
-		return rawURL
-	}
-	keys := make([]string, 0, len(headers))
-	for k := range headers {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var b strings.Builder
-	b.WriteString(rawURL)
-	for _, k := range keys {
-		b.WriteByte('\x00') // NUL is not valid in URLs; safe separator
-		b.WriteString(k)
-		b.WriteByte('=')
-		b.WriteString(headers[k])
-	}
-	return b.String()
-}
-
 func (a *Auditor) probeSource(src SeededSource, fetch *fetchEntry) ProbeResult {
 	pr := ProbeResult{
 		Source: src,
@@ -201,6 +177,30 @@ func (a *Auditor) probeSource(src SeededSource, fetch *fetchEntry) ProbeResult {
 type fetchEntry struct {
 	result *FetchResult
 	err    error
+}
+
+// fetchCacheKey returns a stable dedup key for (rawURL, headers). Sources sharing
+// the same URL and empty/nil headers reuse the same fetch (the existing "shared
+// URL fetched once" optimization). Sources that differ in their per-source headers
+// each receive an independent fetch.
+func fetchCacheKey(rawURL string, headers map[string]string) string {
+	if len(headers) == 0 {
+		return rawURL
+	}
+	keys := make([]string, 0, len(headers))
+	for k := range headers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString(rawURL)
+	for _, k := range keys {
+		b.WriteByte('\x00') // NUL is not valid in URLs; safe separator
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(headers[k])
+	}
+	return b.String()
 }
 
 func truncate(s string, max int) string {

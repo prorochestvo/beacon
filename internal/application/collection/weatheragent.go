@@ -57,22 +57,6 @@ type WeatherAgent struct {
 	logger           io.Writer
 }
 
-// weatherForecastProvider fetches a weather forecast for the given coordinates.
-type weatherForecastProvider interface {
-	Forecast(ctx context.Context, lat, lng float64) (*domain.WeatherObservation, error)
-}
-
-// weatherCollectionCityRepo is the narrow city-repository surface the collector needs.
-type weatherCollectionCityRepo interface {
-	ObtainDistinctWeatherLocations(ctx context.Context) ([]domain.WeatherUserCity, error)
-}
-
-// weatherCollectionObsRepo is the narrow observation-repository surface the collector needs.
-type weatherCollectionObsRepo interface {
-	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
-	RetainWeatherObservation(ctx context.Context, record *domain.WeatherObservation) error
-}
-
 // Run loads all distinct subscribed locations, skips those with a recent Open-Meteo
 // observation (throttle gate), fetches a fresh forecast for due locations, and
 // persists the result. One failing location never aborts the rest. Returns a joined
@@ -133,4 +117,20 @@ func (a *WeatherAgent) isDue(ctx context.Context, locationID string, now time.Ti
 		return true
 	}
 	return now.Sub(latest.CapturedAt) >= a.throttleInterval
+}
+
+// weatherForecastProvider fetches a weather forecast for the given coordinates.
+type weatherForecastProvider interface {
+	Forecast(ctx context.Context, lat, lng float64) (*domain.WeatherObservation, error)
+}
+
+// weatherCollectionCityRepo is the narrow city-repository surface the collector needs.
+type weatherCollectionCityRepo interface {
+	ObtainDistinctWeatherLocations(ctx context.Context) ([]domain.WeatherUserCity, error)
+}
+
+// weatherCollectionObsRepo is the narrow observation-repository surface the collector needs.
+type weatherCollectionObsRepo interface {
+	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
+	RetainWeatherObservation(ctx context.Context, record *domain.WeatherObservation) error
 }

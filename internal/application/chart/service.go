@@ -15,37 +15,6 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain/ratepair"
 )
 
-// bucketCount is the fixed number of equal-width buckets used when downsampling
-// a sparkline, regardless of period: density stays independent of the horizon,
-// so period selects horizon, not resolution.
-const bucketCount = 12
-
-// SubscriptionsLoader loads a user's subscriptions.
-type SubscriptionsLoader interface {
-	ObtainRateUserSubscriptionsByUserID(
-		ctx context.Context, userType domain.UserType, userID string,
-	) ([]domain.RateUserSubscription, error)
-}
-
-// SourcesLoader resolves source metadata (base, quote, kind) for a set of
-// source names.
-type SourcesLoader interface {
-	ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error)
-}
-
-// PublicSourcesLoader enumerates all distinct active (name, base, quote, kind)
-// triples across the whole system. Satisfied by *repository.RateSourceRepository.
-type PublicSourcesLoader interface {
-	ObtainDistinctActivePairTriples(ctx context.Context) ([]domain.SourcePairKey, error)
-}
-
-// ValuesLoader loads time-series rate values for a bulk set of pairs.
-type ValuesLoader interface {
-	ObtainValuesForPairsSince(
-		ctx context.Context, pairs []domain.SourcePairKey, since time.Time,
-	) ([]domain.RateValue, error)
-}
-
 // MeChart is the result of ObtainMeChart: one row per canonical currency pair
 // (BID and ASK collapsed into one row), sorted by the ratepair.Less comparator.
 type MeChart struct {
@@ -112,6 +81,15 @@ type SparkPoint struct {
 	Value float64
 }
 
+// NewService constructs a Service. now is injected for deterministic tests;
+// pass time.Now in production. history is the loader used by ObtainMeHistory;
+// the same *repository.RateValueRepository instance satisfies both ValuesLoader
+// and HistoryValuesLoader. publicSources is the loader used by ObtainPublicChart;
+// pass the same *repository.RateSourceRepository used for sources.
+func NewService(subs SubscriptionsLoader, sources SourcesLoader, values ValuesLoader, history HistoryValuesLoader, publicSources PublicSourcesLoader, now func() time.Time) *Service {
+	return &Service{subs: subs, sources: sources, values: values, history: history, publicSources: publicSources, now: now}
+}
+
 // Service builds sparkline charts and per-pair history from a user's
 // subscriptions, and the system-wide public sparkline list. Construct with
 // NewService; it has no mutable state and is safe for concurrent use.
@@ -122,15 +100,6 @@ type Service struct {
 	history       HistoryValuesLoader
 	publicSources PublicSourcesLoader
 	now           func() time.Time
-}
-
-// NewService constructs a Service. now is injected for deterministic tests;
-// pass time.Now in production. history is the loader used by ObtainMeHistory;
-// the same *repository.RateValueRepository instance satisfies both ValuesLoader
-// and HistoryValuesLoader. publicSources is the loader used by ObtainPublicChart;
-// pass the same *repository.RateSourceRepository used for sources.
-func NewService(subs SubscriptionsLoader, sources SourcesLoader, values ValuesLoader, history HistoryValuesLoader, publicSources PublicSourcesLoader, now func() time.Time) *Service {
-	return &Service{subs: subs, sources: sources, values: values, history: history, publicSources: publicSources, now: now}
 }
 
 // ObtainMeChart loads the calling user's subscriptions and builds a sparkline
@@ -384,6 +353,37 @@ func (s *Service) buildPairRows(ctx context.Context, allKeys []domain.SourcePair
 
 	return rows, nil
 }
+
+// SubscriptionsLoader loads a user's subscriptions.
+type SubscriptionsLoader interface {
+	ObtainRateUserSubscriptionsByUserID(
+		ctx context.Context, userType domain.UserType, userID string,
+	) ([]domain.RateUserSubscription, error)
+}
+
+// SourcesLoader resolves source metadata (base, quote, kind) for a set of
+// source names.
+type SourcesLoader interface {
+	ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error)
+}
+
+// PublicSourcesLoader enumerates all distinct active (name, base, quote, kind)
+// triples across the whole system. Satisfied by *repository.RateSourceRepository.
+type PublicSourcesLoader interface {
+	ObtainDistinctActivePairTriples(ctx context.Context) ([]domain.SourcePairKey, error)
+}
+
+// ValuesLoader loads time-series rate values for a bulk set of pairs.
+type ValuesLoader interface {
+	ObtainValuesForPairsSince(
+		ctx context.Context, pairs []domain.SourcePairKey, since time.Time,
+	) ([]domain.RateValue, error)
+}
+
+// bucketCount is the fixed number of equal-width buckets used when downsampling
+// a sparkline, regardless of period: density stays independent of the horizon,
+// so period selects horizon, not resolution.
+const bucketCount = 12
 
 // pairGroup accumulates BID, ASK, and LAST series for one canonical currency pair
 // while iterating over the unique-pair list.

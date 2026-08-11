@@ -24,19 +24,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var (
-	// BuildVersion is the application version string, injected at link time via -ldflags.
-	BuildVersion = "dev"
-	// BuildTime is the build timestamp, injected at link time via -ldflags.
-	BuildTime = "unknown"
-	// BuildHash is the VCS commit hash, injected at link time via -ldflags.
-	BuildHash = "undefined"
-	// LogsDir is the directory where log files are written.
-	LogsDir = path.Join(os.TempDir(), "logs")
-	// LogVerbosity controls the minimum log level emitted by the logger.
-	LogVerbosity = internal.LogLevelWarning
-)
-
 func main() {
 	flag.Parse()
 	initFlags()
@@ -207,13 +194,6 @@ func main() {
 	log.Println("execution: done")
 }
 
-// flagLogsDir and flagVerbosity hold the raw flag values populated by flag.Parse in
-// main. They are package-level so initFlags can apply them after parsing.
-var (
-	flagLogsDir   *string
-	flagVerbosity *string
-)
-
 func init() {
 	// Register flags here so the test binary can see them, but do NOT call flag.Parse()
 	// in init() — it would consume go test's own flags before the testing package
@@ -222,6 +202,26 @@ func init() {
 	flagLogsDir = flag.String("logs-dir", LogsDir, "path to logs directory")
 	flagVerbosity = flag.String("verbosity", "warning", "minimum stdout log level (debug, info, warning, error, severe, critical)")
 }
+
+var (
+	// BuildVersion is the application version string, injected at link time via -ldflags.
+	BuildVersion = "dev"
+	// BuildTime is the build timestamp, injected at link time via -ldflags.
+	BuildTime = "unknown"
+	// BuildHash is the VCS commit hash, injected at link time via -ldflags.
+	BuildHash = "undefined"
+	// LogsDir is the directory where log files are written.
+	LogsDir = path.Join(os.TempDir(), "logs")
+	// LogVerbosity controls the minimum log level emitted by the logger.
+	LogVerbosity = internal.LogLevelWarning
+)
+
+// flagLogsDir and flagVerbosity hold the raw flag values populated by flag.Parse in
+// main. They are package-level so initFlags can apply them after parsing.
+var (
+	flagLogsDir   *string
+	flagVerbosity *string
+)
 
 // initFlags applies the parsed flag values. Called from main after flag.Parse.
 func initFlags() {

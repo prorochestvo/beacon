@@ -25,16 +25,6 @@ type RateValueRepository struct {
 	db db
 }
 
-// db is the minimal SQLite client surface every repository depends on.
-// Transaction opens a read-write transaction; ReadOnlyTransaction opens a
-// read-only one. SELECT-only methods must use the read-only variant so they
-// don't compete with collector/notifier writers for the write lock at
-// COMMIT/ROLLBACK time.
-type db interface {
-	Transaction(ctx context.Context) (*sql.Tx, error)
-	ReadOnlyTransaction(ctx context.Context) (*sql.Tx, error)
-}
-
 // Name returns the name of the underlying database table.
 func (r *RateValueRepository) Name() string { return rateValueTableName }
 
@@ -524,6 +514,16 @@ const (
 // here is bounded (a chart window, a limit, a page), so that sort is over hundreds of rows,
 // not over the table.
 var rateValueSqlSelect = "SELECT\n" + rateValueColumnList + "\n" + rateValueSqlFrom(rateValueTableName)
+
+// db is the minimal SQLite client surface every repository depends on.
+// Transaction opens a read-write transaction; ReadOnlyTransaction opens a
+// read-only one. SELECT-only methods must use the read-only variant so they
+// don't compete with collector/notifier writers for the write lock at
+// COMMIT/ROLLBACK time.
+type db interface {
+	Transaction(ctx context.Context) (*sql.Tx, error)
+	ReadOnlyTransaction(ctx context.Context) (*sql.Tx, error)
+}
 
 // rateValueSqlFrom returns the both-tiers FROM clause, aliased so callers can qualify
 // columns (the history query joins rate_sources and needs the rv alias).

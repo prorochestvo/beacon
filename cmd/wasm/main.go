@@ -19,38 +19,6 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/dto"
 )
 
-// screen holds the teardown closures for a single active screen. On navigation,
-// Unmount runs every release closure to detach event listeners and free the
-// underlying js.Func entries in the WASM function table.
-type screen struct {
-	releases []func()
-}
-
-func (s *screen) addRelease(fn func()) {
-	s.releases = append(s.releases, fn)
-}
-
-func (s *screen) unmount() {
-	for _, fn := range s.releases {
-		fn()
-	}
-	s.releases = nil
-}
-
-// currentScreen is the single active screen. Navigation replaces it after
-// calling Unmount on the outgoing one.
-var currentScreen *screen
-
-// mountScreen unmounts the previous screen (if any) and returns a fresh screen
-// that the caller populates with release closures during handler binding.
-func mountScreen() *screen {
-	if currentScreen != nil {
-		currentScreen.unmount()
-	}
-	currentScreen = &screen{}
-	return currentScreen
-}
-
 func main() {
 	client := apiclient.New(apiclient.NewDOMFetcher())
 	wasmObj := js.Global().Get("Object").New()
@@ -102,6 +70,54 @@ func main() {
 	js.Global().Set("_wasm", wasmObj)
 
 	select {} // keep the WASM runtime alive
+}
+
+// currentScreen is the single active screen. Navigation replaces it after
+// calling Unmount on the outgoing one.
+var currentScreen *screen
+
+// homeSectionRoutes and settingsSectionRoutes map a Mini App section to the _wasm
+// entry point of its screen in one mode. The section rail moves sideways within a
+// mode, so each screen binds the map matching its own mode; that is what leaves the
+// gear and the ← Back button as the only controls that change mode. See the matrix
+// in cmd/wasm/ui/section_rail.go.
+var (
+	homeSectionRoutes = map[ui.Section]string{
+		ui.SectionRates:   "renderMeSubscriptions",
+		ui.SectionWeather: "renderMeWeatherCurrent",
+	}
+	settingsSectionRoutes = map[ui.Section]string{
+		ui.SectionRates:   "renderMeSubscriptionsEdit",
+		ui.SectionWeather: "renderMeWeatherCities",
+	}
+)
+
+// screen holds the teardown closures for a single active screen. On navigation,
+// Unmount runs every release closure to detach event listeners and free the
+// underlying js.Func entries in the WASM function table.
+type screen struct {
+	releases []func()
+}
+
+func (s *screen) addRelease(fn func()) {
+	s.releases = append(s.releases, fn)
+}
+
+func (s *screen) unmount() {
+	for _, fn := range s.releases {
+		fn()
+	}
+	s.releases = nil
+}
+
+// mountScreen unmounts the previous screen (if any) and returns a fresh screen
+// that the caller populates with release closures during handler binding.
+func mountScreen() *screen {
+	if currentScreen != nil {
+		currentScreen.unmount()
+	}
+	currentScreen = &screen{}
+	return currentScreen
 }
 
 // runRenderSources fetches sources and stats in parallel, builds the page
@@ -549,22 +565,6 @@ func callWebAppIfDefined() {
 	webApp.Call("ready")
 	webApp.Call("expand")
 }
-
-// homeSectionRoutes and settingsSectionRoutes map a Mini App section to the _wasm
-// entry point of its screen in one mode. The section rail moves sideways within a
-// mode, so each screen binds the map matching its own mode; that is what leaves the
-// gear and the ← Back button as the only controls that change mode. See the matrix
-// in cmd/wasm/ui/section_rail.go.
-var (
-	homeSectionRoutes = map[ui.Section]string{
-		ui.SectionRates:   "renderMeSubscriptions",
-		ui.SectionWeather: "renderMeWeatherCurrent",
-	}
-	settingsSectionRoutes = map[ui.Section]string{
-		ui.SectionRates:   "renderMeSubscriptionsEdit",
-		ui.SectionWeather: "renderMeWeatherCities",
-	}
-)
 
 // bindSectionRail wires the vertical section rail of one mounted screen.
 //

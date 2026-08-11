@@ -25,54 +25,6 @@ type UpdateHandler func(ctx context.Context, update tgbotapi.Update)
 // TelegramChatID is a typed int64 that identifies a Telegram chat or user.
 type TelegramChatID int64
 
-// NewTBotClient parses the BEACON_TELEGRAMBOT_DSN, validates the bot token and admin
-// chat ID, connects to the Telegram Bot API, and returns a ready-to-use client.
-// The DSN format is <adminChatID>:<botToken>@<host>.
-//
-// The HTTP client hardcoded into the bot uses an explicit empty proxy transport
-// so Telegram traffic never routes via the process-wide proxy. Do not change
-// this without coordinating with the proxy wiring policy.
-func NewTBotClient(tbotDSN dsninjector.DataSource, logger io.Writer) (*TelegramBotClient, error) {
-	rx := regexp.MustCompile(regexpTelegramToken)
-
-	token := strings.TrimSpace(tbotDSN.Addr())
-	if token == "" || rx.MatchString(token) == false {
-		return nil, errors.New("telegram: bot token is required")
-	}
-
-	adminChatID, err := strconv.ParseInt(tbotDSN.Login(), 10, 64)
-	if err != nil || adminChatID == 0 {
-		if err == nil {
-			err = fmt.Errorf("admin chat id cannot be zero")
-		}
-		err = fmt.Errorf("invalid admin chat id: %w", err)
-		return nil, errors.Join(err, loginjector.NewTraceError())
-	}
-
-	// Transport whose Proxy always returns nil: Telegram Bot API traffic is
-	// always direct and never flows through any process-wide proxy, even if
-	// HTTPS_PROXY or HTTP_PROXY is set in the environment.
-	noProxyTransport := &http.Transport{
-		Proxy: func(*http.Request) (*url.URL, error) { return nil, nil },
-	}
-	directClient := &http.Client{Transport: noProxyTransport}
-
-	bot, err := tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, directClient)
-	if err != nil {
-		return nil, fmt.Errorf("telegram: init bot: %w", err)
-	}
-
-	bot.Debug = false
-
-	t := &TelegramBotClient{
-		bot:         bot,
-		adminChatID: TelegramChatID(adminChatID),
-		logger:      logger,
-	}
-
-	return t, nil
-}
-
 // TelegramBotClient is a high-level Telegram bot client that wraps tgbotapi.BotAPI
 // with typed send helpers, an update listener, and admin-targeted convenience methods.
 type TelegramBotClient struct {
@@ -284,3 +236,51 @@ func (tbot *TelegramBotClient) dispatch(m tgbotapi.Chattable, chatID int64, kind
 }
 
 const regexpTelegramToken = `^\d{9,}:[a-zA-Z0-9_-]{35,}$`
+
+// NewTBotClient parses the BEACON_TELEGRAMBOT_DSN, validates the bot token and admin
+// chat ID, connects to the Telegram Bot API, and returns a ready-to-use client.
+// The DSN format is <adminChatID>:<botToken>@<host>.
+//
+// The HTTP client hardcoded into the bot uses an explicit empty proxy transport
+// so Telegram traffic never routes via the process-wide proxy. Do not change
+// this without coordinating with the proxy wiring policy.
+func NewTBotClient(tbotDSN dsninjector.DataSource, logger io.Writer) (*TelegramBotClient, error) {
+	rx := regexp.MustCompile(regexpTelegramToken)
+
+	token := strings.TrimSpace(tbotDSN.Addr())
+	if token == "" || rx.MatchString(token) == false {
+		return nil, errors.New("telegram: bot token is required")
+	}
+
+	adminChatID, err := strconv.ParseInt(tbotDSN.Login(), 10, 64)
+	if err != nil || adminChatID == 0 {
+		if err == nil {
+			err = fmt.Errorf("admin chat id cannot be zero")
+		}
+		err = fmt.Errorf("invalid admin chat id: %w", err)
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+
+	// Transport whose Proxy always returns nil: Telegram Bot API traffic is
+	// always direct and never flows through any process-wide proxy, even if
+	// HTTPS_PROXY or HTTP_PROXY is set in the environment.
+	noProxyTransport := &http.Transport{
+		Proxy: func(*http.Request) (*url.URL, error) { return nil, nil },
+	}
+	directClient := &http.Client{Transport: noProxyTransport}
+
+	bot, err := tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, directClient)
+	if err != nil {
+		return nil, fmt.Errorf("telegram: init bot: %w", err)
+	}
+
+	bot.Debug = false
+
+	t := &TelegramBotClient{
+		bot:         bot,
+		adminChatID: TelegramChatID(adminChatID),
+		logger:      logger,
+	}
+
+	return t, nil
+}

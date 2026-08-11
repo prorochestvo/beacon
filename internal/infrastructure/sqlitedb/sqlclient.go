@@ -101,11 +101,6 @@ type SQLiteClient struct {
 	Timeout time.Duration
 }
 
-// sqlAction is implemented by types that can execute SQL inside an open transaction.
-type sqlAction interface {
-	Run(*sql.Tx, context.Context) error
-}
-
 // Ping verifies the database connection is still alive.
 func (sqlite *SQLiteClient) Ping(ctx context.Context) error {
 	if err := sqlite.db.PingContext(ctx); err != nil {
@@ -247,4 +242,9 @@ func (_ *Ping) Run(tx *sql.Tx, ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// sqlAction is implemented by types that can execute SQL inside an open transaction.
+type sqlAction interface {
+	Run(*sql.Tx, context.Context) error
 }

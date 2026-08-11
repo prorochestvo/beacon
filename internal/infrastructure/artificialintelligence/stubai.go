@@ -11,10 +11,6 @@ import (
 // this value stays aligned with the schema.
 const stubAIDefaultResponse = `{"rules":[{"method":"regex","pattern":"USD / KZT[\\s\\S]{1,500}?<div[^>]*>(\\d+\\.\\d+)</div>"}]}`
 
-func newStubAIClient(completeResponse string) (AIClient, error) {
-	return &stubClient{completeResponse: completeResponse}, nil
-}
-
 type stubClient struct {
 	completeResponse string
 }
@@ -36,4 +32,8 @@ func (s *stubClient) CheckUP(_ context.Context) error {
 
 func (s *stubClient) Complete(_ context.Context, _, _ string) (string, error) {
 	return s.completeResponse, nil
+}
+
+func newStubAIClient(completeResponse string) (AIClient, error) {
+	return &stubClient{completeResponse: completeResponse}, nil
 }

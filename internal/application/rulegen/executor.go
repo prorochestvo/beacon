@@ -34,9 +34,6 @@ type RuleExecutor interface {
 	Execute(rules []domain.RateSourceRule, body []byte, base, quote string) (float64, error)
 }
 
-// NewRuleExecutor returns the default RuleExecutor implementation.
-func NewRuleExecutor() RuleExecutor { return &defaultRuleExecutor{} }
-
 type defaultRuleExecutor struct{}
 
 // Execute runs the rule chain against body. It copies body before mutation so
@@ -107,3 +104,6 @@ func (e *defaultRuleExecutor) Execute(rules []domain.RateSourceRule, body []byte
 
 	return v, nil
 }
+
+// NewRuleExecutor returns the default RuleExecutor implementation.
+func NewRuleExecutor() RuleExecutor { return &defaultRuleExecutor{} }

@@ -7,6 +7,8 @@ import (
 	"unicode/utf8"
 )
 
+const urlMaxWidth = 72
+
 // WriteReport renders probe results to w and returns the count of non-OK
 // results. When verbose, prints a per-source table plus summary; otherwise a
 // single OK line on full success, or a FAIL summary plus MISS DETAILS on any
@@ -54,8 +56,6 @@ func WriteReport(w io.Writer, results []ProbeResult, verbose bool) (failures int
 	}
 	return failures, nil
 }
-
-const urlMaxWidth = 72
 
 func writeTable(w io.Writer, results []ProbeResult) error {
 	nameW := len("name")

@@ -35,6 +35,30 @@ import (
 // rate-limiting on :free tier models.
 const openRouterCheckUPModel = "meta-llama/llama-3.2-1b-instruct"
 
+type openRouterClient struct {
+	inner openAICompatibleClient
+}
+
+func (c *openRouterClient) Name() string {
+	return fmt.Sprintf("OpenRouter[%s]", c.inner.model)
+}
+
+func (c *openRouterClient) Model() string {
+	return c.inner.model
+}
+
+// CheckUP verifies the OpenRouter API is reachable and credentials are valid by
+// sending a minimal chat completion request using the cheap probe model.
+func (c *openRouterClient) CheckUP(ctx context.Context) error {
+	return c.inner.ping(ctx, openRouterCheckUPModel, chatPingPrompt, chatPingExpectedToken, chatPingMaxTokens)
+}
+
+// Complete sends a chat completion request to OpenRouter and returns the content
+// of the first choice message. A json_schema response_format is always attached.
+func (c *openRouterClient) Complete(ctx context.Context, systemPrompt, userMessage string) (string, error) {
+	return c.inner.complete(ctx, systemPrompt, userMessage, true)
+}
+
 // newOpenRouterClient parses the DSN and returns a ready-to-use openRouterClient.
 //
 // DSN: openrouterai://_:<base64url(KEY)>@<host>/<base-path>?model=<model>&timeout=<duration>
@@ -76,28 +100,4 @@ func newOpenRouterClient(dns dsninjector.DataSource, logger io.Writer, proxyURL 
 			providerName: "openrouter",
 		},
 	}, nil
-}
-
-type openRouterClient struct {
-	inner openAICompatibleClient
-}
-
-func (c *openRouterClient) Name() string {
-	return fmt.Sprintf("OpenRouter[%s]", c.inner.model)
-}
-
-func (c *openRouterClient) Model() string {
-	return c.inner.model
-}
-
-// CheckUP verifies the OpenRouter API is reachable and credentials are valid by
-// sending a minimal chat completion request using the cheap probe model.
-func (c *openRouterClient) CheckUP(ctx context.Context) error {
-	return c.inner.ping(ctx, openRouterCheckUPModel, chatPingPrompt, chatPingExpectedToken, chatPingMaxTokens)
-}
-
-// Complete sends a chat completion request to OpenRouter and returns the content
-// of the first choice message. A json_schema response_format is always attached.
-func (c *openRouterClient) Complete(ctx context.Context, systemPrompt, userMessage string) (string, error) {
-	return c.inner.complete(ctx, systemPrompt, userMessage, true)
 }

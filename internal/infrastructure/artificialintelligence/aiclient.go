@@ -31,6 +31,12 @@ type AIClient interface {
 	Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error)
 }
 
+const (
+	clientOpenAI     = "openai"
+	clientGroq       = "groq"
+	clientOpenRouter = "openrouterai"
+)
+
 // NewClient parses the driver from dns and dispatches to the matching
 // provider constructor. proxyURL is an optional HTTP proxy URL
 // (e.g. "http://127.0.0.1:7788"); pass "" for no proxy. On an unknown driver
@@ -76,12 +82,6 @@ func NewClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (A
 func NewStubClient() (AIClient, error) {
 	return newStubAIClient(stubAIDefaultResponse)
 }
-
-const (
-	clientOpenAI     = "openai"
-	clientGroq       = "groq"
-	clientOpenRouter = "openrouterai"
-)
 
 // parseDSNTimeout reads the "timeout" DSN option and returns a duration clamped
 // to [10s, 15m]. When the option is absent or empty, it returns one minute.

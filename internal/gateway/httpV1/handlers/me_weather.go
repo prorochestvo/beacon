@@ -16,33 +16,6 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/dto"
 )
 
-// meWeatherCityRepository is the storage contract for the caller's city subscriptions.
-type meWeatherCityRepository interface {
-	RetainWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
-	ObtainWeatherUserCitiesByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.WeatherUserCity, error)
-	ObtainWeatherUserCityByID(ctx context.Context, id string) (*domain.WeatherUserCity, error)
-	RemoveWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
-	// RemoveWeatherUserCitiesByLocation deletes every subscription row (all notify
-	// kinds, including the forced alert_thaw row) for one (userType, userID, locationID).
-	// Returns internal.ErrNotFound when no row matches.
-	RemoveWeatherUserCitiesByLocation(ctx context.Context, userType domain.UserType, userID, locationID string) error
-}
-
-// meWeatherObsRepository is the read-only storage contract for weather
-// observations, used by GetMeWeatherCurrent. Returns internal.ErrNotFound when
-// no observation exists for the given (locationID, provider) pair.
-type meWeatherObsRepository interface {
-	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
-}
-
-// weatherGeocoder is the geocoding contract used by SearchWeatherCities. It
-// returns display-ready search items with resolved location_id, coordinates,
-// and IANA timezone. The implementation calls an external geocoding API; callers
-// must supply a bounded context to avoid long-held worker goroutines.
-type weatherGeocoder interface {
-	Geocode(ctx context.Context, name string, count int) ([]dto.WeatherCitySearchItem, error)
-}
-
 // SearchWeatherCities calls the geocoding provider and returns the top matches
 // for the q query parameter. Auth is required so the endpoint cannot be used
 // as an open geocoding proxy.
@@ -310,38 +283,6 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// weatherKindExists reports whether the caller already owns a subscription of the given
-// kind at the given location. Ensuring a forced kind that carries a user-tunable threshold
-// has to be skipped when the row is already there, because RetainWeatherUserCity's upsert
-// rewrites condition_value — without this check, adding any second alert to a city would
-// silently reset a rain threshold the user had retuned.
-func (h *Handler) weatherKindExists(ctx context.Context, userID, locationID string, kind domain.WeatherNotifyKind) (bool, error) {
-	rows, err := h.meWeatherCityRepo.ObtainWeatherUserCitiesByUserID(ctx, domain.UserTypeTelegram, userID)
-	if err != nil {
-		return false, err
-	}
-	for i := range rows {
-		if rows[i].LocationID == locationID && rows[i].NotifyKind == kind {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// forcedWeatherKindNotice returns the user-facing explanation for a forced,
-// system-managed subscription kind that cannot be deleted on its own, and ok=false for
-// every kind the user may delete freely.
-func forcedWeatherKindNotice(kind domain.WeatherNotifyKind) (notice string, ok bool) {
-	switch kind {
-	case domain.WeatherNotifyAlertThaw:
-		return "Thaw alerts stay on for every tracked city; remove the city to turn it off.", true
-	case domain.WeatherNotifyAlertRain:
-		return "Rain alerts stay on for every tracked city; remove the city to turn it off.", true
-	default:
-		return "", false
-	}
-}
-
 // DeleteMeWeatherCity removes a city subscription owned by the authenticated caller.
 //
 // DELETE /api/me/weather/cities/{id}
@@ -436,32 +377,6 @@ func (h *Handler) DeleteMeWeatherLocation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// meWeatherCityOwnershipCheck loads the city by id, verifies the caller owns it,
-// and returns it. On not-found or ownership mismatch it writes 404 and returns nil.
-// On repo error it writes 500 and returns nil. Callers must return when nil is returned.
-//
-// The 404 response for a cross-user access is intentionally indistinguishable
-// from a genuine miss to avoid existence disclosure.
-func (h *Handler) meWeatherCityOwnershipCheck(w http.ResponseWriter, r *http.Request, id, tgUserID string) *domain.WeatherUserCity {
-	city, err := h.meWeatherCityRepo.ObtainWeatherUserCityByID(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, internal.ErrNotFound) {
-			pub := internal.NewPublicError("city not found")
-			http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusNotFound)
-			return nil
-		}
-		h.internalError(w, fmt.Errorf("weather city lookup: %w", err))
-		return nil
-	}
-	if city.UserID != tgUserID {
-		// 404 not 403 to avoid disclosing another user's city.
-		pub := internal.NewPublicError("city not found")
-		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusNotFound)
-		return nil
-	}
-	return city
 }
 
 // GetMeWeatherCurrent returns the latest stored Open-Meteo observation for each
@@ -565,6 +480,50 @@ func (h *Handler) GetMeWeatherCurrent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, dto.WeatherCurrentResponse{Items: items})
 }
 
+// weatherKindExists reports whether the caller already owns a subscription of the given
+// kind at the given location. Ensuring a forced kind that carries a user-tunable threshold
+// has to be skipped when the row is already there, because RetainWeatherUserCity's upsert
+// rewrites condition_value — without this check, adding any second alert to a city would
+// silently reset a rain threshold the user had retuned.
+func (h *Handler) weatherKindExists(ctx context.Context, userID, locationID string, kind domain.WeatherNotifyKind) (bool, error) {
+	rows, err := h.meWeatherCityRepo.ObtainWeatherUserCitiesByUserID(ctx, domain.UserTypeTelegram, userID)
+	if err != nil {
+		return false, err
+	}
+	for i := range rows {
+		if rows[i].LocationID == locationID && rows[i].NotifyKind == kind {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// meWeatherCityOwnershipCheck loads the city by id, verifies the caller owns it,
+// and returns it. On not-found or ownership mismatch it writes 404 and returns nil.
+// On repo error it writes 500 and returns nil. Callers must return when nil is returned.
+//
+// The 404 response for a cross-user access is intentionally indistinguishable
+// from a genuine miss to avoid existence disclosure.
+func (h *Handler) meWeatherCityOwnershipCheck(w http.ResponseWriter, r *http.Request, id, tgUserID string) *domain.WeatherUserCity {
+	city, err := h.meWeatherCityRepo.ObtainWeatherUserCityByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, internal.ErrNotFound) {
+			pub := internal.NewPublicError("city not found")
+			http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusNotFound)
+			return nil
+		}
+		h.internalError(w, fmt.Errorf("weather city lookup: %w", err))
+		return nil
+	}
+	if city.UserID != tgUserID {
+		// 404 not 403 to avoid disclosing another user's city.
+		pub := internal.NewPublicError("city not found")
+		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusNotFound)
+		return nil
+	}
+	return city
+}
+
 const (
 	// weatherGeoTimeout is the per-request deadline for outbound geocoding calls.
 	// A slow Open-Meteo response must not stall the HTTP worker.
@@ -579,3 +538,44 @@ const (
 	// a rain alert with a different threshold, which upserts condition_value in place.
 	weatherDefaultRainThreshold = "60"
 )
+
+// meWeatherCityRepository is the storage contract for the caller's city subscriptions.
+type meWeatherCityRepository interface {
+	RetainWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
+	ObtainWeatherUserCitiesByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.WeatherUserCity, error)
+	ObtainWeatherUserCityByID(ctx context.Context, id string) (*domain.WeatherUserCity, error)
+	RemoveWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
+	// RemoveWeatherUserCitiesByLocation deletes every subscription row (all notify
+	// kinds, including the forced alert_thaw row) for one (userType, userID, locationID).
+	// Returns internal.ErrNotFound when no row matches.
+	RemoveWeatherUserCitiesByLocation(ctx context.Context, userType domain.UserType, userID, locationID string) error
+}
+
+// meWeatherObsRepository is the read-only storage contract for weather
+// observations, used by GetMeWeatherCurrent. Returns internal.ErrNotFound when
+// no observation exists for the given (locationID, provider) pair.
+type meWeatherObsRepository interface {
+	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
+}
+
+// weatherGeocoder is the geocoding contract used by SearchWeatherCities. It
+// returns display-ready search items with resolved location_id, coordinates,
+// and IANA timezone. The implementation calls an external geocoding API; callers
+// must supply a bounded context to avoid long-held worker goroutines.
+type weatherGeocoder interface {
+	Geocode(ctx context.Context, name string, count int) ([]dto.WeatherCitySearchItem, error)
+}
+
+// forcedWeatherKindNotice returns the user-facing explanation for a forced,
+// system-managed subscription kind that cannot be deleted on its own, and ok=false for
+// every kind the user may delete freely.
+func forcedWeatherKindNotice(kind domain.WeatherNotifyKind) (notice string, ok bool) {
+	switch kind {
+	case domain.WeatherNotifyAlertThaw:
+		return "Thaw alerts stay on for every tracked city; remove the city to turn it off.", true
+	case domain.WeatherNotifyAlertRain:
+		return "Rain alerts stay on for every tracked city; remove the city to turn it off.", true
+	default:
+		return "", false
+	}
+}

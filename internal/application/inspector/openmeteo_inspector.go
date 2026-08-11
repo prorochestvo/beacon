@@ -9,18 +9,13 @@ import (
 	"time"
 )
 
-const (
-	// openMeteoProbeURL is the geocoding endpoint used for the health probe.
-	// It is a keyless, idempotent, cheap read that does not mutate any state.
-	openMeteoProbeURL = "https://geocoding-api.open-meteo.com/v1/search?name=Berlin&count=1&language=en"
-
-	// openMeteoInspectorUA identifies the health probe in Open-Meteo access logs.
-	openMeteoInspectorUA = "Beacon/1.0 health-check (+https://github.com/seilbekskindirov/beacon)"
-
-	// openMeteoProbeTimeout is the per-request timeout for the health probe. It is
-	// shorter than the agent sweep budget (3 s) to leave headroom for other inspectors.
-	openMeteoProbeTimeout = 2 * time.Second
-)
+// NewOpenMeteoInspector returns an advisory Inspector for the Open-Meteo API.
+func NewOpenMeteoInspector() *OpenMeteoInspector {
+	return &OpenMeteoInspector{
+		client:   &http.Client{Timeout: openMeteoProbeTimeout},
+		probeURL: openMeteoProbeURL,
+	}
+}
 
 // OpenMeteoInspector is an advisory health inspector for the Open-Meteo API.
 // It probes the geocoding endpoint with a known city name and asserts a 2xx
@@ -37,20 +32,6 @@ const (
 type OpenMeteoInspector struct {
 	client   *http.Client
 	probeURL string
-}
-
-// NewOpenMeteoInspector returns an advisory Inspector for the Open-Meteo API.
-func NewOpenMeteoInspector() *OpenMeteoInspector {
-	return &OpenMeteoInspector{
-		client:   &http.Client{Timeout: openMeteoProbeTimeout},
-		probeURL: openMeteoProbeURL,
-	}
-}
-
-// newOpenMeteoInspectorForTest creates an inspector backed by the given HTTP client
-// and probe URL. Use in tests to inject an httptest.Server without live network.
-func newOpenMeteoInspectorForTest(client *http.Client, probeURL string) *OpenMeteoInspector {
-	return &OpenMeteoInspector{client: client, probeURL: probeURL}
 }
 
 // Name returns the label used in the /health/check report.
@@ -88,4 +69,23 @@ func (o *OpenMeteoInspector) CheckUP(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+const (
+	// openMeteoProbeURL is the geocoding endpoint used for the health probe.
+	// It is a keyless, idempotent, cheap read that does not mutate any state.
+	openMeteoProbeURL = "https://geocoding-api.open-meteo.com/v1/search?name=Berlin&count=1&language=en"
+
+	// openMeteoInspectorUA identifies the health probe in Open-Meteo access logs.
+	openMeteoInspectorUA = "Beacon/1.0 health-check (+https://github.com/seilbekskindirov/beacon)"
+
+	// openMeteoProbeTimeout is the per-request timeout for the health probe. It is
+	// shorter than the agent sweep budget (3 s) to leave headroom for other inspectors.
+	openMeteoProbeTimeout = 2 * time.Second
+)
+
+// newOpenMeteoInspectorForTest creates an inspector backed by the given HTTP client
+// and probe URL. Use in tests to inject an httptest.Server without live network.
+func newOpenMeteoInspectorForTest(client *http.Client, probeURL string) *OpenMeteoInspector {
+	return &OpenMeteoInspector{client: client, probeURL: probeURL}
 }

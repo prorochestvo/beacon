@@ -30,6 +30,10 @@ import (
 	"github.com/seilbekskindirov/beacon/internal"
 )
 
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
 var (
 	// BuildVersion is the application version string, injected at link time via -ldflags.
 	BuildVersion = "dev"
@@ -42,10 +46,6 @@ var (
 	// LogVerbosity is the minimum log level emitted by the logger.
 	LogVerbosity = internal.LogLevelWarning
 )
-
-func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
-}
 
 // run is the testable entry point. args is os.Args[1:]; out and errOut are the
 // stdout and stderr writers respectively.

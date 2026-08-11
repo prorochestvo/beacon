@@ -24,6 +24,44 @@ import (
 // space on the order of the file's size. That is why the maintenance pass gates it on a
 // cadence instead of running it whenever rows were freed.
 
+// RolloverToArchive moves rate values older than cutoff into rate_values_archive.
+// A zero cutoff is a no-op.
+func (r *RateValueRepository) RolloverToArchive(ctx context.Context, cutoff time.Time) (int64, error) {
+	return rollover(ctx, r.db,
+		rateValueTableName, rateValueArchiveTableName,
+		rateValueTimestampFieldName, rateValueColumnList,
+		cutoff.UTC().Format(time.RFC3339), cutoff.IsZero(),
+	)
+}
+
+// PruneArchive deletes archived rate values older than cutoff. A zero cutoff keeps
+// everything, which is the configured behaviour.
+func (r *RateValueRepository) PruneArchive(ctx context.Context, cutoff time.Time) (int64, error) {
+	return pruneArchive(ctx, r.db,
+		rateValueArchiveTableName, rateValueTimestampFieldName,
+		cutoff.UTC().Format(time.RFC3339), cutoff.IsZero(),
+	)
+}
+
+// RolloverToArchive moves execution records older than cutoff into
+// execution_history_archive. A zero cutoff is a no-op.
+func (r *ExecutionHistoryRepository) RolloverToArchive(ctx context.Context, cutoff time.Time) (int64, error) {
+	return rollover(ctx, r.db,
+		executionHistoryTableName, executionHistoryArchiveTableName,
+		executionHistoryTimestampFieldName, executionHistoryColumnList,
+		cutoff.UTC().Unix(), cutoff.IsZero(),
+	)
+}
+
+// PruneArchive deletes archived execution records older than cutoff. A zero cutoff keeps
+// everything, which is the configured behaviour.
+func (r *ExecutionHistoryRepository) PruneArchive(ctx context.Context, cutoff time.Time) (int64, error) {
+	return pruneArchive(ctx, r.db,
+		executionHistoryArchiveTableName, executionHistoryTimestampFieldName,
+		cutoff.UTC().Unix(), cutoff.IsZero(),
+	)
+}
+
 // rollover moves every row older than cutoff from the hot table into its archive twin, in
 // one transaction, and reports how many rows moved.
 //
@@ -111,42 +149,4 @@ func pruneArchive(
 		return 0, errors.Join(err, loginjector.NewTraceError())
 	}
 	return pruned, nil
-}
-
-// RolloverToArchive moves rate values older than cutoff into rate_values_archive.
-// A zero cutoff is a no-op.
-func (r *RateValueRepository) RolloverToArchive(ctx context.Context, cutoff time.Time) (int64, error) {
-	return rollover(ctx, r.db,
-		rateValueTableName, rateValueArchiveTableName,
-		rateValueTimestampFieldName, rateValueColumnList,
-		cutoff.UTC().Format(time.RFC3339), cutoff.IsZero(),
-	)
-}
-
-// PruneArchive deletes archived rate values older than cutoff. A zero cutoff keeps
-// everything, which is the configured behaviour.
-func (r *RateValueRepository) PruneArchive(ctx context.Context, cutoff time.Time) (int64, error) {
-	return pruneArchive(ctx, r.db,
-		rateValueArchiveTableName, rateValueTimestampFieldName,
-		cutoff.UTC().Format(time.RFC3339), cutoff.IsZero(),
-	)
-}
-
-// RolloverToArchive moves execution records older than cutoff into
-// execution_history_archive. A zero cutoff is a no-op.
-func (r *ExecutionHistoryRepository) RolloverToArchive(ctx context.Context, cutoff time.Time) (int64, error) {
-	return rollover(ctx, r.db,
-		executionHistoryTableName, executionHistoryArchiveTableName,
-		executionHistoryTimestampFieldName, executionHistoryColumnList,
-		cutoff.UTC().Unix(), cutoff.IsZero(),
-	)
-}
-
-// PruneArchive deletes archived execution records older than cutoff. A zero cutoff keeps
-// everything, which is the configured behaviour.
-func (r *ExecutionHistoryRepository) PruneArchive(ctx context.Context, cutoff time.Time) (int64, error) {
-	return pruneArchive(ctx, r.db,
-		executionHistoryArchiveTableName, executionHistoryTimestampFieldName,
-		cutoff.UTC().Unix(), cutoff.IsZero(),
-	)
 }

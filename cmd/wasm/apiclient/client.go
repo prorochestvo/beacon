@@ -17,9 +17,6 @@ type Client struct {
 	fetcher Fetcher
 }
 
-// New constructs a Client backed by the given Fetcher.
-func New(f Fetcher) *Client { return &Client{fetcher: f} }
-
 // ListSources fetches all configured rate sources with their latest execution status.
 func (c *Client) ListSources(ctx context.Context, limit int) ([]dto.SourceResponse, error) {
 	raw, err := c.fetcher.FetchJSON(ctx, "GET", sourcesURL(limit), nil, nil)
@@ -240,3 +237,6 @@ func (c *Client) MeSubscriptionUpdate(ctx context.Context, initData, id string, 
 func (c *Client) MeSubscriptionDelete(ctx context.Context, initData, id string) error {
 	return c.fetcher.FetchNoContent(ctx, "DELETE", meSubscriptionByIDURL(id), nil, meSubscriptionsHeaders(initData))
 }
+
+// New constructs a Client backed by the given Fetcher.
+func New(f Fetcher) *Client { return &Client{fetcher: f} }

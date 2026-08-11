@@ -11,21 +11,6 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
-// HistoryValuesLoader loads paginated rate_values for a bulk set of
-// (source, base, quote) keys, sorted newest first. Returning both counts from
-// one snapshot prevents a concurrent collector write from making them disagree
-// (see plans/015-history-group-by-provider.md, Risk 2).
-type HistoryValuesLoader interface {
-	// ObtainHistoryForPairsPaged returns paginated rate_values rows, the
-	// row-level total, and the grouped total of distinct (provider title,
-	// timestamp) tuples, all from one read-only transaction for a consistent
-	// snapshot. Use groupedTotal as the user-facing pagination total; rowTotal
-	// is for diagnostics.
-	ObtainHistoryForPairsPaged(
-		ctx context.Context, pairs []domain.SourcePairKey, limit, offset int64,
-	) (rows []domain.RateValue, rowTotal int64, groupedTotal int64, err error)
-}
-
 // MeHistoryResult is the result of ObtainMeHistory: one page of rate-collection
 // events for a canonical pair, sorted newest first.
 type MeHistoryResult struct {
@@ -310,4 +295,19 @@ func (s *Service) ObtainMeHistory(ctx context.Context, userID, pair, sourceTitle
 		Total: groupedTotal,
 		Items: items,
 	}, nil
+}
+
+// HistoryValuesLoader loads paginated rate_values for a bulk set of
+// (source, base, quote) keys, sorted newest first. Returning both counts from
+// one snapshot prevents a concurrent collector write from making them disagree
+// (see plans/015-history-group-by-provider.md, Risk 2).
+type HistoryValuesLoader interface {
+	// ObtainHistoryForPairsPaged returns paginated rate_values rows, the
+	// row-level total, and the grouped total of distinct (provider title,
+	// timestamp) tuples, all from one read-only transaction for a consistent
+	// snapshot. Use groupedTotal as the user-facing pagination total; rowTotal
+	// is for diagnostics.
+	ObtainHistoryForPairsPaged(
+		ctx context.Context, pairs []domain.SourcePairKey, limit, offset int64,
+	) (rows []domain.RateValue, rowTotal int64, groupedTotal int64, err error)
 }

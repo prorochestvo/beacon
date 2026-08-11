@@ -58,32 +58,6 @@ type RateCheckAgent struct {
 	logger                         io.Writer
 }
 
-type rateSourceRepository interface {
-	ObtainAllRateSources(context.Context) ([]domain.RateSource, error)
-}
-
-type rateValueRepository interface {
-	ObtainLastNRateValuesBySourceName(context.Context, string, int64) ([]domain.RateValue, error)
-}
-
-type rateUserSubscriptionRepository interface {
-	ObtainRateUserSubscriptionsBySource(context.Context, string) ([]domain.RateUserSubscription, error)
-	RetainRateUserSubscription(context.Context, *domain.RateUserSubscription) error
-}
-
-// rateCheckEventRepository is intentionally narrower than rateUserEventRepository
-// used by RateDispatchAgent — each type declares only what it needs.
-type rateCheckEventRepository interface {
-	RetainRateUserEvent(context.Context, *domain.RateUserEvent) error
-}
-
-// rateUserProfileRepository looks up the per-user timezone preference.
-// Implementations return (nil, internal.ErrNotFound) when no row exists — a
-// normal absence, not an error; the agent treats it as "use UTC".
-type rateUserProfileRepository interface {
-	ObtainRateUserProfileByUserID(context.Context, domain.UserType, string) (*domain.RateUserProfile, error)
-}
-
 // Run iterates every rate source, checks active subscriptions, and queues alert events
 // for any subscription whose notification condition is currently satisfied.
 //
@@ -295,6 +269,32 @@ var triggerOrder = map[domain.SubscriptionConditionType]int{
 	domain.ConditionTypeInterval: 1,
 	domain.ConditionTypeDaily:    2,
 	domain.ConditionTypeCron:     3,
+}
+
+type rateSourceRepository interface {
+	ObtainAllRateSources(context.Context) ([]domain.RateSource, error)
+}
+
+type rateValueRepository interface {
+	ObtainLastNRateValuesBySourceName(context.Context, string, int64) ([]domain.RateValue, error)
+}
+
+type rateUserSubscriptionRepository interface {
+	ObtainRateUserSubscriptionsBySource(context.Context, string) ([]domain.RateUserSubscription, error)
+	RetainRateUserSubscription(context.Context, *domain.RateUserSubscription) error
+}
+
+// rateCheckEventRepository is intentionally narrower than rateUserEventRepository
+// used by RateDispatchAgent — each type declares only what it needs.
+type rateCheckEventRepository interface {
+	RetainRateUserEvent(context.Context, *domain.RateUserEvent) error
+}
+
+// rateUserProfileRepository looks up the per-user timezone preference.
+// Implementations return (nil, internal.ErrNotFound) when no row exists — a
+// normal absence, not an error; the agent treats it as "use UTC".
+type rateUserProfileRepository interface {
+	ObtainRateUserProfileByUserID(context.Context, domain.UserType, string) (*domain.RateUserProfile, error)
 }
 
 // dedupBucket holds one alert and the collapsed trigger values per condition type

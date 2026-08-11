@@ -21,20 +21,6 @@ type httpFetcher struct {
 	client  *http.Client
 }
 
-// NewHTTPFetcher returns a Fetcher backed by net/http. baseURL is prepended to
-// every relative path passed to FetchJSON or FetchNoContent; a trailing slash
-// is trimmed so paths like "/api/sources" join cleanly. httpClient is optional —
-// when nil, a default with a 5 s timeout is used.
-func NewHTTPFetcher(baseURL string, httpClient *http.Client) Fetcher {
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 5 * time.Second}
-	}
-	return &httpFetcher{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		client:  httpClient,
-	}
-}
-
 func (f *httpFetcher) FetchJSON(ctx context.Context, method, url string, body any, headers map[string]string) ([]byte, error) {
 	req, err := f.newRequest(ctx, method, url, body)
 	if err != nil {
@@ -96,4 +82,18 @@ func (f *httpFetcher) newRequest(ctx context.Context, method, path string, body 
 		req.Header.Set("Content-Type", "application/json")
 	}
 	return req, nil
+}
+
+// NewHTTPFetcher returns a Fetcher backed by net/http. baseURL is prepended to
+// every relative path passed to FetchJSON or FetchNoContent; a trailing slash
+// is trimmed so paths like "/api/sources" join cleanly. httpClient is optional —
+// when nil, a default with a 5 s timeout is used.
+func NewHTTPFetcher(baseURL string, httpClient *http.Client) Fetcher {
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 5 * time.Second}
+	}
+	return &httpFetcher{
+		baseURL: strings.TrimRight(baseURL, "/"),
+		client:  httpClient,
+	}
 }

@@ -155,63 +155,6 @@ type Handler struct {
 	logger *log.Logger
 }
 
-type rateService interface {
-	ObtainLastNExecutionHistoryBySourceName(ctx context.Context, name string, limit int64) ([]domain.ExecutionHistory, error)
-	ObtainLatestExecutionHistoryBySources(ctx context.Context, names []string) (map[string]domain.ExecutionHistory, error)
-	ObtainLastSuccessNExecutionHistoryBySourceName(ctx context.Context, name string, limit int64) ([]domain.ExecutionHistory, error)
-	ObtainAllRateSources(ctx context.Context) ([]domain.RateSource, error)
-	UpdateRateSourceActive(ctx context.Context, name string, active bool) error
-	ObtainLastNRateValuesBySourceName(ctx context.Context, name string, limit int64) ([]domain.RateValue, error)
-	ObtainListOfLastRateUserEvent(ctx context.Context, limit int64) ([]domain.RateUserEvent, error)
-	ObtainFailedListOfRateUserEvent(ctx context.Context, offset, limit int64) ([]domain.RateUserEvent, error)
-	ObtainPendingRateUserEvents(ctx context.Context) ([]domain.RateUserEvent, error)
-	ObtainFailedRateUserEventsBySourceName(ctx context.Context, sourceName string, page, pageSize int64) ([]domain.RateUserEvent, error)
-	ObtainSubscriptionSummaryBySource(ctx context.Context, sourceName string) ([]domain.RateUserSubscriptionSummary, error)
-	ObtainStats(ctx context.Context) (domain.StatsResult, error)
-	ObtainRateUserSubscriptionsBySourcePaged(ctx context.Context, sourceName string, offset, limit int64) ([]domain.RateUserSubscriptionDetail, error)
-	ObtainDailyEventSummaryBySource(ctx context.Context, sourceName string, offset, limit int64) ([]domain.RateUserEventDailySummary, error)
-	ObtainLastNExecutionHistoryErrors(ctx context.Context, offset, limit int64) ([]domain.ExecutionHistory, error)
-}
-
-type meSubscriptionRepository interface {
-	ObtainRateUserSubscriptionsByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.RateUserSubscription, error)
-	ObtainRateUserSubscriptionByID(ctx context.Context, id string) (*domain.RateUserSubscription, error)
-	RetainRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
-	RemoveRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
-}
-
-type meSourceRepository interface {
-	ObtainRateSourceByName(ctx context.Context, name string) (*domain.RateSource, error)
-	ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error)
-}
-
-type meRateValueRepository interface {
-	ObtainLastNRateValuesBySourceName(ctx context.Context, name string, limit int64) ([]domain.RateValue, error)
-	ObtainLatestRateValuesBySourceNames(ctx context.Context, names []string) (map[string]domain.RateValue, error)
-}
-
-type meProfileRepository interface {
-	UpsertRateUserProfile(ctx context.Context, record *domain.RateUserProfile) error
-}
-
-// meChartService is the application service contract consumed by GetMeRatesChart,
-// GetMeRatesHistory, and GetPublicRatesChart, satisfied by *appchart.Service.
-// Only the period-aware variants are listed; the default-period wrappers
-// (ObtainMeChart, ObtainPublicChart) exist on the concrete type but not here.
-// healthCheckAgent is the contract for the health-check aggregator. CheckUp probes
-// all registered dependencies under a bounded timeout and returns a per-component
-// report; healthy is true iff every component reported nil. Nil is allowed (the
-// HealthCheck handler returns 503 when the agent is not wired).
-type healthCheckAgent interface {
-	CheckUp(ctx context.Context) (healthy bool, report map[string]string)
-}
-
-type meChartService interface {
-	ObtainMeChartForPeriod(ctx context.Context, userID string, periodDays int64) (*appchart.MeChart, error)
-	ObtainMeHistory(ctx context.Context, userID, pair, sourceTitle string, page, limit int64) (*appchart.MeHistoryResult, error)
-	ObtainPublicChartForPeriod(ctx context.Context, page, limit, periodDays int64) (*appchart.PublicChart, int64, error)
-}
-
 // Ping is the liveness probe: it always returns 200 and touches no dependency.
 // Registered at both GET /ping and GET /healthz (backward-compatibility alias).
 //
@@ -934,27 +877,6 @@ func (h *Handler) CreateMeSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// meSubscriptionOwnershipCheck loads the subscription by id, verifies the
-// caller owns it, and returns it. On not-found or ownership mismatch it writes
-// a 404 and returns nil. On repo error it writes 500 and returns nil.
-// Callers must return when this function returns nil.
-func (h *Handler) meSubscriptionOwnershipCheck(w http.ResponseWriter, r *http.Request, id, chatIDStr string) *domain.RateUserSubscription {
-	sub, err := h.meSubRepo.ObtainRateUserSubscriptionByID(r.Context(), id)
-	if err != nil {
-		h.internalError(w, fmt.Errorf("subscription lookup: %w", err))
-		return nil
-	}
-	if sub == nil || sub.UserID != chatIDStr {
-		// 404 (not 403) to avoid disclosing another user's subscription. "No
-		// such row" and "wrong owner" share the same PublicError message so the
-		// distinction is invisible externally.
-		pub := internal.NewPublicError("subscription not found")
-		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusNotFound)
-		return nil
-	}
-	return sub
-}
-
 // UpdateMeSubscription updates the condition fields of an existing subscription
 // owned by the authenticated caller.
 //
@@ -1372,6 +1294,27 @@ func (h *Handler) GetPublicRatesChart(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// meSubscriptionOwnershipCheck loads the subscription by id, verifies the
+// caller owns it, and returns it. On not-found or ownership mismatch it writes
+// a 404 and returns nil. On repo error it writes 500 and returns nil.
+// Callers must return when this function returns nil.
+func (h *Handler) meSubscriptionOwnershipCheck(w http.ResponseWriter, r *http.Request, id, chatIDStr string) *domain.RateUserSubscription {
+	sub, err := h.meSubRepo.ObtainRateUserSubscriptionByID(r.Context(), id)
+	if err != nil {
+		h.internalError(w, fmt.Errorf("subscription lookup: %w", err))
+		return nil
+	}
+	if sub == nil || sub.UserID != chatIDStr {
+		// 404 (not 403) to avoid disclosing another user's subscription. "No
+		// such row" and "wrong owner" share the same PublicError message so the
+		// distinction is invisible externally.
+		pub := internal.NewPublicError("subscription not found")
+		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusNotFound)
+		return nil
+	}
+	return sub
+}
+
 // internalError logs the underlying error with a trace and returns a generic 500 to the client.
 func (h *Handler) internalError(w http.ResponseWriter, err error) {
 	h.logger.Print(errors.Join(err, loginjector.NewTraceError()))
@@ -1385,6 +1328,82 @@ const (
 	meSubscriptionsMaxSize     = int64(50)
 )
 
+// parsePageMax caps the ?page= query parameter. Picked well above any
+// realistic dataset (1 << 30 ≈ 10^9 pages); paired with a 100-item limit it
+// keeps offset arithmetic strictly inside int64.
+const parsePageMax = int64(1) << 30
+
+const (
+	meHistoryDefaultLimit = int64(20)
+	meHistoryMaxLimit     = int64(100)
+)
+
+const (
+	publicChartDefaultLimit = int64(20)
+	publicChartMaxLimit     = int64(100)
+)
+
+// allowedChartPeriods is the whitelist of accepted period values for the chart
+// endpoints. Only these exact integers are valid; anything else returns 400.
+var allowedChartPeriods = []int64{7, 30, 90, 180, 360}
+
+type rateService interface {
+	ObtainLastNExecutionHistoryBySourceName(ctx context.Context, name string, limit int64) ([]domain.ExecutionHistory, error)
+	ObtainLatestExecutionHistoryBySources(ctx context.Context, names []string) (map[string]domain.ExecutionHistory, error)
+	ObtainLastSuccessNExecutionHistoryBySourceName(ctx context.Context, name string, limit int64) ([]domain.ExecutionHistory, error)
+	ObtainAllRateSources(ctx context.Context) ([]domain.RateSource, error)
+	UpdateRateSourceActive(ctx context.Context, name string, active bool) error
+	ObtainLastNRateValuesBySourceName(ctx context.Context, name string, limit int64) ([]domain.RateValue, error)
+	ObtainListOfLastRateUserEvent(ctx context.Context, limit int64) ([]domain.RateUserEvent, error)
+	ObtainFailedListOfRateUserEvent(ctx context.Context, offset, limit int64) ([]domain.RateUserEvent, error)
+	ObtainPendingRateUserEvents(ctx context.Context) ([]domain.RateUserEvent, error)
+	ObtainFailedRateUserEventsBySourceName(ctx context.Context, sourceName string, page, pageSize int64) ([]domain.RateUserEvent, error)
+	ObtainSubscriptionSummaryBySource(ctx context.Context, sourceName string) ([]domain.RateUserSubscriptionSummary, error)
+	ObtainStats(ctx context.Context) (domain.StatsResult, error)
+	ObtainRateUserSubscriptionsBySourcePaged(ctx context.Context, sourceName string, offset, limit int64) ([]domain.RateUserSubscriptionDetail, error)
+	ObtainDailyEventSummaryBySource(ctx context.Context, sourceName string, offset, limit int64) ([]domain.RateUserEventDailySummary, error)
+	ObtainLastNExecutionHistoryErrors(ctx context.Context, offset, limit int64) ([]domain.ExecutionHistory, error)
+}
+
+type meSubscriptionRepository interface {
+	ObtainRateUserSubscriptionsByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.RateUserSubscription, error)
+	ObtainRateUserSubscriptionByID(ctx context.Context, id string) (*domain.RateUserSubscription, error)
+	RetainRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
+	RemoveRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
+}
+
+type meSourceRepository interface {
+	ObtainRateSourceByName(ctx context.Context, name string) (*domain.RateSource, error)
+	ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error)
+}
+
+type meRateValueRepository interface {
+	ObtainLastNRateValuesBySourceName(ctx context.Context, name string, limit int64) ([]domain.RateValue, error)
+	ObtainLatestRateValuesBySourceNames(ctx context.Context, names []string) (map[string]domain.RateValue, error)
+}
+
+type meProfileRepository interface {
+	UpsertRateUserProfile(ctx context.Context, record *domain.RateUserProfile) error
+}
+
+// meChartService is the application service contract consumed by GetMeRatesChart,
+// GetMeRatesHistory, and GetPublicRatesChart, satisfied by *appchart.Service.
+// Only the period-aware variants are listed; the default-period wrappers
+// (ObtainMeChart, ObtainPublicChart) exist on the concrete type but not here.
+// healthCheckAgent is the contract for the health-check aggregator. CheckUp probes
+// all registered dependencies under a bounded timeout and returns a per-component
+// report; healthy is true iff every component reported nil. Nil is allowed (the
+// HealthCheck handler returns 503 when the agent is not wired).
+type healthCheckAgent interface {
+	CheckUp(ctx context.Context) (healthy bool, report map[string]string)
+}
+
+type meChartService interface {
+	ObtainMeChartForPeriod(ctx context.Context, userID string, periodDays int64) (*appchart.MeChart, error)
+	ObtainMeHistory(ctx context.Context, userID, pair, sourceTitle string, page, limit int64) (*appchart.MeHistoryResult, error)
+	ObtainPublicChartForPeriod(ctx context.Context, page, limit, periodDays int64) (*appchart.PublicChart, int64, error)
+}
+
 // writeJSON sets Content-Type and encodes v as JSON.
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -1395,11 +1414,6 @@ func writeJSON(w http.ResponseWriter, v any) {
 		))
 	}
 }
-
-// parsePageMax caps the ?page= query parameter. Picked well above any
-// realistic dataset (1 << 30 ≈ 10^9 pages); paired with a 100-item limit it
-// keeps offset arithmetic strictly inside int64.
-const parsePageMax = int64(1) << 30
 
 // parsePage parses a "page" query parameter, defaulting to 1 when missing,
 // malformed, or non-positive. Values above parsePageMax are clamped so the
@@ -1466,11 +1480,6 @@ func extractName(r *http.Request) (string, error) {
 	return v, nil
 }
 
-const (
-	meHistoryDefaultLimit = int64(20)
-	meHistoryMaxLimit     = int64(100)
-)
-
 // parseHistoryLimit parses the ?limit= query parameter for the history
 // endpoint, clamped to [1, meHistoryMaxLimit], default meHistoryDefaultLimit.
 // Returns an error only when the value is present but non-integer.
@@ -1490,11 +1499,6 @@ func parseHistoryLimit(raw string) (int64, error) {
 	}
 	return n, nil
 }
-
-const (
-	publicChartDefaultLimit = int64(20)
-	publicChartMaxLimit     = int64(100)
-)
 
 // parsePublicChartLimit parses the ?limit= query parameter for the public chart
 // endpoint. Default 20; values < 1 clamp to 20, values > 100 clamp to 100.
@@ -1516,10 +1520,6 @@ func parsePublicChartLimit(raw string) (int64, error) {
 	}
 	return n, nil
 }
-
-// allowedChartPeriods is the whitelist of accepted period values for the chart
-// endpoints. Only these exact integers are valid; anything else returns 400.
-var allowedChartPeriods = []int64{7, 30, 90, 180, 360}
 
 // parseChartPeriod parses the raw ?period= query value. An empty string returns
 // the default 7. Any non-empty value not in {7, 30, 90, 180, 360} returns a
