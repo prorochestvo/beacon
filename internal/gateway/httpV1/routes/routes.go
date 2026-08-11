@@ -49,6 +49,13 @@ const (
 	// (default 20, max 100), period (one of 7, 30, 90, 180, 360 days, default 7).
 	PublicRatesChart = "/api/public/rates/chart"
 
+	// MePrefix is the mount point of the authenticated family. Every route below
+	// whose path starts with it is registered on the mux behind the initData
+	// middleware, so a route is authenticated by where it lives rather than by a
+	// check copied into its handler. A new authenticated route must sit under this
+	// prefix, or it is not covered.
+	MePrefix = "/api/me/"
+
 	// MeSubscriptions returns the calling user's own subscriptions enriched with the
 	// latest rate value per source. Authentication is via Telegram WebApp initData HMAC.
 	MeSubscriptions = "/api/me/subscriptions"
