@@ -83,9 +83,3 @@ const (
 	// shorter than the agent sweep budget (3 s) to leave headroom for other inspectors.
 	openMeteoProbeTimeout = 2 * time.Second
 )
-
-// newOpenMeteoInspectorForTest creates an inspector backed by the given HTTP client
-// and probe URL. Use in tests to inject an httptest.Server without live network.
-func newOpenMeteoInspectorForTest(client *http.Client, probeURL string) *OpenMeteoInspector {
-	return &OpenMeteoInspector{client: client, probeURL: probeURL}
-}

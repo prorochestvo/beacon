@@ -308,3 +308,9 @@ func TestOpenMeteoInspector(t *testing.T) {
 		assert.Equal(t, "ok", report["sqlite"])
 	})
 }
+
+// newOpenMeteoInspectorForTest builds an inspector that probes probeURL through the
+// given client, aiming CheckUP at an httptest.Server instead of the live endpoint.
+func newOpenMeteoInspectorForTest(client *http.Client, probeURL string) *OpenMeteoInspector {
+	return &OpenMeteoInspector{client: client, probeURL: probeURL}
+}
