@@ -19,7 +19,7 @@ import (
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
-	"github.com/seilbekskindirov/beacon/internal/tools/tgwebapp"
+	"github.com/seilbekskindirov/beacon/internal/gateway/middleware"
 )
 
 // Config carries every dependency a Handler needs.
@@ -28,7 +28,7 @@ import (
 // dependencies sit four repository interfaces and two strings, so a transposed
 // pair compiles cleanly and misbehaves only in production.
 //
-// Everything is required except MeChartSvc, HealthAgent, BotToken and Logger.
+// Everything is required except MeChartSvc, HealthAgent and Logger.
 // The weather trio is required for a specific reason: it used to be attached
 // after construction by two setters, and every weather handler opened with a
 // nil check answering 503 — a per-request runtime failure standing in for a
@@ -36,10 +36,6 @@ import (
 type Config struct {
 	// RateService backs every public and admin rate endpoint.
 	RateService rateService
-	// BotToken is the Telegram bot token the initData HMAC is verified against.
-	// Empty is accepted: handlers outside /api/me never read it.
-	BotToken string
-
 	// MeSubRepo, MeSourceRepo, MeRateValueRepo and MeProfileRepo back the
 	// /api/me subscription, source, rate-value and profile endpoints.
 	MeSubRepo       meSubscriptionRepository
@@ -105,7 +101,6 @@ func NewHandler(cfg Config) (*Handler, error) {
 
 	return &Handler{
 		rateService:       cfg.RateService,
-		botToken:          cfg.BotToken,
 		meSubRepo:         cfg.MeSubRepo,
 		meSourceRepo:      cfg.MeSourceRepo,
 		meRateValueRepo:   cfg.MeRateValueRepo,
@@ -117,8 +112,6 @@ func NewHandler(cfg Config) (*Handler, error) {
 		meWeatherCityRepo: cfg.WeatherCityRepo,
 		weatherGeocoder:   cfg.WeatherGeocoder,
 		meWeatherObsRepo:  cfg.WeatherObsRepo,
-		validateInitData:  tgwebapp.ValidateInitData,
-		nowFn:             time.Now,
 		logger:            logger,
 	}, nil
 }
@@ -126,7 +119,6 @@ func NewHandler(cfg Config) (*Handler, error) {
 // Handler groups all v1 HTTP handlers and their repository dependencies.
 type Handler struct {
 	rateService
-	botToken        string
 	meSubRepo       meSubscriptionRepository
 	meSourceRepo    meSourceRepository
 	meRateValueRepo meRateValueRepository
@@ -141,14 +133,6 @@ type Handler struct {
 	meWeatherCityRepo meWeatherCityRepository
 	weatherGeocoder   weatherGeocoder
 	meWeatherObsRepo  meWeatherObsRepository
-
-	// validateInitData and nowFn are the two sanctioned test seams on this type
-	// (CLAUDE.md, Key Patterns). Both serve the same problem: initData carries an
-	// HMAC over a real bot token and an age checked against the wall clock, so a
-	// test that cannot substitute the verifier or stop the clock can only cover
-	// the auth path by holding a production token and sleeping.
-	validateInitData func(initData, botToken string, maxAge time.Duration, now time.Time) (int64, error)
-	nowFn            func() time.Time
 
 	// logger receives the detail behind a 500 (see internalError). Ordinary
 	// wiring from Config.Logger, defaulted to log.Default() by NewHandler.
@@ -616,11 +600,8 @@ func (h *Handler) ListExecutionErrors(w http.ResponseWriter, r *http.Request) {
 // fallback was removed because the HMAC-signed initData would otherwise land in
 // access logs and Referer headers for up to its 24h validity window.
 func (h *Handler) ListMeSubscriptions(w http.ResponseWriter, r *http.Request) {
-	initData := r.Header.Get("X-Telegram-Init-Data")
-
-	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	userID, ok := h.callerID(w, r)
+	if !ok {
 		return
 	}
 
@@ -754,10 +735,8 @@ func (h *Handler) ListMeSubscriptions(w http.ResponseWriter, r *http.Request) {
 // GET /api/me/subscriptions/raw
 // Auth: X-Telegram-Init-Data header (same HMAC scheme as ListMeSubscriptions).
 func (h *Handler) ListMeSubscriptionsRaw(w http.ResponseWriter, r *http.Request) {
-	initData := r.Header.Get("X-Telegram-Init-Data")
-	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	userID, ok := h.callerID(w, r)
+	if !ok {
 		return
 	}
 
@@ -822,10 +801,8 @@ func (h *Handler) ListMeSubscriptionsRaw(w http.ResponseWriter, r *http.Request)
 // 401 on missing/invalid initData.
 // 500 on persistence failure.
 func (h *Handler) CreateMeSubscription(w http.ResponseWriter, r *http.Request) {
-	initData := r.Header.Get("X-Telegram-Init-Data")
-	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	userID, ok := h.callerID(w, r)
+	if !ok {
 		return
 	}
 	chatIDStr := strconv.FormatInt(userID, 10)
@@ -890,10 +867,8 @@ func (h *Handler) CreateMeSubscription(w http.ResponseWriter, r *http.Request) {
 // 404 on missing subscription or cross-user access (same response — no existence disclosure).
 // 500 on persistence failure.
 func (h *Handler) UpdateMeSubscription(w http.ResponseWriter, r *http.Request) {
-	initData := r.Header.Get("X-Telegram-Init-Data")
-	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	userID, ok := h.callerID(w, r)
+	if !ok {
 		return
 	}
 	chatIDStr := strconv.FormatInt(userID, 10)
@@ -948,10 +923,8 @@ func (h *Handler) UpdateMeSubscription(w http.ResponseWriter, r *http.Request) {
 // user/source — events are FK'd to rate_sources, not to individual
 // subscription rows, so they are treated as historical truth and left intact.
 func (h *Handler) DeleteMeSubscription(w http.ResponseWriter, r *http.Request) {
-	initData := r.Header.Get("X-Telegram-Init-Data")
-	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	userID, ok := h.callerID(w, r)
+	if !ok {
 		return
 	}
 	chatIDStr := strconv.FormatInt(userID, 10)
@@ -987,10 +960,8 @@ func (h *Handler) DeleteMeSubscription(w http.ResponseWriter, r *http.Request) {
 // on persistence failure. The response body is empty on success — Mini App
 // callers fire-and-forget and discard it.
 func (h *Handler) UpsertMeProfile(w http.ResponseWriter, r *http.Request) {
-	initData := r.Header.Get("X-Telegram-Init-Data")
-	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	userID, ok := h.callerID(w, r)
+	if !ok {
 		return
 	}
 
@@ -1051,11 +1022,8 @@ func (h *Handler) UpsertMeProfile(w http.ResponseWriter, r *http.Request) {
 // Returns 400 with a PublicError body when period is present but not in the
 // whitelist {7, 30, 90, 180, 360}.
 func (h *Handler) GetMeRatesChart(w http.ResponseWriter, r *http.Request) {
-	initData := r.Header.Get("X-Telegram-Init-Data")
-
-	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	userID, ok := h.callerID(w, r)
+	if !ok {
 		return
 	}
 
@@ -1145,11 +1113,8 @@ func (h *Handler) GetMeRatesChart(w http.ResponseWriter, r *http.Request) {
 //   - 200 with an empty Items list when the user has no matching
 //     subscriptions (NOT 404).
 func (h *Handler) GetMeRatesHistory(w http.ResponseWriter, r *http.Request) {
-	initData := r.Header.Get("X-Telegram-Init-Data")
-
-	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	userID, ok := h.callerID(w, r)
+	if !ok {
 		return
 	}
 
@@ -1321,8 +1286,25 @@ func (h *Handler) internalError(w http.ResponseWriter, err error) {
 	http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 }
 
+// callerID returns the authenticated caller's Telegram id, or writes 401 and reports
+// false.
+//
+// Every /api/me route is mounted behind the initData middleware, which is what
+// authenticates; this only reads the result. A miss therefore means the route was
+// registered outside that mount — a wiring mistake, not a failed login — and the
+// only safe answer is to refuse. 401 rather than 500 because from the caller's side
+// the request is simply not authenticated, and a distinct status here would tell a
+// prober which routes are mounted where.
+func (h *Handler) callerID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	userID, ok := middleware.UserIDFrom(r.Context())
+	if !ok {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return 0, false
+	}
+	return userID, true
+}
+
 const (
-	meSubscriptionsMaxAge      = 24 * time.Hour
 	meSubscriptionsDefaultPage = int64(1)
 	meSubscriptionsDefaultSize = int64(10)
 	meSubscriptionsMaxSize     = int64(50)

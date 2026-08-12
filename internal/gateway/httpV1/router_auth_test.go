@@ -2,10 +2,16 @@ package httpV1_test
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -40,13 +46,17 @@ var meRoutes = []struct {
 	{http.MethodDelete, strings.Replace(routes.MeWeatherLocationByID, "{location_id}", "abc", 1)},
 }
 
+// authTestBotToken is the token the router under test verifies against, so
+// signedInitData can mint a credential the real validator accepts.
+const authTestBotToken = "12345:AAH-test-token"
+
 // newAuthTestRouter builds the real router with dependencies that refuse to be used.
 //
-// The booby-trapped stubs are the assertion, not a shortcut: every /api/me/* handler
-// authenticates before it touches a repository, so an unauthenticated request must
-// never reach one. A handler that skipped the check panics on its first repository
-// call instead of quietly returning data — which the subtests below catch and report
-// as the auth failure it is.
+// The booby-trapped stubs are the assertion, not a shortcut: the /api/me family is
+// mounted behind the initData middleware, so an unauthenticated request must never
+// reach a repository. A request that gets through anyway panics on its first
+// repository call instead of quietly returning data — which the subtests below catch
+// and report as the auth failure it is.
 func newAuthTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 	mux, err := httpV1.NewRouter(
@@ -55,7 +65,7 @@ func newAuthTestRouter(t *testing.T) http.Handler {
 		// dereference — the same trap the stubs set, without needing to restate the
 		// whole rate-service surface here.
 		nil,              // rate service
-		"test-bot-token", // botToken
+		authTestBotToken, // botToken
 		stubMeSubRepo{},
 		stubMeSourceRepo{},
 		stubMeRateValueRepo{},
@@ -136,6 +146,12 @@ func TestMeRouteTableIsComplete(t *testing.T) {
 	var missing []string
 	for _, match := range declared {
 		path := match[1]
+		// MePrefix is where the authenticated mux is mounted, not a route anyone can
+		// call. It has no handler and therefore no row here; every real route below
+		// it does.
+		if path == routes.MePrefix {
+			continue
+		}
 		concrete := regexp.MustCompile(`\{[a-z_]+\}`).ReplaceAllString(path, "abc")
 		if !covered[concrete] {
 			missing = append(missing, path)
@@ -219,4 +235,103 @@ type stubWeatherObsRepo struct{}
 
 func (stubWeatherObsRepo) ObtainLatestObservation(context.Context, string, string) (*domain.WeatherObservation, error) {
 	panic("reached the repository without authenticating")
+}
+
+// TestMeRoutesResolveThroughTheMount is the other half of the guard above: that one
+// proves an unauthenticated caller is refused, this one proves a legitimate caller
+// still arrives. Moving the family onto a sub-mux is a routing change as much as an
+// auth change, and a wildcard or a precedence rule broken by the mount would show up
+// as a 404 on a route that used to work — which the 401-only guard cannot see.
+func TestMeRoutesResolveThroughTheMount(t *testing.T) {
+	t.Parallel()
+
+	for _, route := range meRoutes {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			t.Parallel()
+			mux := newAuthTestRouter(t)
+
+			req := httptest.NewRequest(route.method, route.path, nil)
+			req.Header.Set("X-Telegram-Init-Data", signedInitData(t, authTestBotToken, 4242))
+			rec := httptest.NewRecorder()
+
+			// The stubs panic on first use, so a panic here means the request reached
+			// its handler — which is exactly what this test wants to establish. Not
+			// every handler touches a dependency before returning (a missing query
+			// parameter answers 400 first), so the status is checked when it does not.
+			reached := false
+			func() {
+				defer func() {
+					if recover() != nil {
+						reached = true
+					}
+				}()
+				mux.ServeHTTP(rec, req)
+			}()
+
+			if reached {
+				return
+			}
+			require.NotEqual(t, http.StatusNotFound, rec.Code,
+				"%s %s did not resolve through the /api/me/ mount", route.method, route.path)
+			require.NotEqual(t, http.StatusUnauthorized, rec.Code,
+				"%s %s rejected a validly signed credential", route.method, route.path)
+		})
+	}
+}
+
+func TestMeMountKeepsMethodMatching(t *testing.T) {
+	t.Parallel()
+
+	// A sub-mux mounted on a pattern that carries no method could plausibly swallow
+	// method matching and answer 404 for a wrong verb. It must stay 405: the route
+	// exists, the verb does not.
+	mux := newAuthTestRouter(t)
+
+	req := httptest.NewRequest(http.MethodPut, routes.MeSubscriptions, nil)
+	req.Header.Set("X-Telegram-Init-Data", signedInitData(t, authTestBotToken, 4242))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusMethodNotAllowed, rec.Code,
+		"a wrong verb inside the family must be 405, not 404")
+}
+
+// signedInitData produces a correctly-signed initData string for userID. It mirrors
+// the Telegram WebApp signing algorithm; tgwebapp's own test has the same helper, and
+// duplicating twenty lines is cheaper than a shared test-fixture package.
+func signedInitData(t *testing.T, botToken string, userID int64) string {
+	t.Helper()
+
+	fields := map[string]string{
+		"user":      fmt.Sprintf(`{"id":%d,"first_name":"Test"}`, userID),
+		"auth_date": fmt.Sprintf("%d", time.Now().Unix()),
+	}
+
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var sb strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(k)
+		sb.WriteByte('=')
+		sb.WriteString(fields[k])
+	}
+
+	secretMac := hmac.New(sha256.New, []byte("WebAppData"))
+	secretMac.Write([]byte(botToken))
+	dataMac := hmac.New(sha256.New, secretMac.Sum(nil))
+	dataMac.Write([]byte(sb.String()))
+
+	vals := url.Values{}
+	for k, v := range fields {
+		vals.Set(k, v)
+	}
+	vals.Set("hash", hex.EncodeToString(dataMac.Sum(nil)))
+	return vals.Encode()
 }

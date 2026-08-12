@@ -12,7 +12,13 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/dto"
 	v1 "github.com/seilbekskindirov/beacon/internal/gateway/httpV1/handlers"
 	"github.com/seilbekskindirov/beacon/internal/gateway/httpV1/routes"
+	"github.com/seilbekskindirov/beacon/internal/gateway/middleware"
 )
+
+// meCredentialMaxAge is how old a signed initData payload may be. Twenty-four hours
+// matches the window Telegram itself treats a WebApp launch as current, and it is
+// the value the handlers enforced individually before the check moved to one place.
+const meCredentialMaxAge = 24 * time.Hour
 
 // WeatherGatewayDeps groups the weather-specific dependencies threaded into the
 // router so the constructor signature does not grow one positional parameter per
@@ -98,7 +104,6 @@ func NewRouter(
 ) (*http.ServeMux, error) {
 	h, err := v1.NewHandler(v1.Config{
 		RateService:     srvRateRestApi,
-		BotToken:        botToken,
 		MeSubRepo:       subRepo,
 		MeSourceRepo:    sourceRepo,
 		MeRateValueRepo: rateValueRepo,
@@ -115,17 +120,40 @@ func NewRouter(
 		return nil, err
 	}
 
+	// Every authenticated route is registered on meMux, which is mounted once behind
+	// the initData middleware below. A route's authentication therefore follows from
+	// where it is registered rather than from remembering to check inside it — the
+	// omission this arrangement exists to make impossible.
+	meMux := http.NewServeMux()
+
 	// MeSubscriptionsRaw must be registered before MeSubscriptions so Go 1.22+
 	// ServeMux longest-path matching selects the more specific route.
+	meMux.HandleFunc("GET "+routes.MeSubscriptionsRaw, h.ListMeSubscriptionsRaw)
+	meMux.HandleFunc("GET "+routes.MeSubscriptions, h.ListMeSubscriptions)
+	meMux.HandleFunc("POST "+routes.MeSubscriptions, h.CreateMeSubscription)
+	meMux.HandleFunc("PATCH "+routes.MeSubscriptionByID, h.UpdateMeSubscription)
+	meMux.HandleFunc("DELETE "+routes.MeSubscriptionByID, h.DeleteMeSubscription)
+	meMux.HandleFunc("GET "+routes.MeRatesChart, h.GetMeRatesChart)
+	meMux.HandleFunc("GET "+routes.MeRatesHistory, h.GetMeRatesHistory)
+	meMux.HandleFunc("POST "+routes.MeProfile, h.UpsertMeProfile)
+
+	// MeWeatherCitiesSearch must be registered before MeWeatherCities so that
+	// Go 1.22+ ServeMux longest-path matching selects the correct handler.
+	meMux.HandleFunc("GET "+routes.MeWeatherCurrent, h.GetMeWeatherCurrent)
+	meMux.HandleFunc("GET "+routes.MeWeatherCitiesSearch, h.SearchWeatherCities)
+	meMux.HandleFunc("GET "+routes.MeWeatherCities, h.ListMeWeatherCities)
+	meMux.HandleFunc("POST "+routes.MeWeatherCities, h.CreateMeWeatherCity)
+	meMux.HandleFunc("DELETE "+routes.MeWeatherCityByID, h.DeleteMeWeatherCity)
+	meMux.HandleFunc("DELETE "+routes.MeWeatherLocationByID, h.DeleteMeWeatherLocation)
+
+	// The pattern carries no method, so method matching happens inside meMux and a
+	// wrong verb still answers 405 rather than 404.
+	mux.Handle(routes.MePrefix, middleware.TelegramInitData(middleware.TelegramInitDataConfig{
+		BotToken: botToken,
+		MaxAge:   meCredentialMaxAge,
+	})(meMux))
+
 	mux.HandleFunc("GET "+routes.PublicRatesChart, h.GetPublicRatesChart)
-	mux.HandleFunc("GET "+routes.MeSubscriptionsRaw, h.ListMeSubscriptionsRaw)
-	mux.HandleFunc("GET "+routes.MeSubscriptions, h.ListMeSubscriptions)
-	mux.HandleFunc("POST "+routes.MeSubscriptions, h.CreateMeSubscription)
-	mux.HandleFunc("PATCH "+routes.MeSubscriptionByID, h.UpdateMeSubscription)
-	mux.HandleFunc("DELETE "+routes.MeSubscriptionByID, h.DeleteMeSubscription)
-	mux.HandleFunc("GET "+routes.MeRatesChart, h.GetMeRatesChart)
-	mux.HandleFunc("GET "+routes.MeRatesHistory, h.GetMeRatesHistory)
-	mux.HandleFunc("POST "+routes.MeProfile, h.UpsertMeProfile)
 
 	mux.HandleFunc("GET "+routes.Sources, h.ListSources)
 	mux.HandleFunc("PATCH "+routes.SourceToggleActive, h.ToggleSourceActive)
@@ -146,15 +174,6 @@ func NewRouter(
 	// ServeMux longest-prefix matching selects the correct handler.
 	mux.HandleFunc("GET "+routes.NotificationsFailed, h.ListFailedNotifications)
 	mux.HandleFunc("GET "+routes.Notifications, h.ListNotifications)
-
-	// MeWeatherCitiesSearch must be registered before MeWeatherCities so that
-	// Go 1.22+ ServeMux longest-path matching selects the correct handler.
-	mux.HandleFunc("GET "+routes.MeWeatherCurrent, h.GetMeWeatherCurrent)
-	mux.HandleFunc("GET "+routes.MeWeatherCitiesSearch, h.SearchWeatherCities)
-	mux.HandleFunc("GET "+routes.MeWeatherCities, h.ListMeWeatherCities)
-	mux.HandleFunc("POST "+routes.MeWeatherCities, h.CreateMeWeatherCity)
-	mux.HandleFunc("DELETE "+routes.MeWeatherCityByID, h.DeleteMeWeatherCity)
-	mux.HandleFunc("DELETE "+routes.MeWeatherLocationByID, h.DeleteMeWeatherLocation)
 
 	// /ping is the liveness probe; /healthz is kept as a backward-compatible alias.
 	mux.HandleFunc("GET "+routes.Ping, h.Ping)
