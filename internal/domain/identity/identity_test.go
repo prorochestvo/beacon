@@ -55,9 +55,10 @@ func TestNew(t *testing.T) {
 		for _, k := range allKinds {
 			prefix := regexp.QuoteMeta(string(k))
 			// UUIDv4 is 16 bytes -> exactly 32 uppercase hex chars when formatted with %X.
-			// \d+ for the nanosecond field allows "0" (legal at exact-second boundaries);
-			// uniqueness is guaranteed by the UUID segment, not the timestamp.
-			pattern := regexp.MustCompile(`^` + prefix + `\d{14}Z\d+T[0-9A-F]{32}$`)
+			// The nanosecond field is exactly 9 digits, zero-padded, so that identifiers
+			// sort chronologically as text; uniqueness is guaranteed by the UUID segment,
+			// not the timestamp.
+			pattern := regexp.MustCompile(`^` + prefix + `\d{14}Z\d{9}T[0-9A-F]{32}$`)
 			id := identity.New(k)
 			assert.True(t, pattern.MatchString(id),
 				"ID %q for kind %q does not match expected format", id, k)
