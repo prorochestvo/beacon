@@ -241,6 +241,9 @@ func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsBySourcePage
 		}
 		items = append(items, item)
 	}
+	if iterErr := rows.Err(); iterErr != nil {
+		return nil, errors.Join(iterErr, loginjector.NewTraceError())
+	}
 
 	return items, nil
 }
@@ -326,6 +329,9 @@ GROUP BY s.%[2]s, s.%[3]s;`,
 			}
 		}
 		result = append(result, s)
+	}
+	if iterErr := rows.Err(); iterErr != nil {
+		return nil, errors.Join(iterErr, loginjector.NewTraceError())
 	}
 
 	return result, nil
@@ -474,6 +480,11 @@ func rateUserSubscriptionQueryContext(tx *sql.Tx, ctx context.Context, condition
 		}
 
 		items = append(items, item)
+	}
+
+	if err = rows.Err(); err != nil {
+		err = errors.Join(err, loginjector.NewTraceError())
+		return nil, err
 	}
 
 	return

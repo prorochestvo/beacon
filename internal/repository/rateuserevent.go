@@ -133,6 +133,9 @@ func (r *RateUserEventRepository) ObtainLastNRateUserEvents(ctx context.Context,
 
 		items = append(items, item)
 	}
+	if iterErr := dbRows.Err(); iterErr != nil {
+		return nil, errors.Join(iterErr, loginjector.NewTraceError())
+	}
 
 	return items, nil
 }
@@ -208,6 +211,9 @@ func (r *RateUserEventRepository) ObtainRateUserEventsBySourceName(ctx context.C
 		}
 		items = append(items, item)
 	}
+	if iterErr := rows.Err(); iterErr != nil {
+		return nil, errors.Join(iterErr, loginjector.NewTraceError())
+	}
 	return items, nil
 }
 
@@ -250,6 +256,9 @@ func (r *RateUserEventRepository) ObtainDailyEventSummaryBySource(ctx context.Co
 			item.Date = *date
 		}
 		items = append(items, item)
+	}
+	if iterErr := rows.Err(); iterErr != nil {
+		return nil, errors.Join(iterErr, loginjector.NewTraceError())
 	}
 
 	return items, nil
@@ -586,6 +595,11 @@ func rateUserEventQueryContext(tx *sql.Tx, ctx context.Context, condition string
 		}
 
 		items = append(items, item)
+	}
+
+	if err = rows.Err(); err != nil {
+		err = errors.Join(err, loginjector.NewTraceError())
+		return nil, err
 	}
 
 	return

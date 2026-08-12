@@ -284,6 +284,9 @@ func (r *WeatherUserCityRepository) ObtainDistinctWeatherLocations(ctx context.C
 		}
 		items = append(items, item)
 	}
+	if iterErr := rows.Err(); iterErr != nil {
+		return nil, errors.Join(iterErr, loginjector.NewTraceError())
+	}
 	if items == nil {
 		items = []domain.WeatherUserCity{}
 	}
@@ -443,6 +446,9 @@ func weatherUserCityQueryContext(tx *sql.Tx, ctx context.Context, condition stri
 			return nil, scanErr
 		}
 		items = append(items, item)
+	}
+	if iterErr := rows.Err(); iterErr != nil {
+		return nil, errors.Join(iterErr, loginjector.NewTraceError())
 	}
 	if items == nil {
 		items = []domain.WeatherUserCity{}
