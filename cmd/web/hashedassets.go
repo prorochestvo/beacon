@@ -74,12 +74,21 @@ type htmlCache struct {
 
 // serve writes the cached HTML to w. It returns false without writing if the
 // request method is neither GET nor HEAD, so the caller can fall through to the
-// FileServer. Sets Content-Type: text/html; charset=utf-8.
+// FileServer. Sets Content-Type: text/html; charset=utf-8 and Cache-Control: no-cache.
+//
+// The no-cache directive is what makes the "immutable" policy on the hashed asset
+// URLs safe: this HTML is the only document that names them, so a client that
+// reuses it without revalidating stays pinned to the previous build for the whole
+// seven-day asset lifetime. Without an explicit directive the response falls to
+// heuristic caching off Last-Modified, whose window grows with process uptime.
+// no-cache still permits storing, so ServeContent answers If-Modified-Since with a
+// 304 and the body is not retransmitted.
 func (c *htmlCache) serve(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return false
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeContent(w, r, c.filename, c.modTime, bytes.NewReader(c.body))
 	return true
 }
