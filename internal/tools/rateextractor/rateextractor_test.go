@@ -245,7 +245,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger)
 		require.NoError(t, err)
 
 		require.NoError(t, ext.Run(t.Context(), source))
@@ -274,7 +274,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger)
 		require.NoError(t, err)
 
 		require.NoError(t, ext.Run(t.Context(), source))
@@ -297,7 +297,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			Rules: []domain.RateSourceRule{{Method: domain.MethodStoreToRate}},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger)
 		require.NoError(t, err)
 
 		require.NoError(t, ext.Run(t.Context(), source))
@@ -323,7 +323,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger)
 		require.NoError(t, err)
 
 		require.NoError(t, ext.Run(t.Context(), source))
@@ -340,7 +340,7 @@ func TestRateExtractor_Run(t *testing.T) {
 
 		source := &domain.RateSource{Name: "fail_src", URL: srv.URL}
 
-		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, srv.Client(), logger)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -350,6 +350,9 @@ func TestRateExtractor_Run(t *testing.T) {
 
 		source := &domain.RateSource{Name: "bad_url_src", URL: "http://127.0.0.1:1"} // nothing listening
 
+		// No httptest server here to take a client from, and a refused dial pools no
+		// connection, so the shared-transport concern does not arise. The short timeout
+		// keeps the case quick if the dial ever hangs instead of being refused.
 		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, &http.Client{Timeout: 500 * time.Millisecond}, logger)
 		require.NoError(t, err)
 
@@ -371,7 +374,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, srv.Client(), logger)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -392,7 +395,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, srv.Client(), logger)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -413,7 +416,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, srv.Client(), logger)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -434,7 +437,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, srv.Client(), logger)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -455,7 +458,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, srv.Client(), logger)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -480,7 +483,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger)
 		require.NoError(t, err)
 
 		require.NoError(t, ext.Run(t.Context(), source))
@@ -505,7 +508,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger)
 		require.NoError(t, err)
 
 		require.NoError(t, ext.Run(t.Context(), source))
@@ -530,7 +533,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -554,7 +557,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -579,7 +582,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger)
 		require.NoError(t, err)
 
 		require.NoError(t, ext.Run(t.Context(), source))
@@ -608,7 +611,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			Rules: []domain.RateSourceRule{{Method: domain.MethodStoreToRate}},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger)
 		require.NoError(t, err)
 		require.NoError(t, ext.Run(t.Context(), source))
 
@@ -632,7 +635,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			Rules: []domain.RateSourceRule{{Method: domain.MethodStoreToRate}},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger)
 		require.NoError(t, err)
 		require.NoError(t, ext.Run(t.Context(), source))
 
@@ -661,7 +664,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger)
 		require.NoError(t, err)
 		require.NoError(t, ext.Run(t.Context(), source))
 
@@ -691,7 +694,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger)
 		require.NoError(t, err)
 		require.NoError(t, ext.Run(t.Context(), source))
 
@@ -719,7 +722,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -735,7 +738,7 @@ func TestRateExtractor_Run(t *testing.T) {
 
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
-			&http.Client{Timeout: 5 * time.Second},
+			srv.Client(),
 			logger,
 		)
 		require.NoError(t, err)
@@ -802,9 +805,16 @@ func TestRateExtractor_Run(t *testing.T) {
 		}))
 		defer srv.Close()
 
+		// The server's client, for a transport of its own, carrying the deadline this
+		// subtest is about rather than a fail-fast bound: clientTimeout has to expire
+		// before the handler's 200ms, which neither srv.Client()'s zero (a minute, via
+		// defaultFetchTimeout) nor timedClient's five seconds would do.
+		client := srv.Client()
+		client.Timeout = clientTimeout
+
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
-			&http.Client{Timeout: clientTimeout},
+			client,
 			logger,
 		)
 		require.NoError(t, err)
@@ -845,7 +855,7 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
-			&http.Client{Timeout: 5 * time.Second},
+			srv.Client(),
 			logger,
 		)
 		require.NoError(t, err)
@@ -868,7 +878,7 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
-			&http.Client{Timeout: 5 * time.Second},
+			srv.Client(),
 			logger,
 		)
 		require.NoError(t, err)
@@ -886,6 +896,8 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 	t.Run("invalid url", func(t *testing.T) {
 		t.Parallel()
 
+		// No server, and the URL fails to parse before a request is ever built, so this
+		// client never reaches a transport at all.
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
 			&http.Client{Timeout: 5 * time.Second},
@@ -908,7 +920,7 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
-			&http.Client{Timeout: 5 * time.Second},
+			srv.Client(),
 			logger,
 		)
 		require.NoError(t, err)
@@ -932,7 +944,7 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
-			&http.Client{Timeout: 5 * time.Second},
+			srv.Client(),
 			logger,
 		)
 		require.NoError(t, err)
@@ -967,7 +979,7 @@ func TestRateExtractor_failFast(t *testing.T) {
 		logger := threadsafe.NewBuffer(nil)
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
-			&http.Client{Timeout: 5 * time.Second},
+			srv.Client(),
 			logger,
 		)
 		require.NoError(t, err)
@@ -1001,7 +1013,7 @@ func TestRateExtractor_failFast(t *testing.T) {
 		rateRepo := &mockRateValueRepository{}
 		ext, err := NewRateExtractorWithHTTPClient(
 			rateRepo,
-			&http.Client{Timeout: 5 * time.Second},
+			srv.Client(),
 			logger,
 		)
 		require.NoError(t, err)
@@ -1040,7 +1052,11 @@ func TestRateExtractor_failFast(t *testing.T) {
 		rateRepo := &mockRateValueRepository{}
 		ext, err := NewRateExtractorWithHTTPClient(
 			rateRepo,
-			&http.Client{Timeout: 5 * time.Second},
+			// One extractor holds one client but this subtest runs two servers. The
+			// client of a plain-HTTP httptest server dials whatever address it is given,
+			// so either server's client reaches both; what matters is that the transport
+			// is not the process-wide default shared with every other subtest.
+			srv500.Client(),
 			logger,
 		)
 		require.NoError(t, err)
@@ -1062,6 +1078,9 @@ func TestRateExtractor_failFast(t *testing.T) {
 		logger := threadsafe.NewBuffer(nil)
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
+			// No server to take a client from, and this bound is load-bearing: the
+			// elapsed assertion below is measured against it, so the short-circuit is
+			// only proven by returning well inside the transport timeout.
 			&http.Client{Timeout: 500 * time.Millisecond},
 			logger,
 		)
