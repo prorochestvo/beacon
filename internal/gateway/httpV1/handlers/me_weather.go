@@ -27,9 +27,13 @@ import (
 // 400 when q is absent or empty.
 // 401 on auth failure.
 func (h *Handler) SearchWeatherCities(w http.ResponseWriter, r *http.Request) {
-	initData := r.Header.Get("X-Telegram-Init-Data")
-	if _, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn()); err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	// This is the one /api/me handler with no use for the caller's id, and it asks
+	// for it anyway. Every other handler is protected twice — by the mount, and by
+	// failing closed when the id is absent — and skipping the second here would make
+	// this the only route that serves anyone if it were ever registered outside the
+	// authenticated mux. Verified: removing the middleware from the mount fails this
+	// route's guard cases and no others.
+	if _, ok := h.callerID(w, r); !ok {
 		return
 	}
 
@@ -61,10 +65,8 @@ func (h *Handler) SearchWeatherCities(w http.ResponseWriter, r *http.Request) {
 // GET /api/me/weather/cities
 // Auth: X-Telegram-Init-Data header only.
 func (h *Handler) ListMeWeatherCities(w http.ResponseWriter, r *http.Request) {
-	initData := r.Header.Get("X-Telegram-Init-Data")
-	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	userID, ok := h.callerID(w, r)
+	if !ok {
 		return
 	}
 	tgUserID := strconv.FormatInt(userID, 10)
@@ -108,10 +110,8 @@ func (h *Handler) ListMeWeatherCities(w http.ResponseWriter, r *http.Request) {
 // 401 on auth failure.
 // 500 on persistence failure.
 func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
-	initData := r.Header.Get("X-Telegram-Init-Data")
-	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	userID, ok := h.callerID(w, r)
+	if !ok {
 		return
 	}
 	tgUserID := strconv.FormatInt(userID, 10)
@@ -293,10 +293,8 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 // 404 on missing city or cross-user access (same response — no existence disclosure).
 // 500 on persistence failure.
 func (h *Handler) DeleteMeWeatherCity(w http.ResponseWriter, r *http.Request) {
-	initData := r.Header.Get("X-Telegram-Init-Data")
-	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	userID, ok := h.callerID(w, r)
+	if !ok {
 		return
 	}
 	tgUserID := strconv.FormatInt(userID, 10)
@@ -345,10 +343,8 @@ func (h *Handler) DeleteMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 // no existence disclosure): the repository's atomic delete reports zero rows affected.
 // 500 on persistence failure.
 func (h *Handler) DeleteMeWeatherLocation(w http.ResponseWriter, r *http.Request) {
-	initData := r.Header.Get("X-Telegram-Init-Data")
-	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	userID, ok := h.callerID(w, r)
+	if !ok {
 		return
 	}
 	tgUserID := strconv.FormatInt(userID, 10)
@@ -397,10 +393,8 @@ func (h *Handler) DeleteMeWeatherLocation(w http.ResponseWriter, r *http.Request
 // 401 on auth failure.
 // 500 on unexpected repo errors.
 func (h *Handler) GetMeWeatherCurrent(w http.ResponseWriter, r *http.Request) {
-	initData := r.Header.Get("X-Telegram-Init-Data")
-	userID, err := h.validateInitData(initData, h.botToken, meSubscriptionsMaxAge, h.nowFn())
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	userID, ok := h.callerID(w, r)
+	if !ok {
 		return
 	}
 	tgUserID := strconv.FormatInt(userID, 10)

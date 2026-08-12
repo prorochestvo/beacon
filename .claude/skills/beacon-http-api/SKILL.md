@@ -16,6 +16,28 @@ are written down here.
   query string (a signed payload in the URL leaks into access logs and `Referer`). The HMAC
   algorithm is in CLAUDE.md's Key Patterns; implementation in
   `internal/tools/tgwebapp/initdata.go`.
+
+  **How it is enforced.** `NewRouter` registers the family on a private `ServeMux` and mounts
+  it once at `routes.MePrefix` behind `middleware.TelegramInitData`. A route is authenticated
+  because of where it is registered — the check used to be four lines copy-pasted into every
+  handler, so a new handler that forgot them served another user's data with no error and no
+  log line (#36). Handlers call `h.callerID`, which reads `middleware.UserIDFrom` and answers
+  401 when the id is absent; that is a backstop against a mis-registered route, not a second
+  authentication. `SearchWeatherCities` calls it despite having no use for the id, so no
+  route is left without the backstop.
+
+  `TelegramInitDataConfig.Validate` and `.Now` are the only sanctioned test seams in the
+  project: initData carries an HMAC over a real bot token and an age measured against the
+  wall clock, so a test that can substitute neither can only exercise the auth path by
+  holding a production token and sleeping. Nothing on `Handler` is a seam — every dependency
+  arrives through `handlers.Config`.
+
+  Two tests divide the work, and both were verified by planting the defect. The 56-case
+  `TestEveryMeRouteRejectsUnauthenticated` proves refusal; because the handlers also fail
+  closed it stays green even if the middleware is unmounted, so it cannot prove the mount is
+  live. `TestMeRoutesResolveThroughTheMount` does that — it signs a real credential and
+  requires every route to reach its handler, and all fourteen cases fail when the mount loses
+  its middleware.
 - **Ownership → 404, not 403** — reading or mutating a `/api/me/*` resource (subscription,
   weather city) owned by another user returns **404**, never 403, to avoid existence
   disclosure. Deleting a subscription does **not** cascade-delete its `rate_user_events`

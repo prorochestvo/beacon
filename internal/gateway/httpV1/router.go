@@ -104,7 +104,6 @@ func NewRouter(
 ) (*http.ServeMux, error) {
 	h, err := v1.NewHandler(v1.Config{
 		RateService:     srvRateRestApi,
-		BotToken:        botToken,
 		MeSubRepo:       subRepo,
 		MeSourceRepo:    sourceRepo,
 		MeRateValueRepo: rateValueRepo,

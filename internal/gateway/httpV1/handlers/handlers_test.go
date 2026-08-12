@@ -18,6 +18,7 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/domain/ratepair"
 	"github.com/seilbekskindirov/beacon/internal/dto"
+	"github.com/seilbekskindirov/beacon/internal/gateway/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1153,18 +1154,6 @@ func (m *mockMeRateValueRepo) ObtainLastNRateValuesBySourceName(_ context.Contex
 	return m.rates[name], nil
 }
 
-// alwaysValidateInitData is a fake validator that always succeeds and returns the given userID.
-func alwaysValidateInitData(userID int64) func(string, string, time.Duration, time.Time) (int64, error) {
-	return func(_, _ string, _ time.Duration, _ time.Time) (int64, error) {
-		return userID, nil
-	}
-}
-
-// alwaysRejectInitData is a fake validator that always fails.
-func alwaysRejectInitData(initData, _ string, _ time.Duration, _ time.Time) (int64, error) {
-	return 0, errors.New("invalid")
-}
-
 func TestHandler_ListMeSubscriptions(t *testing.T) {
 	t.Parallel()
 
@@ -1181,59 +1170,6 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 		SourceName: "src_b", ConditionType: "interval", ConditionValue: "1h",
 	}
 	srcA := &domain.RateSource{Name: "src_a", Title: "Source A", BaseCurrency: "USD", QuoteCurrency: "KZT"}
-
-	t.Run("rejects missing initData with 401", func(t *testing.T) {
-		t.Parallel()
-
-		h := newTestHandler(t, Config{})
-		h.validateInitData = alwaysRejectInitData
-
-		rr := httptest.NewRecorder()
-		h.ListMeSubscriptions(rr, httptest.NewRequest(http.MethodGet, "/api/me/subscriptions", nil))
-
-		require.Equal(t, http.StatusUnauthorized, rr.Code)
-		require.Contains(t, rr.Body.String(), "unauthorized")
-	})
-
-	t.Run("rejects bad hash with 401", func(t *testing.T) {
-		t.Parallel()
-
-		h := newTestHandler(t, Config{})
-		h.validateInitData = alwaysRejectInitData
-
-		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions", nil)
-		req.Header.Set("X-Telegram-Init-Data", "hash=badvalue&auth_date=1234")
-		rr := httptest.NewRecorder()
-		h.ListMeSubscriptions(rr, req)
-
-		require.Equal(t, http.StatusUnauthorized, rr.Code)
-	})
-
-	t.Run("?initData= query string is not read (header-only auth)", func(t *testing.T) {
-		t.Parallel()
-
-		h := newTestHandler(t, Config{})
-		// Capture the initData the handler hands to the validator; with no
-		// header set, the handler must pass an empty string (NOT the URL value)
-		// so the HMAC token never leaks into access logs or Referer headers.
-		var seen string
-		h.validateInitData = func(initData, _ string, _ time.Duration, _ time.Time) (int64, error) {
-			seen = initData
-			if initData == "" {
-				return 0, errors.New("missing initData")
-			}
-			return callerUserID, nil
-		}
-
-		req := httptest.NewRequest(http.MethodGet,
-			"/api/me/subscriptions?initData=should_be_ignored", nil)
-		rr := httptest.NewRecorder()
-		h.ListMeSubscriptions(rr, req)
-
-		require.Equal(t, "", seen, "handler must not source initData from the URL query")
-		require.Equal(t, http.StatusUnauthorized, rr.Code)
-		require.Contains(t, rr.Body.String(), "unauthorized")
-	})
 
 	t.Run("happy path returns only caller's subscriptions", func(t *testing.T) {
 		t.Parallel()
@@ -1258,12 +1194,10 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 			MeSourceRepo:    sourceRepo,
 			MeRateValueRepo: rateRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.ListMeSubscriptions(rr, req)
+		h.ListMeSubscriptions(rr, withCaller(req, callerUserID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 
@@ -1301,12 +1235,10 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 			MeSourceRepo:    sourceRepo,
 			MeRateValueRepo: rateRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions?q=euro", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.ListMeSubscriptions(rr, req)
+		h.ListMeSubscriptions(rr, withCaller(req, callerUserID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 
@@ -1339,12 +1271,10 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 			MeSourceRepo:    sourceRepo,
 			MeRateValueRepo: rateRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions?page=2&page_size=10", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.ListMeSubscriptions(rr, req)
+		h.ListMeSubscriptions(rr, withCaller(req, callerUserID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 
@@ -1362,35 +1292,17 @@ func TestHandler_UpsertMeProfile(t *testing.T) {
 
 	const callerUserID = int64(424242)
 
-	t.Run("401 when initData missing", func(t *testing.T) {
-		t.Parallel()
-		profileRepo := &mockMeProfileRepo{}
-		h := newTestHandler(t, Config{
-			MeProfileRepo: profileRepo,
-		})
-		h.validateInitData = alwaysRejectInitData
-
-		req := httptest.NewRequest(http.MethodPost, "/api/me/profile",
-			strings.NewReader(`{"timezone":"Asia/Almaty"}`))
-		rr := httptest.NewRecorder()
-		h.UpsertMeProfile(rr, req)
-		require.Equal(t, http.StatusUnauthorized, rr.Code)
-		require.Nil(t, profileRepo.upsertCall, "upsert must not be called when auth fails")
-	})
-
 	t.Run("400 on empty timezone", func(t *testing.T) {
 		t.Parallel()
 		profileRepo := &mockMeProfileRepo{}
 		h := newTestHandler(t, Config{
 			MeProfileRepo: profileRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
 		req := httptest.NewRequest(http.MethodPost, "/api/me/profile",
 			strings.NewReader(`{"timezone":""}`))
 		req.Header.Set("X-Telegram-Init-Data", "fake-but-allowed")
 		rr := httptest.NewRecorder()
-		h.UpsertMeProfile(rr, req)
+		h.UpsertMeProfile(rr, withCaller(req, callerUserID))
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Nil(t, profileRepo.upsertCall)
 	})
@@ -1401,13 +1313,11 @@ func TestHandler_UpsertMeProfile(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeProfileRepo: profileRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
 		req := httptest.NewRequest(http.MethodPost, "/api/me/profile",
 			strings.NewReader(`{not json`))
 		req.Header.Set("X-Telegram-Init-Data", "fake")
 		rr := httptest.NewRecorder()
-		h.UpsertMeProfile(rr, req)
+		h.UpsertMeProfile(rr, withCaller(req, callerUserID))
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 	})
 
@@ -1417,13 +1327,11 @@ func TestHandler_UpsertMeProfile(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeProfileRepo: profileRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
 		req := httptest.NewRequest(http.MethodPost, "/api/me/profile",
 			strings.NewReader(`{"timezone":"Atlantis/Atlantis"}`))
 		req.Header.Set("X-Telegram-Init-Data", "fake")
 		rr := httptest.NewRecorder()
-		h.UpsertMeProfile(rr, req)
+		h.UpsertMeProfile(rr, withCaller(req, callerUserID))
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Contains(t, rr.Body.String(), "Invalid timezone.")
 	})
@@ -1434,13 +1342,11 @@ func TestHandler_UpsertMeProfile(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeProfileRepo: profileRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
 		req := httptest.NewRequest(http.MethodPost, "/api/me/profile",
 			strings.NewReader(`{"timezone":"UTC"}`))
 		req.Header.Set("X-Telegram-Init-Data", "fake")
 		rr := httptest.NewRecorder()
-		h.UpsertMeProfile(rr, req)
+		h.UpsertMeProfile(rr, withCaller(req, callerUserID))
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 	})
 
@@ -1450,13 +1356,11 @@ func TestHandler_UpsertMeProfile(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeProfileRepo: profileRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
 		req := httptest.NewRequest(http.MethodPost, "/api/me/profile",
 			strings.NewReader(`{"timezone":"Asia/Almaty","locale":"kk-KZ"}`))
 		req.Header.Set("X-Telegram-Init-Data", "fake")
 		rr := httptest.NewRecorder()
-		h.UpsertMeProfile(rr, req)
+		h.UpsertMeProfile(rr, withCaller(req, callerUserID))
 
 		require.Equal(t, http.StatusNoContent, rr.Code)
 		require.NotNil(t, profileRepo.upsertCall)
@@ -1472,13 +1376,11 @@ func TestHandler_UpsertMeProfile(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeProfileRepo: profileRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
 		req := httptest.NewRequest(http.MethodPost, "/api/me/profile",
 			strings.NewReader(`{"timezone":"UTC"}`))
 		req.Header.Set("X-Telegram-Init-Data", "fake")
 		rr := httptest.NewRecorder()
-		h.UpsertMeProfile(rr, req)
+		h.UpsertMeProfile(rr, withCaller(req, callerUserID))
 
 		require.Equal(t, http.StatusNoContent, rr.Code)
 		require.Equal(t, "", profileRepo.upsertCall.Locale)
@@ -1490,13 +1392,11 @@ func TestHandler_UpsertMeProfile(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeProfileRepo: profileRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerUserID)
-
 		body := `{"timezone":"UTC","locale":"` + strings.Repeat("a", 65) + `"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/me/profile", strings.NewReader(body))
 		req.Header.Set("X-Telegram-Init-Data", "fake")
 		rr := httptest.NewRecorder()
-		h.UpsertMeProfile(rr, req)
+		h.UpsertMeProfile(rr, withCaller(req, callerUserID))
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Nil(t, profileRepo.upsertCall, "upsert must not run when length check fails")
 	})
@@ -1533,53 +1433,17 @@ func (m *mockMeChartService) ObtainPublicChartForPeriod(_ context.Context, _, _,
 func TestGetMeRatesChart(t *testing.T) {
 	t.Parallel()
 
-	t.Run("missing header returns 401", func(t *testing.T) {
-		t.Parallel()
-
-		h := newTestHandler(t, Config{
-			BotToken:   "token",
-			MeChartSvc: &mockMeChartService{},
-		})
-		h.validateInitData = alwaysRejectInitData
-
-		rr := httptest.NewRecorder()
-		h.GetMeRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil))
-
-		require.Equal(t, http.StatusUnauthorized, rr.Code)
-		require.Contains(t, rr.Body.String(), "unauthorized")
-	})
-
-	t.Run("invalid HMAC returns 401", func(t *testing.T) {
-		t.Parallel()
-
-		h := newTestHandler(t, Config{
-			BotToken:   "token",
-			MeChartSvc: &mockMeChartService{},
-		})
-		h.validateInitData = alwaysRejectInitData
-
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
-		req.Header.Set("X-Telegram-Init-Data", "hash=bad")
-		rr := httptest.NewRecorder()
-		h.GetMeRatesChart(rr, req)
-
-		require.Equal(t, http.StatusUnauthorized, rr.Code)
-	})
-
 	t.Run("service error returns 500 with fallback message", func(t *testing.T) {
 		t.Parallel()
 
 		chartSvc := &mockMeChartService{err: errors.New("db exploded")}
 		h := newTestHandler(t, Config{
-			BotToken:   "token",
 			MeChartSvc: chartSvc,
 		})
-		h.validateInitData = alwaysValidateInitData(42)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesChart(rr, req)
+		h.GetMeRatesChart(rr, withCaller(req, 42))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		require.Contains(t, rr.Body.String(), "internal error")
@@ -1590,15 +1454,12 @@ func TestGetMeRatesChart(t *testing.T) {
 
 		chartSvc := &mockMeChartService{err: context.Canceled}
 		h := newTestHandler(t, Config{
-			BotToken:   "token",
 			MeChartSvc: chartSvc,
 		})
-		h.validateInitData = alwaysValidateInitData(42)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesChart(rr, req)
+		h.GetMeRatesChart(rr, withCaller(req, 42))
 
 		require.Equal(t, 499, rr.Code, "context.Canceled must produce 499, not 500")
 		require.Contains(t, rr.Body.String(), "request cancelled")
@@ -1609,15 +1470,12 @@ func TestGetMeRatesChart(t *testing.T) {
 
 		chartSvc := &mockMeChartService{err: context.DeadlineExceeded}
 		h := newTestHandler(t, Config{
-			BotToken:   "token",
 			MeChartSvc: chartSvc,
 		})
-		h.validateInitData = alwaysValidateInitData(42)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesChart(rr, req)
+		h.GetMeRatesChart(rr, withCaller(req, 42))
 
 		require.Equal(t, 499, rr.Code, "context.DeadlineExceeded must produce 499, not 500")
 		require.Contains(t, rr.Body.String(), "request cancelled")
@@ -1658,15 +1516,12 @@ func TestGetMeRatesChart(t *testing.T) {
 			},
 		}
 		h := newTestHandler(t, Config{
-			BotToken:   "token",
 			MeChartSvc: chartSvc,
 		})
-		h.validateInitData = alwaysValidateInitData(123)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesChart(rr, req)
+		h.GetMeRatesChart(rr, withCaller(req, 123))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -1717,12 +1572,10 @@ func TestGetMeRatesChart(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeChartSvc: chartSvc,
 		})
-		h.validateInitData = alwaysValidateInitData(1)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesChart(rr, req)
+		h.GetMeRatesChart(rr, withCaller(req, 1))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var body dto.MeChartResponse
@@ -1732,79 +1585,31 @@ func TestGetMeRatesChart(t *testing.T) {
 		require.Nil(t, body.Pairs[0].SpreadPct, "SpreadPct must be nil when only one direction is present")
 	})
 
-	t.Run("init data is read from header only, not query string", func(t *testing.T) {
-		t.Parallel()
-
-		var capturedInitData string
-		chartSvc := &mockMeChartService{chart: &appchart.MeChart{}}
-		h := newTestHandler(t, Config{
-			MeChartSvc: chartSvc,
-		})
-		h.validateInitData = func(initData, _ string, _ time.Duration, _ time.Time) (int64, error) {
-			capturedInitData = initData
-			return 0, errors.New("reject")
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart?initData=should-not-read", nil)
-		// Header is empty — the handler must not fall back to the query param.
-		rr := httptest.NewRecorder()
-		h.GetMeRatesChart(rr, req)
-
-		require.Equal(t, http.StatusUnauthorized, rr.Code)
-		require.Equal(t, "", capturedInitData, "handler must pass the empty header value, not the query param")
-	})
-
 	t.Run("503 when chart service is nil", func(t *testing.T) {
 		t.Parallel()
 
 		// nil meChartSvc must be caught after auth, before the service call, so
 		// an unauthenticated caller cannot learn whether the service is wired.
-		h := newTestHandler(t, Config{
-			BotToken: "token",
-		})
-		h.validateInitData = alwaysValidateInitData(99)
-
+		h := newTestHandler(t, Config{})
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesChart(rr, req)
+		h.GetMeRatesChart(rr, withCaller(req, 99))
 
 		require.Equal(t, http.StatusServiceUnavailable, rr.Code)
 		require.Contains(t, rr.Body.String(), "chart service unavailable")
-	})
-
-	t.Run("expired payload returns 401", func(t *testing.T) {
-		t.Parallel()
-
-		h := newTestHandler(t, Config{
-			BotToken:   "token",
-			MeChartSvc: &mockMeChartService{},
-		})
-		h.validateInitData = func(_, _ string, _ time.Duration, _ time.Time) (int64, error) {
-			return 0, internal.NewPublicError("init data is too old")
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
-		req.Header.Set("X-Telegram-Init-Data", "stale-but-valid-hmac")
-		rr := httptest.NewRecorder()
-		h.GetMeRatesChart(rr, req)
-
-		require.Equal(t, http.StatusUnauthorized, rr.Code)
 	})
 
 	t.Run("no period param defaults to 7 days window", func(t *testing.T) {
 		t.Parallel()
 		chartSvc := &mockMeChartService{chart: &appchart.MeChart{Pairs: []appchart.PairRow{}}}
 		h := newTestHandler(t, Config{
-			BotToken:   "token",
 			MeChartSvc: chartSvc,
 		})
-		h.validateInitData = alwaysValidateInitData(1)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesChart(rr, req)
+		h.GetMeRatesChart(rr, withCaller(req, 1))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var body dto.MeChartResponse
@@ -1816,15 +1621,12 @@ func TestGetMeRatesChart(t *testing.T) {
 		t.Parallel()
 		chartSvc := &mockMeChartService{chart: &appchart.MeChart{Pairs: []appchart.PairRow{}}}
 		h := newTestHandler(t, Config{
-			BotToken:   "token",
 			MeChartSvc: chartSvc,
 		})
-		h.validateInitData = alwaysValidateInitData(1)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart?period=30", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesChart(rr, req)
+		h.GetMeRatesChart(rr, withCaller(req, 1))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var body dto.MeChartResponse
@@ -1835,11 +1637,8 @@ func TestGetMeRatesChart(t *testing.T) {
 	t.Run("invalid integer period returns 400", func(t *testing.T) {
 		t.Parallel()
 		h := newTestHandler(t, Config{
-			BotToken:   "token",
 			MeChartSvc: &mockMeChartService{},
 		})
-		h.validateInitData = alwaysValidateInitData(1)
-
 		for _, bad := range []string{"45", "-1", "0", "361"} {
 			bad := bad
 			t.Run(bad, func(t *testing.T) {
@@ -1847,7 +1646,7 @@ func TestGetMeRatesChart(t *testing.T) {
 				req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart?period="+bad, nil)
 				req.Header.Set("X-Telegram-Init-Data", "valid")
 				rr := httptest.NewRecorder()
-				h.GetMeRatesChart(rr, req)
+				h.GetMeRatesChart(rr, withCaller(req, 1))
 				require.Equal(t, http.StatusBadRequest, rr.Code)
 				require.Contains(t, rr.Body.String(), "period must be one of 7, 30, 90, 180, 360")
 			})
@@ -1857,15 +1656,12 @@ func TestGetMeRatesChart(t *testing.T) {
 	t.Run("non-integer period returns 400", func(t *testing.T) {
 		t.Parallel()
 		h := newTestHandler(t, Config{
-			BotToken:   "token",
 			MeChartSvc: &mockMeChartService{},
 		})
-		h.validateInitData = alwaysValidateInitData(1)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart?period=7d", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesChart(rr, req)
+		h.GetMeRatesChart(rr, withCaller(req, 1))
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Contains(t, rr.Body.String(), "period must be one of 7, 30, 90, 180, 360")
 	})
@@ -1874,15 +1670,12 @@ func TestGetMeRatesChart(t *testing.T) {
 		t.Parallel()
 		chartSvc := &mockMeChartService{chart: &appchart.MeChart{Pairs: []appchart.PairRow{}}}
 		h := newTestHandler(t, Config{
-			BotToken:   "token",
 			MeChartSvc: chartSvc,
 		})
-		h.validateInitData = alwaysValidateInitData(1)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart?period=", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesChart(rr, req)
+		h.GetMeRatesChart(rr, withCaller(req, 1))
 		require.Equal(t, http.StatusOK, rr.Code)
 		var body dto.MeChartResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
@@ -1916,15 +1709,12 @@ func TestGetMeRatesChart(t *testing.T) {
 			},
 		}
 		h := newTestHandler(t, Config{
-			BotToken:   "token",
 			MeChartSvc: chartSvc,
 		})
-		h.validateInitData = alwaysValidateInitData(1)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart?period=360", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesChart(rr, req)
+		h.GetMeRatesChart(rr, withCaller(req, 1))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var body dto.MeChartResponse
@@ -2200,10 +1990,8 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 	newH := func(t *testing.T, svc meChartService) *Handler {
 		t.Helper()
 		h := newTestHandler(t, Config{
-			BotToken:   "token",
 			MeChartSvc: svc,
 		})
-		h.validateInitData = alwaysValidateInitData(42)
 		return h
 	}
 
@@ -2227,7 +2015,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
+		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp dto.MeHistoryResponse
@@ -2245,7 +2033,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
+		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp dto.MeHistoryResponse
@@ -2260,7 +2048,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
+		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		assert.Contains(t, rr.Body.String(), "pair is required")
@@ -2272,7 +2060,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=+++", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
+		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		assert.Contains(t, rr.Body.String(), "pair is required")
@@ -2284,22 +2072,10 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT&limit=abc", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
+		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		assert.Contains(t, rr.Body.String(), "limit must be a number")
-	})
-
-	t.Run("401 when initData invalid", func(t *testing.T) {
-		t.Parallel()
-		h := newH(t, &mockMeChartService{})
-		h.validateInitData = alwaysRejectInitData
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
-		req.Header.Set("X-Telegram-Init-Data", "bad")
-		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
-
-		require.Equal(t, http.StatusUnauthorized, rr.Code)
 	})
 
 	t.Run("499 when ctx canceled", func(t *testing.T) {
@@ -2308,7 +2084,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
+		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		require.Equal(t, 499, rr.Code)
 		assert.Contains(t, rr.Body.String(), "request cancelled")
@@ -2320,7 +2096,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
+		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		require.Equal(t, 499, rr.Code)
 		assert.Contains(t, rr.Body.String(), "request cancelled")
@@ -2332,7 +2108,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT&limit=9999", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
+		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp dto.MeHistoryResponse
@@ -2346,7 +2122,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
+		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp dto.MeHistoryResponse
@@ -2360,7 +2136,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT&page=bad", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
+		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp dto.MeHistoryResponse
@@ -2380,16 +2156,14 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 
 		svc := &mockMeChartService{err: errors.New("deliberate service error to exercise the log path")}
 		h := newTestHandler(t, Config{
-			BotToken:   "token",
 			MeChartSvc: svc,
 		})
-		h.validateInitData = alwaysValidateInitData(42)
 		h.logger = testLogger
 
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
 		req.Header.Set("X-Telegram-Init-Data", secretInitData)
 		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
+		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		assert.NotContains(t, logBuf.String(), secretInitData, "handler must not log the X-Telegram-Init-Data value")
 	})
@@ -2401,7 +2175,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT&source_title=Kaspi", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
+		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		assert.Equal(t, "Kaspi", svc.received.sourceTitle)
@@ -2414,7 +2188,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
+		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		assert.Equal(t, "", svc.received.sourceTitle)
@@ -2427,7 +2201,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT&source_title=+Kaspi+", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
+		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		assert.Equal(t, "Kaspi", svc.received.sourceTitle)
@@ -2448,7 +2222,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=AAPL/USD", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
+		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		bodyBytes := rr.Body.Bytes()
@@ -2478,7 +2252,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.GetMeRatesHistory(rr, req)
+		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		bodyBytes := rr.Body.Bytes()
@@ -2518,26 +2292,13 @@ func TestHandler_ListMeSubscriptionsRaw(t *testing.T) {
 		}
 	}
 
-	t.Run("401 on missing initData", func(t *testing.T) {
-		t.Parallel()
-		h := newTestHandler(t, Config{})
-		h.validateInitData = alwaysRejectInitData
-
-		rr := httptest.NewRecorder()
-		h.ListMeSubscriptionsRaw(rr, httptest.NewRequest(http.MethodGet, "/api/me/subscriptions/raw", nil))
-		require.Equal(t, http.StatusUnauthorized, rr.Code)
-		require.Contains(t, rr.Body.String(), "unauthorized")
-	})
-
 	t.Run("200 empty items when user has no subscriptions", func(t *testing.T) {
 		t.Parallel()
 		h := newTestHandler(t, Config{})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions/raw", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.ListMeSubscriptionsRaw(rr, req)
+		h.ListMeSubscriptionsRaw(rr, withCaller(req, callerID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var body dto.MeSubscriptionsRawResponse
@@ -2564,12 +2325,10 @@ func TestHandler_ListMeSubscriptionsRaw(t *testing.T) {
 			MeSubRepo:    subRepo,
 			MeSourceRepo: sourceRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions/raw", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.ListMeSubscriptionsRaw(rr, req)
+		h.ListMeSubscriptionsRaw(rr, withCaller(req, callerID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var body dto.MeSubscriptionsRawResponse
@@ -2604,12 +2363,10 @@ func TestHandler_ListMeSubscriptionsRaw(t *testing.T) {
 			MeSubRepo:    subRepo,
 			MeSourceRepo: sourceRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions/raw", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.ListMeSubscriptionsRaw(rr, req)
+		h.ListMeSubscriptionsRaw(rr, withCaller(req, callerID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var body dto.MeSubscriptionsRawResponse
@@ -2631,13 +2388,12 @@ func TestHandler_ListMeSubscriptionsRaw(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSubRepo: subRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
 		h.logger = log.New(log.Writer(), "", 0) // suppress output in test run
 
 		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions/raw", nil)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
-		h.ListMeSubscriptionsRaw(rr, req)
+		h.ListMeSubscriptionsRaw(rr, withCaller(req, callerID))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		require.Contains(t, rr.Body.String(), "internal error")
@@ -2675,10 +2431,8 @@ func TestHandler_CreateMeSubscription(t *testing.T) {
 			MeSubRepo:    subRepo,
 			MeSourceRepo: sourceRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		rr := httptest.NewRecorder()
-		h.CreateMeSubscription(rr, newReq(`{"source_name":"src_a","condition_type":"delta","condition_value":"5"}`))
+		h.CreateMeSubscription(rr, withCaller(newReq(`{"source_name":"src_a","condition_type":"delta","condition_value":"5"}`), callerID))
 
 		require.Equal(t, http.StatusCreated, rr.Code)
 		var resp dto.MeSubscriptionCreateResponse
@@ -2693,28 +2447,12 @@ func TestHandler_CreateMeSubscription(t *testing.T) {
 		assert.Equal(t, "5", subRepo.retained[0].ConditionValue)
 	})
 
-	t.Run("401 on missing initData", func(t *testing.T) {
-		t.Parallel()
-
-		h := newTestHandler(t, Config{})
-		h.validateInitData = alwaysRejectInitData
-
-		req := httptest.NewRequest(http.MethodPost, "/api/me/subscriptions", strings.NewReader(`{}`))
-		rr := httptest.NewRecorder()
-		h.CreateMeSubscription(rr, req)
-
-		require.Equal(t, http.StatusUnauthorized, rr.Code)
-		require.Contains(t, rr.Body.String(), "unauthorized")
-	})
-
 	t.Run("400 on malformed JSON body", func(t *testing.T) {
 		t.Parallel()
 
 		h := newTestHandler(t, Config{})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		rr := httptest.NewRecorder()
-		h.CreateMeSubscription(rr, newReq(`not-json`))
+		h.CreateMeSubscription(rr, withCaller(newReq(`not-json`), callerID))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Contains(t, rr.Body.String(), "invalid request body")
@@ -2727,10 +2465,8 @@ func TestHandler_CreateMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSourceRepo: sourceRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		rr := httptest.NewRecorder()
-		h.CreateMeSubscription(rr, newReq(`{"source_name":"no_such","condition_type":"delta","condition_value":"5"}`))
+		h.CreateMeSubscription(rr, withCaller(newReq(`{"source_name":"no_such","condition_type":"delta","condition_value":"5"}`), callerID))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Contains(t, rr.Body.String(), "unknown source")
@@ -2743,10 +2479,8 @@ func TestHandler_CreateMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSourceRepo: sourceRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		rr := httptest.NewRecorder()
-		h.CreateMeSubscription(rr, newReq(`{"source_name":"src_a","condition_type":"bogus","condition_value":"5"}`))
+		h.CreateMeSubscription(rr, withCaller(newReq(`{"source_name":"src_a","condition_type":"bogus","condition_value":"5"}`), callerID))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Contains(t, rr.Body.String(), "invalid condition")
@@ -2759,10 +2493,8 @@ func TestHandler_CreateMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSourceRepo: sourceRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		rr := httptest.NewRecorder()
-		h.CreateMeSubscription(rr, newReq(`{"source_name":"src_a","condition_type":"delta","condition_value":"not-a-number"}`))
+		h.CreateMeSubscription(rr, withCaller(newReq(`{"source_name":"src_a","condition_type":"delta","condition_value":"not-a-number"}`), callerID))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Contains(t, rr.Body.String(), "invalid condition")
@@ -2775,10 +2507,8 @@ func TestHandler_CreateMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSourceRepo: sourceRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		rr := httptest.NewRecorder()
-		h.CreateMeSubscription(rr, newReq(`{"source_name":"src_a","condition_type":"interval","condition_value":"30s"}`))
+		h.CreateMeSubscription(rr, withCaller(newReq(`{"source_name":"src_a","condition_type":"interval","condition_value":"30s"}`), callerID))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Contains(t, rr.Body.String(), "invalid condition")
@@ -2791,10 +2521,8 @@ func TestHandler_CreateMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSourceRepo: sourceRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		rr := httptest.NewRecorder()
-		h.CreateMeSubscription(rr, newReq(`{"source_name":"src_a","condition_type":"daily","condition_value":"not-a-time"}`))
+		h.CreateMeSubscription(rr, withCaller(newReq(`{"source_name":"src_a","condition_type":"daily","condition_value":"not-a-time"}`), callerID))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Contains(t, rr.Body.String(), "invalid condition")
@@ -2807,11 +2535,10 @@ func TestHandler_CreateMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSourceRepo: sourceRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
 		h.logger = log.New(log.Writer(), "", 0)
 
 		rr := httptest.NewRecorder()
-		h.CreateMeSubscription(rr, newReq(`{"source_name":"src_a","condition_type":"delta","condition_value":"5"}`))
+		h.CreateMeSubscription(rr, withCaller(newReq(`{"source_name":"src_a","condition_type":"delta","condition_value":"5"}`), callerID))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		require.Contains(t, rr.Body.String(), "internal error")
@@ -2827,11 +2554,10 @@ func TestHandler_CreateMeSubscription(t *testing.T) {
 			MeSubRepo:    subRepo,
 			MeSourceRepo: sourceRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
 		h.logger = log.New(log.Writer(), "", 0)
 
 		rr := httptest.NewRecorder()
-		h.CreateMeSubscription(rr, newReq(`{"source_name":"src_a","condition_type":"delta","condition_value":"5"}`))
+		h.CreateMeSubscription(rr, withCaller(newReq(`{"source_name":"src_a","condition_type":"delta","condition_value":"5"}`), callerID))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		require.Contains(t, rr.Body.String(), "internal error")
@@ -2873,30 +2599,13 @@ func TestHandler_UpdateMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSubRepo: subRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		rr := httptest.NewRecorder()
-		h.UpdateMeSubscription(rr, newReq("sub-001", `{"condition_type":"interval","condition_value":"1h"}`))
+		h.UpdateMeSubscription(rr, withCaller(newReq("sub-001", `{"condition_type":"interval","condition_value":"1h"}`), callerID))
 
 		require.Equal(t, http.StatusNoContent, rr.Code)
 		require.Len(t, subRepo.retained, 1)
 		assert.Equal(t, domain.ConditionTypeInterval, subRepo.retained[0].ConditionType)
 		assert.Equal(t, "1h", subRepo.retained[0].ConditionValue)
-	})
-
-	t.Run("401 on missing initData", func(t *testing.T) {
-		t.Parallel()
-
-		h := newTestHandler(t, Config{})
-		h.validateInitData = alwaysRejectInitData
-
-		req := httptest.NewRequest(http.MethodPatch, "/api/me/subscriptions/sub-001", strings.NewReader(`{}`))
-		req.SetPathValue("id", "sub-001")
-		rr := httptest.NewRecorder()
-		h.UpdateMeSubscription(rr, req)
-
-		require.Equal(t, http.StatusUnauthorized, rr.Code)
-		require.Contains(t, rr.Body.String(), "unauthorized")
 	})
 
 	t.Run("404 on missing subscription", func(t *testing.T) {
@@ -2906,10 +2615,8 @@ func TestHandler_UpdateMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSubRepo: subRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		rr := httptest.NewRecorder()
-		h.UpdateMeSubscription(rr, newReq("no-such", `{"condition_type":"delta","condition_value":"1"}`))
+		h.UpdateMeSubscription(rr, withCaller(newReq("no-such", `{"condition_type":"delta","condition_value":"1"}`), callerID))
 
 		require.Equal(t, http.StatusNotFound, rr.Code)
 		require.Contains(t, rr.Body.String(), "subscription not found")
@@ -2930,10 +2637,8 @@ func TestHandler_UpdateMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSubRepo: subRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID) // caller != owner
-
 		rr := httptest.NewRecorder()
-		h.UpdateMeSubscription(rr, newReq("sub-other", `{"condition_type":"delta","condition_value":"1"}`))
+		h.UpdateMeSubscription(rr, withCaller(newReq("sub-other", `{"condition_type":"delta","condition_value":"1"}`), callerID))
 
 		require.Equal(t, http.StatusNotFound, rr.Code)
 		require.Contains(t, rr.Body.String(), "subscription not found")
@@ -2947,10 +2652,8 @@ func TestHandler_UpdateMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSubRepo: subRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		rr := httptest.NewRecorder()
-		h.UpdateMeSubscription(rr, newReq("sub-001", `not-json`))
+		h.UpdateMeSubscription(rr, withCaller(newReq("sub-001", `not-json`), callerID))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Contains(t, rr.Body.String(), "invalid request body")
@@ -2964,10 +2667,8 @@ func TestHandler_UpdateMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSubRepo: subRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		rr := httptest.NewRecorder()
-		h.UpdateMeSubscription(rr, newReq("sub-001", `{"condition_type":"unknown","condition_value":"x"}`))
+		h.UpdateMeSubscription(rr, withCaller(newReq("sub-001", `{"condition_type":"unknown","condition_value":"x"}`), callerID))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Contains(t, rr.Body.String(), "invalid condition")
@@ -2980,11 +2681,10 @@ func TestHandler_UpdateMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSubRepo: subRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
 		h.logger = log.New(log.Writer(), "", 0)
 
 		rr := httptest.NewRecorder()
-		h.UpdateMeSubscription(rr, newReq("sub-001", `{"condition_type":"delta","condition_value":"1"}`))
+		h.UpdateMeSubscription(rr, withCaller(newReq("sub-001", `{"condition_type":"delta","condition_value":"1"}`), callerID))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		require.Contains(t, rr.Body.String(), "internal error")
@@ -3001,11 +2701,10 @@ func TestHandler_UpdateMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSubRepo: subRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
 		h.logger = log.New(log.Writer(), "", 0)
 
 		rr := httptest.NewRecorder()
-		h.UpdateMeSubscription(rr, newReq("sub-001", `{"condition_type":"interval","condition_value":"1h"}`))
+		h.UpdateMeSubscription(rr, withCaller(newReq("sub-001", `{"condition_type":"interval","condition_value":"1h"}`), callerID))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		require.Contains(t, rr.Body.String(), "internal error")
@@ -3019,8 +2718,6 @@ func TestHandler_UpdateMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSubRepo: subRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		// 5 KiB body — exceeds the 4 KiB MaxBytesReader limit.
 		bigBody := strings.Repeat("x", 5<<10)
 		req := httptest.NewRequest(http.MethodPatch, "/api/me/subscriptions/sub-001", strings.NewReader(bigBody))
@@ -3029,7 +2726,7 @@ func TestHandler_UpdateMeSubscription(t *testing.T) {
 		req.SetPathValue("id", "sub-001")
 
 		rr := httptest.NewRecorder()
-		h.UpdateMeSubscription(rr, req)
+		h.UpdateMeSubscription(rr, withCaller(req, callerID))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Contains(t, rr.Body.String(), "invalid request body")
@@ -3068,29 +2765,12 @@ func TestHandler_DeleteMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSubRepo: subRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		rr := httptest.NewRecorder()
-		h.DeleteMeSubscription(rr, newReq("sub-001"))
+		h.DeleteMeSubscription(rr, withCaller(newReq("sub-001"), callerID))
 
 		require.Equal(t, http.StatusNoContent, rr.Code)
 		require.Len(t, subRepo.removed, 1)
 		assert.Equal(t, "sub-001", subRepo.removed[0].ID)
-	})
-
-	t.Run("401 on missing initData", func(t *testing.T) {
-		t.Parallel()
-
-		h := newTestHandler(t, Config{})
-		h.validateInitData = alwaysRejectInitData
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/me/subscriptions/sub-001", nil)
-		req.SetPathValue("id", "sub-001")
-		rr := httptest.NewRecorder()
-		h.DeleteMeSubscription(rr, req)
-
-		require.Equal(t, http.StatusUnauthorized, rr.Code)
-		require.Contains(t, rr.Body.String(), "unauthorized")
 	})
 
 	t.Run("404 on missing subscription", func(t *testing.T) {
@@ -3100,10 +2780,8 @@ func TestHandler_DeleteMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSubRepo: subRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		rr := httptest.NewRecorder()
-		h.DeleteMeSubscription(rr, newReq("no-such"))
+		h.DeleteMeSubscription(rr, withCaller(newReq("no-such"), callerID))
 
 		require.Equal(t, http.StatusNotFound, rr.Code)
 		require.Contains(t, rr.Body.String(), "subscription not found")
@@ -3124,10 +2802,8 @@ func TestHandler_DeleteMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSubRepo: subRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
-
 		rr := httptest.NewRecorder()
-		h.DeleteMeSubscription(rr, newReq("sub-other"))
+		h.DeleteMeSubscription(rr, withCaller(newReq("sub-other"), callerID))
 
 		require.Equal(t, http.StatusNotFound, rr.Code)
 		require.Contains(t, rr.Body.String(), "subscription not found")
@@ -3140,11 +2816,10 @@ func TestHandler_DeleteMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSubRepo: subRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
 		h.logger = log.New(log.Writer(), "", 0)
 
 		rr := httptest.NewRecorder()
-		h.DeleteMeSubscription(rr, newReq("sub-001"))
+		h.DeleteMeSubscription(rr, withCaller(newReq("sub-001"), callerID))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		require.Contains(t, rr.Body.String(), "internal error")
@@ -3161,11 +2836,10 @@ func TestHandler_DeleteMeSubscription(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeSubRepo: subRepo,
 		})
-		h.validateInitData = alwaysValidateInitData(callerID)
 		h.logger = log.New(log.Writer(), "", 0)
 
 		rr := httptest.NewRecorder()
-		h.DeleteMeSubscription(rr, newReq("sub-001"))
+		h.DeleteMeSubscription(rr, withCaller(newReq("sub-001"), callerID))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		require.Contains(t, rr.Body.String(), "internal error")
@@ -3198,8 +2872,6 @@ func TestNewHandler_Config(t *testing.T) {
 		h, err := NewHandler(complete())
 		require.NoError(t, err)
 		require.NotNil(t, h)
-		require.NotNil(t, h.validateInitData)
-		require.NotNil(t, h.nowFn)
 	})
 
 	t.Run("each required dependency is rejected by name", func(t *testing.T) {
@@ -3302,4 +2974,52 @@ func newTestHandler(t *testing.T, cfg Config) *Handler {
 	h, err := NewHandler(cfg)
 	require.NoError(t, err)
 	return h
+}
+
+// TestHandlersFailClosedWithoutACaller covers the safety net under the middleware.
+// Authentication happens once, at the mount; this is what happens if a route ever
+// ends up outside it. Serving would be an authentication bypass, so every handler
+// that reads the caller must refuse instead.
+func TestHandlersFailClosedWithoutACaller(t *testing.T) {
+	t.Parallel()
+
+	authenticated := map[string]func(*Handler) http.HandlerFunc{
+		"GET /api/me/subscriptions":            func(h *Handler) http.HandlerFunc { return h.ListMeSubscriptions },
+		"GET /api/me/subscriptions/raw":        func(h *Handler) http.HandlerFunc { return h.ListMeSubscriptionsRaw },
+		"POST /api/me/subscriptions":           func(h *Handler) http.HandlerFunc { return h.CreateMeSubscription },
+		"PATCH /api/me/subscriptions/{id}":     func(h *Handler) http.HandlerFunc { return h.UpdateMeSubscription },
+		"DELETE /api/me/subscriptions/{id}":    func(h *Handler) http.HandlerFunc { return h.DeleteMeSubscription },
+		"GET /api/me/rates/chart":              func(h *Handler) http.HandlerFunc { return h.GetMeRatesChart },
+		"GET /api/me/rates/history":            func(h *Handler) http.HandlerFunc { return h.GetMeRatesHistory },
+		"POST /api/me/profile":                 func(h *Handler) http.HandlerFunc { return h.UpsertMeProfile },
+		"GET /api/me/weather/current":          func(h *Handler) http.HandlerFunc { return h.GetMeWeatherCurrent },
+		"GET /api/me/weather/cities/search":    func(h *Handler) http.HandlerFunc { return h.SearchWeatherCities },
+		"GET /api/me/weather/cities":           func(h *Handler) http.HandlerFunc { return h.ListMeWeatherCities },
+		"POST /api/me/weather/cities":          func(h *Handler) http.HandlerFunc { return h.CreateMeWeatherCity },
+		"DELETE /api/me/weather/cities/{id}":   func(h *Handler) http.HandlerFunc { return h.DeleteMeWeatherCity },
+		"DELETE /api/me/weather/locations/{i}": func(h *Handler) http.HandlerFunc { return h.DeleteMeWeatherLocation },
+	}
+
+	for name, pick := range authenticated {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newTestHandler(t, Config{MeChartSvc: &mockMeChartService{}})
+			rr := httptest.NewRecorder()
+			// Deliberately not wrapped in withCaller: this is a request the middleware
+			// never saw.
+			pick(h)(rr, httptest.NewRequest(http.MethodGet, "/api/me/anything", nil))
+
+			require.Equal(t, http.StatusUnauthorized, rr.Code,
+				"%s served a request carrying no authenticated caller", name)
+		})
+	}
+}
+
+// withCaller returns r carrying the caller id the initData middleware would have put
+// on its context. Handlers no longer authenticate — they read what the middleware
+// established — so a test that invokes one directly has to supply it. A request
+// without it is what an unmounted route would produce, and the handlers answer 401.
+func withCaller(r *http.Request, userID int64) *http.Request {
+	return r.WithContext(middleware.WithUserID(r.Context(), userID))
 }
