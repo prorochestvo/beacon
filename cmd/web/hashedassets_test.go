@@ -105,6 +105,36 @@ func TestNewHashedAssetRegistry(t *testing.T) {
 		assert.Contains(t, err.Error(), "app.wasm")
 	})
 
+	// The regression guard for #79: the release workflow built app.wasm without gzipping
+	// it, the sibling was absent from the embedded FS, and serveHashedAsset's fall-through
+	// turned that into 4.59 MB served raw instead of 1.21 MB — silently, for months.
+	t.Run("declared gzip sibling that is absent is a startup error", func(t *testing.T) {
+		t.Parallel()
+		noGz := fstest.MapFS{
+			"app.wasm": {Data: stubWasm},
+		}
+		specs := []assetSpec{
+			{sourcePath: "app.wasm", contentType: "application/wasm", gzipPath: "app.wasm.gz"},
+		}
+		reg, err := newHashedAssetRegistry(noGz, specs)
+		require.Error(t, err, "a build that skipped the gzip step must not start")
+		require.Nil(t, reg)
+		assert.Contains(t, err.Error(), "app.wasm.gz")
+	})
+
+	t.Run("no gzip sibling declared is not an error", func(t *testing.T) {
+		t.Parallel()
+		jsOnly := fstest.MapFS{
+			"wasm_exec.js": {Data: stubJS},
+		}
+		specs := []assetSpec{
+			{sourcePath: "wasm_exec.js", contentType: "text/javascript; charset=utf-8"},
+		}
+		reg, err := newHashedAssetRegistry(jsOnly, specs)
+		require.NoError(t, err, "an empty gzipPath declares no sibling and must stay valid")
+		require.NotNil(t, reg)
+	})
+
 	t.Run("same bytes produce same hash on repeated calls", func(t *testing.T) {
 		t.Parallel()
 		mapFS := minimalMapFS()
@@ -258,13 +288,18 @@ func TestHashedAssetRegistry_Serve(t *testing.T) {
 			"app.wasm": {Data: stubWasm},
 			// no app.wasm.gz
 		}
-		specs := []assetSpec{{sourcePath: "app.wasm", contentType: "application/wasm", gzipPath: "app.wasm.gz"}}
-		regNoGz, buildErr := newHashedAssetRegistry(noGzFS, specs)
-		require.NoError(t, buildErr)
-
+		// The entry is built directly rather than through newHashedAssetRegistry, which
+		// now refuses a declared sibling it cannot stat (#79). This subtest is about
+		// serveHashedAsset's runtime fall-through, which stays: it is the right answer
+		// for a spec that declares no sibling, and a last resort if one vanishes under a
+		// running process.
 		url := fmt.Sprintf("/app.%s.wasm", wasmHash)
-		entry, ok := regNoGz.lookup(url)
-		require.True(t, ok)
+		entry := hashedAssetEntry{
+			sourcePath:  "app.wasm",
+			hashedURL:   url,
+			contentType: "application/wasm",
+			gzipPath:    "app.wasm.gz",
+		}
 
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, url, nil)
@@ -354,12 +389,14 @@ func TestHTMLCacheRewrite(t *testing.T) {
 		t.Parallel()
 		mapFS1 := fstest.MapFS{
 			"app.wasm":         {Data: []byte("WASM_V1")},
+			"app.wasm.gz":      {Data: stubGz},
 			"wasm_exec.js":     {Data: stubJS},
 			"index.html":       {Data: []byte(`<script src="/wasm_exec.js"></script><script>fetch('/app.wasm')</script>`)},
 			"admin/index.html": {Data: []byte(`<script>fetch('/app.wasm')</script>`)},
 		}
 		mapFS2 := fstest.MapFS{
 			"app.wasm":         {Data: []byte("WASM_V2_DIFFERENT")},
+			"app.wasm.gz":      {Data: stubGz},
 			"wasm_exec.js":     {Data: stubJS},
 			"index.html":       {Data: []byte(`<script src="/wasm_exec.js"></script><script>fetch('/app.wasm')</script>`)},
 			"admin/index.html": {Data: []byte(`<script>fetch('/app.wasm')</script>`)},
@@ -383,6 +420,7 @@ func TestHTMLCacheRewrite(t *testing.T) {
 		t.Parallel()
 		emptyFS := fstest.MapFS{
 			"app.wasm":     {Data: stubWasm},
+			"app.wasm.gz":  {Data: stubGz},
 			"wasm_exec.js": {Data: stubJS},
 		}
 		reg2, buildErr := newHashedAssetRegistry(emptyFS, defaultSpecs())

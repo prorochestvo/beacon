@@ -70,12 +70,22 @@ run: migrate
 migrate: build
 	@set -a; . .env; set +a; ./build/migrator
 
-## build: format, build the WASM bundle (+gzip), then compile all service binaries into ./build/
-build: format
-	go vet ./...
+## build-wasm: produce the three embedded static assets — wasm_exec.js, app.wasm, app.wasm.gz
+##
+## The single definition of how the browser bundle is built. The release workflow calls
+## this target rather than restating the commands: it used to restate them and omitted the
+## gzip, so production served 4.59 MB where 1.21 MB would do, and no local run could
+## reproduce it because `make build` gzipped correctly (#79).
+##
+## No prerequisites on purpose — CI must not reformat the tree on its way to a build.
+build-wasm:
 	cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" ./cmd/web/static/wasm_exec.js
-	CGO_ENABLED=0 GOOS=js GOARCH=wasm go build -o ./cmd/web/static/app.wasm ./cmd/wasm/main.go
+	CGO_ENABLED=0 GOOS=js GOARCH=wasm go build -o ./cmd/web/static/app.wasm ./cmd/wasm
 	gzip -kfn -9 ./cmd/web/static/app.wasm
+
+## build: format, build the WASM bundle (+gzip), then compile all service binaries into ./build/
+build: format build-wasm
+	go vet ./...
 	CGO_ENABLED=0 go build -o ./build/collector  -ldflags ${BUILD_OPTIONS} ./cmd/collector/main.go
 	CGO_ENABLED=0 go build -o ./build/notifier   -ldflags ${BUILD_OPTIONS} ./cmd/notifier/main.go
 	CGO_ENABLED=0 go build -o ./build/migrator   -ldflags ${BUILD_OPTIONS} ./cmd/migrator
