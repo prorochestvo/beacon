@@ -282,7 +282,7 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 		return 3
 	}
 
-	plainHTTPFetcher, err := sourceaudit.NewHTTPFetcher(time.Minute, proxyURL)
+	plainHTTPFetcher, err := sourceaudit.NewHTTPFetcher(time.Minute, proxyURL, internal.UserAgent)
 	if err != nil {
 		infraFail("plain fetcher build: %v", err)
 		return 3

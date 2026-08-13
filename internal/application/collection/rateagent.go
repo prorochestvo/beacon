@@ -29,8 +29,9 @@ func NewRateAgent(
 	rExecutionHistory executionHistoryRepository,
 	rRateValue rateValueRepository,
 	logger io.Writer,
+	userAgent string,
 ) (*RateAgent, error) {
-	plain, err := rateextractor.NewRateExtractor(rRateValue, proxyURL, time.Minute, logger)
+	plain, err := rateextractor.NewRateExtractor(rRateValue, proxyURL, time.Minute, logger, userAgent)
 	if err != nil {
 		return nil, err
 	}

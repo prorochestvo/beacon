@@ -135,7 +135,7 @@ func runAudit(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out, err
 	if fetcher == nil {
 		proxyURL := proxyutil.ResolveURL(internal.EnvProxyURL)
 		var fetcherErr error
-		fetcher, fetcherErr = sourceaudit.NewHTTPFetcher(time.Minute, proxyURL)
+		fetcher, fetcherErr = sourceaudit.NewHTTPFetcher(time.Minute, proxyURL, internal.UserAgent)
 		if fetcherErr != nil {
 			fmt.Fprintf(errOut, "doctor audit: build fetcher: %v\n", fetcherErr)
 			return 3

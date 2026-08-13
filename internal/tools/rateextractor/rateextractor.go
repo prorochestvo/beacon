@@ -44,6 +44,7 @@ func NewRateExtractor(
 	proxyURL string,
 	timeout time.Duration,
 	logger io.Writer,
+	userAgent string,
 ) (*RateExtractor, error) {
 	directClient := &http.Client{
 		Timeout:   timeout,
@@ -65,7 +66,7 @@ func NewRateExtractor(
 		}
 	}
 
-	extractor, err := NewRateExtractorWithHTTPClients(rateValueRepository, directClient, proxyClient, logger)
+	extractor, err := NewRateExtractorWithHTTPClients(rateValueRepository, directClient, proxyClient, logger, userAgent)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
@@ -86,8 +87,9 @@ func NewRateExtractorWithHTTPClient(
 	rateValueRepository rateValueRepository,
 	httpClient *http.Client,
 	logger io.Writer,
+	userAgent string,
 ) (*RateExtractor, error) {
-	return NewRateExtractorWithHTTPClients(rateValueRepository, httpClient, nil, logger)
+	return NewRateExtractorWithHTTPClients(rateValueRepository, httpClient, nil, logger, userAgent)
 }
 
 // NewRateExtractorWithHTTPClients creates a RateExtractor with caller-supplied direct
@@ -101,6 +103,7 @@ func NewRateExtractorWithHTTPClients(
 	httpClient *http.Client,
 	proxyClient *http.Client,
 	logger io.Writer,
+	userAgent string,
 ) (*RateExtractor, error) {
 	if httpClient == nil {
 		err := errors.New("http client cannot be nil")
@@ -126,6 +129,7 @@ func NewRateExtractorWithHTTPClients(
 
 	p := &RateExtractor{
 		RateValueRepository: rateValueRepository,
+		userAgent:           userAgent,
 		cache:               threadsafe.NewCache(30 * time.Minute),
 		httpClient:          httpClient,
 		proxyClient:         proxyClient,
@@ -148,8 +152,13 @@ type RateExtractor struct {
 	httpClient          *http.Client
 	proxyClient         *http.Client
 	logger              io.Writer
-	failedURLs          map[string]error
-	failedURLsMu        sync.Mutex
+	// userAgent is supplied by the caller. A generic extractor has no business
+	// knowing whose project it serves, so the brand arrives from the composition
+	// root rather than being spelled here (#65). Per-source headers still win: the
+	// default is set first and overridden after.
+	userAgent    string
+	failedURLs   map[string]error
+	failedURLsMu sync.Mutex
 }
 
 // Name returns the identifier used in scheduler and log output.
@@ -253,7 +262,7 @@ func (extractor *RateExtractor) fetchHtmlPage(
 		return nil, err
 	}
 
-	req.Header.Set("User-Agent", "Beacon/1.0 (+https://github.com/seilbekskindirov/beacon)")
+	req.Header.Set("User-Agent", extractor.userAgent)
 	// Per-source headers override defaults; applied after so source wins.
 	for k, v := range headers {
 		req.Header.Set(k, v)

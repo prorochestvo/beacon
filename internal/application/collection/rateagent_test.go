@@ -18,6 +18,14 @@ var _ rateValueRepository = &repository.RateValueRepository{}
 var _ rateExtractor = &mockRateExtractor{}
 var _ chromedpBatchExtractor = &mockRateExtractor{}
 
+// The mocks were asserted only through the production types above, so a change to one of
+// these interfaces broke the real implementation loudly and the mock silently — it simply
+// stopped satisfying an interface nothing checked. Pre-existing; surfaced because this file
+// changed and the incremental gate then holds it to R1.
+var _ rateSourceRepository = (*mockRateSourceRepository)(nil)
+var _ executionHistoryRepository = (*mockExecutionHistoryRepository)(nil)
+var _ rateValueRepository = (*mockRateValueRepository)(nil)
+
 func TestNewRateAgent(t *testing.T) {
 	t.Parallel()
 
@@ -31,6 +39,7 @@ func TestNewRateAgent(t *testing.T) {
 			&mockExecutionHistoryRepository{},
 			&mockRateValueRepository{},
 			io.Discard,
+			"TestAgent/1.0 (+https://example.invalid/test)",
 		)
 		require.NoError(t, err)
 		require.NotNil(t, agent)

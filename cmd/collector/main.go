@@ -252,6 +252,7 @@ func buildRunners(
 		history,
 		value,
 		logger,
+		internal.UserAgent,
 	)
 	if err != nil {
 		return nil, errors.Join(err, loginjector.NewTraceError())
