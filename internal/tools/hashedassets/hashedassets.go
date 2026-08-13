@@ -1,4 +1,4 @@
-package main
+package hashedassets
 
 import (
 	"bytes"
@@ -16,14 +16,14 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/tools/httpenc"
 )
 
-// assetSpec describes a hashable static asset and its optional precompressed sibling.
-type assetSpec struct {
-	sourcePath  string // path inside fsys, e.g. "app.wasm"
-	contentType string // MIME type, e.g. "application/wasm"
-	gzipPath    string // optional sibling inside fsys, e.g. "app.wasm.gz"; "" if none
+// Spec describes a hashable static asset and its optional precompressed sibling.
+type Spec struct {
+	SourcePath  string // path inside fsys, e.g. "app.wasm"
+	ContentType string // MIME type, e.g. "application/wasm"
+	GzipPath    string // optional sibling inside fsys, e.g. "app.wasm.gz"; "" if none
 }
 
-// hashedAssetEntry is the resolved form of an assetSpec, ready for serving.
+// hashedAssetEntry is the resolved form of an Spec, ready for serving.
 type hashedAssetEntry struct {
 	sourcePath  string
 	hashedURL   string // "/app.<8hex>.wasm"
@@ -31,22 +31,51 @@ type hashedAssetEntry struct {
 	gzipPath    string // "" if no precompressed sibling
 }
 
-// hashedAssetRegistry maps hashed public URLs back to their source-file metadata.
+// Registry maps hashed public URLs back to their source-file metadata.
 // Construction reads each declared asset, hashes its raw bytes, and registers an
 // in-memory entry. A missing asset is a fatal startup error — call log.Fatalf on
 // the returned error.
-type hashedAssetRegistry struct {
+type Registry struct {
 	byURL map[string]hashedAssetEntry
 }
 
-// lookup returns the entry for a given hashed URL, or false if not registered.
-func (reg *hashedAssetRegistry) lookup(url string) (hashedAssetEntry, bool) {
-	e, ok := reg.byURL[url]
-	return e, ok
+// NewRegistry returns a registry built from specs against fsys, or an
+// error if any spec's source file cannot be read. The hash is over raw
+// (uncompressed) bytes, so a gzip-level change alone does not change the hashed URL.
+//
+// A declared gzipPath that does not resolve is an error too, not a shrug. serveHashedAsset
+// treats a failed open of the sibling as a signal to serve the plain file, which is the
+// right behaviour for a spec that declares no sibling and the wrong one for a build that
+// was supposed to produce it: the release workflow omitted the gzip step for months and
+// production served 4.59 MB where 1.21 MB would do, with nothing anywhere reporting it
+// (#79). Startup is where a missing build artifact should be noticed.
+func NewRegistry(fsys fs.FS, specs []Spec) (*Registry, error) {
+	r := &Registry{byURL: make(map[string]hashedAssetEntry, len(specs))}
+	for _, s := range specs {
+		b, err := fs.ReadFile(fsys, s.SourcePath)
+		if err != nil {
+			return nil, fmt.Errorf("hashed asset: read %s: %w", s.SourcePath, err)
+		}
+		if s.GzipPath != "" {
+			if _, statErr := fs.Stat(fsys, s.GzipPath); statErr != nil {
+				return nil, fmt.Errorf("hashed asset: %s declares gzip sibling %s: %w", s.SourcePath, s.GzipPath, statErr)
+			}
+		}
+		sum := sha256.Sum256(b)
+		prefix := hex.EncodeToString(sum[:4]) // 8 hex characters
+		hashedURL := insertHash(s.SourcePath, prefix)
+		r.byURL[hashedURL] = hashedAssetEntry{
+			sourcePath:  s.SourcePath,
+			hashedURL:   hashedURL,
+			contentType: s.ContentType,
+			gzipPath:    s.GzipPath,
+		}
+	}
+	return r, nil
 }
 
-// logEntries writes one log line listing the active hashes for operator verification.
-func (reg *hashedAssetRegistry) logEntries() {
+// LogEntries writes one log line listing the active hashes for operator verification.
+func (reg *Registry) LogEntries() {
 	var parts []string
 	// Key by the source filename's base stem so the log line is deterministic
 	// despite Go map-iteration randomness.
@@ -65,91 +94,23 @@ func (reg *hashedAssetRegistry) logEntries() {
 	log.Printf("hashed assets: %s", strings.Join(parts, " "))
 }
 
-// htmlCache holds the boot-time rewritten HTML body for a single entry point.
-type htmlCache struct {
+// lookup returns the entry for a given hashed URL, or false if not registered.
+func (reg *Registry) lookup(url string) (hashedAssetEntry, bool) {
+	e, ok := reg.byURL[url]
+	return e, ok
+}
+
+// HTMLCache holds the boot-time rewritten HTML body for a single entry point.
+type HTMLCache struct {
 	body     []byte
 	modTime  time.Time
 	filename string // for http.ServeContent name hint
 }
 
-// serve writes the cached HTML to w. It returns false without writing if the
-// request method is neither GET nor HEAD, so the caller can fall through to the
-// FileServer. Sets Content-Type: text/html; charset=utf-8 and Cache-Control: no-cache.
-//
-// The no-cache directive is what makes the "immutable" policy on the hashed asset
-// URLs safe: this HTML is the only document that names them, so a client that
-// reuses it without revalidating stays pinned to the previous build for the whole
-// seven-day asset lifetime. Without an explicit directive the response falls to
-// heuristic caching off Last-Modified, whose window grows with process uptime.
-// no-cache still permits storing, so ServeContent answers If-Modified-Since with a
-// 304 and the body is not retransmitted.
-func (c *htmlCache) serve(w http.ResponseWriter, r *http.Request) bool {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		return false
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	http.ServeContent(w, r, c.filename, c.modTime, bytes.NewReader(c.body))
-	return true
-}
-
-// newHashedAssetRegistry returns a registry built from specs against fsys, or an
-// error if any spec's source file cannot be read. The hash is over raw
-// (uncompressed) bytes, so a gzip-level change alone does not change the hashed URL.
-//
-// A declared gzipPath that does not resolve is an error too, not a shrug. serveHashedAsset
-// treats a failed open of the sibling as a signal to serve the plain file, which is the
-// right behaviour for a spec that declares no sibling and the wrong one for a build that
-// was supposed to produce it: the release workflow omitted the gzip step for months and
-// production served 4.59 MB where 1.21 MB would do, with nothing anywhere reporting it
-// (#79). Startup is where a missing build artifact should be noticed.
-func newHashedAssetRegistry(fsys fs.FS, specs []assetSpec) (*hashedAssetRegistry, error) {
-	r := &hashedAssetRegistry{byURL: make(map[string]hashedAssetEntry, len(specs))}
-	for _, s := range specs {
-		b, err := fs.ReadFile(fsys, s.sourcePath)
-		if err != nil {
-			return nil, fmt.Errorf("hashed asset: read %s: %w", s.sourcePath, err)
-		}
-		if s.gzipPath != "" {
-			if _, statErr := fs.Stat(fsys, s.gzipPath); statErr != nil {
-				return nil, fmt.Errorf("hashed asset: %s declares gzip sibling %s: %w", s.sourcePath, s.gzipPath, statErr)
-			}
-		}
-		sum := sha256.Sum256(b)
-		prefix := hex.EncodeToString(sum[:4]) // 8 hex characters
-		hashedURL := insertHash(s.sourcePath, prefix)
-		r.byURL[hashedURL] = hashedAssetEntry{
-			sourcePath:  s.sourcePath,
-			hashedURL:   hashedURL,
-			contentType: s.contentType,
-			gzipPath:    s.gzipPath,
-		}
-	}
-	return r, nil
-}
-
-// insertHash derives the public hashed URL from a source path.
-// "app.wasm" → "/app.<hash>.wasm"; "wasm_exec.js" → "/wasm_exec.<hash>.js".
-func insertHash(sourcePath, hashPrefix string) string {
-	ext := path.Ext(sourcePath)
-	base := strings.TrimSuffix(path.Base(sourcePath), ext)
-	return "/" + base + "." + hashPrefix + ext
-}
-
-// extractHashFromBase extracts the 8-hex segment from a base filename.
-// "app.deadbeef.wasm" → "deadbeef".
-func extractHashFromBase(base string) string {
-	parts := strings.Split(base, ".")
-	if len(parts) >= 3 {
-		return parts[len(parts)-2]
-	}
-	return base
-}
-
-// newHTMLCache reads filePath from fsys, replaces /app.wasm and /wasm_exec.js with
+// NewHTMLCache reads filePath from fsys, replaces /app.wasm and /wasm_exec.js with
 // their hashed forms from the registry, and returns an immutable cache entry.
 // modTime is the stable boot-time timestamp for If-Modified-Since support.
-func newHTMLCache(fsys fs.FS, filePath string, reg *hashedAssetRegistry, modTime time.Time) (*htmlCache, error) {
+func NewHTMLCache(fsys fs.FS, filePath string, reg *Registry, modTime time.Time) (*HTMLCache, error) {
 	b, err := fs.ReadFile(fsys, filePath)
 	if err != nil {
 		return nil, fmt.Errorf("html cache: read %s: %w", filePath, err)
@@ -175,14 +136,35 @@ func newHTMLCache(fsys fs.FS, filePath string, reg *hashedAssetRegistry, modTime
 		b = bytes.ReplaceAll(b, []byte("/wasm_exec.js"), []byte(jsHashedURL))
 	}
 
-	return &htmlCache{
+	return &HTMLCache{
 		body:     b,
 		modTime:  modTime,
 		filename: path.Base(filePath),
 	}, nil
 }
 
-// staticHandler returns an http.Handler that:
+// serve writes the cached HTML to w. It returns false without writing if the
+// request method is neither GET nor HEAD, so the caller can fall through to the
+// FileServer. Sets Content-Type: text/html; charset=utf-8 and Cache-Control: no-cache.
+//
+// The no-cache directive is what makes the "immutable" policy on the hashed asset
+// URLs safe: this HTML is the only document that names them, so a client that
+// reuses it without revalidating stays pinned to the previous build for the whole
+// seven-day asset lifetime. Without an explicit directive the response falls to
+// heuristic caching off Last-Modified, whose window grows with process uptime.
+// no-cache still permits storing, so ServeContent answers If-Modified-Since with a
+// 304 and the body is not retransmitted.
+func (c *HTMLCache) serve(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	http.ServeContent(w, r, c.filename, c.modTime, bytes.NewReader(c.body))
+	return true
+}
+
+// Handler returns an http.Handler that:
 //  1. Serves hashed asset URLs (*.wasm with gz-sibling handoff, *.js plain) directly.
 //  2. Serves rewritten index.html from in-memory cache for GET/HEAD on / and /index.html.
 //  3. Serves rewritten admin/index.html from in-memory cache for GET/HEAD on /admin/ and /admin/index.html.
@@ -191,12 +173,12 @@ func newHTMLCache(fsys fs.FS, filePath string, reg *hashedAssetRegistry, modTime
 //
 // It does not modify the provided fileHandler or fsys. The gzip-sibling handoff for
 // hashed wasm paths uses whichever fs.FS the registry was built from.
-func staticHandler(
+func Handler(
 	fileHandler http.Handler,
 	fsys fs.FS,
-	indexCache *htmlCache,
-	adminCache *htmlCache,
-	registry *hashedAssetRegistry,
+	indexCache *HTMLCache,
+	adminCache *HTMLCache,
+	registry *Registry,
 ) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 1. Exact hashed-URL dispatch (map lookup, not prefix matching).
@@ -278,4 +260,22 @@ func serveHashedAsset(w http.ResponseWriter, r *http.Request, fsys fs.FS, entry 
 	}
 	w.Header().Set("Content-Type", entry.contentType)
 	http.ServeContent(w, r, fi.Name(), fi.ModTime(), rs)
+}
+
+// insertHash derives the public hashed URL from a source path.
+// "app.wasm" → "/app.<hash>.wasm"; "wasm_exec.js" → "/wasm_exec.<hash>.js".
+func insertHash(sourcePath, hashPrefix string) string {
+	ext := path.Ext(sourcePath)
+	base := strings.TrimSuffix(path.Base(sourcePath), ext)
+	return "/" + base + "." + hashPrefix + ext
+}
+
+// extractHashFromBase extracts the 8-hex segment from a base filename.
+// "app.deadbeef.wasm" → "deadbeef".
+func extractHashFromBase(base string) string {
+	parts := strings.Split(base, ".")
+	if len(parts) >= 3 {
+		return parts[len(parts)-2]
+	}
+	return base
 }

@@ -1,4 +1,4 @@
-package main
+package hashedassets
 
 import (
 	"bytes"
@@ -26,7 +26,7 @@ var (
 	stubJS   = []byte("JS_STUB")
 )
 
-// stubHash returns the 8-hex SHA-256 prefix for b, matching newHashedAssetRegistry's
+// stubHash returns the 8-hex SHA-256 prefix for b, matching NewRegistry's
 // algorithm exactly.
 func stubHash(b []byte) string {
 	sum := sha256.Sum256(b)
@@ -57,10 +57,10 @@ func minimalMapFS() fstest.MapFS {
 }
 
 // defaultSpecs returns the same asset specs used by production main.go.
-func defaultSpecs() []assetSpec {
-	return []assetSpec{
-		{sourcePath: "app.wasm", contentType: "application/wasm", gzipPath: "app.wasm.gz"},
-		{sourcePath: "wasm_exec.js", contentType: "text/javascript; charset=utf-8"},
+func defaultSpecs() []Spec {
+	return []Spec{
+		{SourcePath: "app.wasm", ContentType: "application/wasm", GzipPath: "app.wasm.gz"},
+		{SourcePath: "wasm_exec.js", ContentType: "text/javascript; charset=utf-8"},
 	}
 }
 
@@ -70,7 +70,7 @@ func TestNewHashedAssetRegistry(t *testing.T) {
 	t.Run("happy path builds registry with correct URLs", func(t *testing.T) {
 		t.Parallel()
 		mapFS := minimalMapFS()
-		reg, err := newHashedAssetRegistry(mapFS, defaultSpecs())
+		reg, err := NewRegistry(mapFS, defaultSpecs())
 		require.NoError(t, err)
 		require.NotNil(t, reg)
 
@@ -96,10 +96,10 @@ func TestNewHashedAssetRegistry(t *testing.T) {
 	t.Run("missing asset returns error naming the path", func(t *testing.T) {
 		t.Parallel()
 		emptyFS := fstest.MapFS{}
-		specs := []assetSpec{
-			{sourcePath: "app.wasm", contentType: "application/wasm"},
+		specs := []Spec{
+			{SourcePath: "app.wasm", ContentType: "application/wasm"},
 		}
-		reg, err := newHashedAssetRegistry(emptyFS, specs)
+		reg, err := NewRegistry(emptyFS, specs)
 		require.Error(t, err)
 		require.Nil(t, reg)
 		assert.Contains(t, err.Error(), "app.wasm")
@@ -113,10 +113,10 @@ func TestNewHashedAssetRegistry(t *testing.T) {
 		noGz := fstest.MapFS{
 			"app.wasm": {Data: stubWasm},
 		}
-		specs := []assetSpec{
-			{sourcePath: "app.wasm", contentType: "application/wasm", gzipPath: "app.wasm.gz"},
+		specs := []Spec{
+			{SourcePath: "app.wasm", ContentType: "application/wasm", GzipPath: "app.wasm.gz"},
 		}
-		reg, err := newHashedAssetRegistry(noGz, specs)
+		reg, err := NewRegistry(noGz, specs)
 		require.Error(t, err, "a build that skipped the gzip step must not start")
 		require.Nil(t, reg)
 		assert.Contains(t, err.Error(), "app.wasm.gz")
@@ -127,10 +127,10 @@ func TestNewHashedAssetRegistry(t *testing.T) {
 		jsOnly := fstest.MapFS{
 			"wasm_exec.js": {Data: stubJS},
 		}
-		specs := []assetSpec{
-			{sourcePath: "wasm_exec.js", contentType: "text/javascript; charset=utf-8"},
+		specs := []Spec{
+			{SourcePath: "wasm_exec.js", ContentType: "text/javascript; charset=utf-8"},
 		}
-		reg, err := newHashedAssetRegistry(jsOnly, specs)
+		reg, err := NewRegistry(jsOnly, specs)
 		require.NoError(t, err, "an empty gzipPath declares no sibling and must stay valid")
 		require.NotNil(t, reg)
 	})
@@ -139,9 +139,9 @@ func TestNewHashedAssetRegistry(t *testing.T) {
 		t.Parallel()
 		mapFS := minimalMapFS()
 		specs := defaultSpecs()
-		reg1, err := newHashedAssetRegistry(mapFS, specs)
+		reg1, err := NewRegistry(mapFS, specs)
 		require.NoError(t, err)
-		reg2, err := newHashedAssetRegistry(mapFS, specs)
+		reg2, err := NewRegistry(mapFS, specs)
 		require.NoError(t, err)
 
 		// Both registries must have identical URL maps.
@@ -160,11 +160,11 @@ func TestNewHashedAssetRegistry(t *testing.T) {
 		mapFS2 := fstest.MapFS{
 			"app.wasm": {Data: []byte("VERSION_TWO")},
 		}
-		specs := []assetSpec{{sourcePath: "app.wasm", contentType: "application/wasm"}}
+		specs := []Spec{{SourcePath: "app.wasm", ContentType: "application/wasm"}}
 
-		reg1, err := newHashedAssetRegistry(mapFS1, specs)
+		reg1, err := NewRegistry(mapFS1, specs)
 		require.NoError(t, err)
-		reg2, err := newHashedAssetRegistry(mapFS2, specs)
+		reg2, err := NewRegistry(mapFS2, specs)
 		require.NoError(t, err)
 
 		var url1, url2 string
@@ -180,7 +180,7 @@ func TestNewHashedAssetRegistry(t *testing.T) {
 	t.Run("URL shape is /basename.8hex.ext", func(t *testing.T) {
 		t.Parallel()
 		mapFS := minimalMapFS()
-		reg, err := newHashedAssetRegistry(mapFS, defaultSpecs())
+		reg, err := NewRegistry(mapFS, defaultSpecs())
 		require.NoError(t, err)
 
 		for url := range reg.byURL {
@@ -212,11 +212,11 @@ func TestNewHashedAssetRegistry(t *testing.T) {
 			"app.wasm":    {Data: rawBytes},
 			"app.wasm.gz": {Data: []byte("GZ_V2_DIFFERENT")},
 		}
-		specs := []assetSpec{{sourcePath: "app.wasm", contentType: "application/wasm", gzipPath: "app.wasm.gz"}}
+		specs := []Spec{{SourcePath: "app.wasm", ContentType: "application/wasm", GzipPath: "app.wasm.gz"}}
 
-		reg1, err := newHashedAssetRegistry(mapFS1, specs)
+		reg1, err := NewRegistry(mapFS1, specs)
 		require.NoError(t, err)
-		reg2, err := newHashedAssetRegistry(mapFS2, specs)
+		reg2, err := NewRegistry(mapFS2, specs)
 		require.NoError(t, err)
 
 		var url1, url2 string
@@ -234,7 +234,7 @@ func TestHashedAssetRegistry_Serve(t *testing.T) {
 	t.Parallel()
 
 	mapFS := minimalMapFS()
-	reg, err := newHashedAssetRegistry(mapFS, defaultSpecs())
+	reg, err := NewRegistry(mapFS, defaultSpecs())
 	require.NoError(t, err)
 
 	wasmHash := stubHash(stubWasm)
@@ -288,7 +288,7 @@ func TestHashedAssetRegistry_Serve(t *testing.T) {
 			"app.wasm": {Data: stubWasm},
 			// no app.wasm.gz
 		}
-		// The entry is built directly rather than through newHashedAssetRegistry, which
+		// The entry is built directly rather than through NewRegistry, which
 		// now refuses a declared sibling it cannot stat (#79). This subtest is about
 		// serveHashedAsset's runtime fall-through, which stays: it is the right answer
 		// for a spec that declares no sibling, and a last resort if one vanishes under a
@@ -339,7 +339,7 @@ func TestHTMLCacheRewrite(t *testing.T) {
 	t.Parallel()
 
 	mapFS := minimalMapFS()
-	reg, err := newHashedAssetRegistry(mapFS, defaultSpecs())
+	reg, err := NewRegistry(mapFS, defaultSpecs())
 	require.NoError(t, err)
 
 	wasmHash := stubHash(stubWasm)
@@ -350,7 +350,7 @@ func TestHTMLCacheRewrite(t *testing.T) {
 
 	t.Run("index.html wasm and js URLs are rewritten", func(t *testing.T) {
 		t.Parallel()
-		cache, cacheErr := newHTMLCache(mapFS, "index.html", reg, bootTime)
+		cache, cacheErr := NewHTMLCache(mapFS, "index.html", reg, bootTime)
 		require.NoError(t, cacheErr)
 		body := cache.body
 
@@ -374,7 +374,7 @@ func TestHTMLCacheRewrite(t *testing.T) {
 
 	t.Run("admin/index.html wasm and js URLs are rewritten", func(t *testing.T) {
 		t.Parallel()
-		cache, cacheErr := newHTMLCache(mapFS, "admin/index.html", reg, bootTime)
+		cache, cacheErr := NewHTMLCache(mapFS, "admin/index.html", reg, bootTime)
 		require.NoError(t, cacheErr)
 		body := cache.body
 
@@ -402,14 +402,14 @@ func TestHTMLCacheRewrite(t *testing.T) {
 			"admin/index.html": {Data: []byte(`<script>fetch('/app.wasm')</script>`)},
 		}
 
-		reg1, err1 := newHashedAssetRegistry(mapFS1, defaultSpecs())
+		reg1, err1 := NewRegistry(mapFS1, defaultSpecs())
 		require.NoError(t, err1)
-		reg2, err2 := newHashedAssetRegistry(mapFS2, defaultSpecs())
+		reg2, err2 := NewRegistry(mapFS2, defaultSpecs())
 		require.NoError(t, err2)
 
-		c1, err1 := newHTMLCache(mapFS1, "index.html", reg1, bootTime)
+		c1, err1 := NewHTMLCache(mapFS1, "index.html", reg1, bootTime)
 		require.NoError(t, err1)
-		c2, err2 := newHTMLCache(mapFS2, "index.html", reg2, bootTime)
+		c2, err2 := NewHTMLCache(mapFS2, "index.html", reg2, bootTime)
 		require.NoError(t, err2)
 
 		assert.False(t, bytes.Equal(c1.body, c2.body),
@@ -423,10 +423,10 @@ func TestHTMLCacheRewrite(t *testing.T) {
 			"app.wasm.gz":  {Data: stubGz},
 			"wasm_exec.js": {Data: stubJS},
 		}
-		reg2, buildErr := newHashedAssetRegistry(emptyFS, defaultSpecs())
+		reg2, buildErr := NewRegistry(emptyFS, defaultSpecs())
 		require.NoError(t, buildErr)
 
-		_, cacheErr := newHTMLCache(emptyFS, "index.html", reg2, bootTime)
+		_, cacheErr := NewHTMLCache(emptyFS, "index.html", reg2, bootTime)
 		require.Error(t, cacheErr)
 		assert.Contains(t, cacheErr.Error(), "index.html")
 	})
@@ -436,13 +436,13 @@ func TestStaticHandler(t *testing.T) {
 	t.Parallel()
 
 	mapFS := minimalMapFS()
-	reg, err := newHashedAssetRegistry(mapFS, defaultSpecs())
+	reg, err := NewRegistry(mapFS, defaultSpecs())
 	require.NoError(t, err)
 
 	bootTime := time.Now()
-	indexCache, err := newHTMLCache(mapFS, "index.html", reg, bootTime)
+	indexCache, err := NewHTMLCache(mapFS, "index.html", reg, bootTime)
 	require.NoError(t, err)
-	adminCache, err := newHTMLCache(mapFS, "admin/index.html", reg, bootTime)
+	adminCache, err := NewHTMLCache(mapFS, "admin/index.html", reg, bootTime)
 	require.NoError(t, err)
 
 	wasmHash := stubHash(stubWasm)
@@ -451,7 +451,7 @@ func TestStaticHandler(t *testing.T) {
 	hashedJsURL := fmt.Sprintf("/wasm_exec.%s.js", jsHash)
 
 	fileHandler := http.FileServer(http.FS(mapFS))
-	handler := staticHandler(fileHandler, mapFS, indexCache, adminCache, reg)
+	handler := Handler(fileHandler, mapFS, indexCache, adminCache, reg)
 
 	// helper to issue a GET and return the recorder.
 	get := func(t *testing.T, url string, headers ...string) *httptest.ResponseRecorder {
@@ -673,28 +673,28 @@ func TestNewHTMLCache_FSOverswitching(t *testing.T) {
 		"wasm_exec.js": {Data: stubJS},
 		"index.html":   {Data: []byte(`<script>fetch('/app.wasm')</script>`)},
 	}
-	reg, err := newHashedAssetRegistry(fsA, []assetSpec{
-		{sourcePath: "app.wasm", contentType: "application/wasm"},
-		{sourcePath: "wasm_exec.js", contentType: "text/javascript; charset=utf-8"},
+	reg, err := NewRegistry(fsA, []Spec{
+		{SourcePath: "app.wasm", ContentType: "application/wasm"},
+		{SourcePath: "wasm_exec.js", ContentType: "text/javascript; charset=utf-8"},
 	})
 	require.NoError(t, err)
 
-	// fsB has a different index.html; newHTMLCache must read from fsB, not fsA.
+	// fsB has a different index.html; NewHTMLCache must read from fsB, not fsA.
 	fsB := fstest.MapFS{
 		"index.html": {Data: []byte(`FSONLY_MARKER fetch('/app.wasm')`)},
 	}
-	cache, err := newHTMLCache(fsB, "index.html", reg, time.Now())
+	cache, err := NewHTMLCache(fsB, "index.html", reg, time.Now())
 	require.NoError(t, err)
 
 	assert.True(t, bytes.Contains(cache.body, []byte("FSONLY_MARKER")),
 		"HTML cache must read from the FS it was given, not a cached copy")
 }
 
-// TestHTMLCache_Serve exercises the method guard inside htmlCache.serve.
+// TestHTMLCache_Serve exercises the method guard inside HTMLCache.serve.
 func TestHTMLCache_Serve(t *testing.T) {
 	t.Parallel()
 
-	c := &htmlCache{
+	c := &HTMLCache{
 		body:     []byte("<html>hello</html>"),
 		modTime:  time.Now(),
 		filename: "index.html",
