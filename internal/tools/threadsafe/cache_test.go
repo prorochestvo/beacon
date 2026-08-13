@@ -1,48 +1,85 @@
 package threadsafe
 
 import (
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/require"
 )
 
-func TestCache_Push(t *testing.T) {
+// TestExpiredEntryIsNeverReturned pins the guarantee that lets Fetch and Push do no
+// sweeping of their own: go-cache consults an item's expiration on every read and on
+// Add, and treats an expired entry as absent.
+//
+// The entry is seeded already expired rather than written and waited out. Sleeping past a
+// TTL would make the test time-dependent for no gain, and the janitor is disabled
+// (cleanupInterval 0 starts none) so the item is still physically in the map when the
+// assertions run — with a janitor this would pass whether or not the library checked
+// expiry at all, and would be evidence for nothing.
+func TestExpiredEntryIsNeverReturned(t *testing.T) {
 	t.Parallel()
 
-	c := NewCache(time.Minute)
-	require.NoError(t, c.Push("k", "v"))
-	require.Error(t, c.Push("k", "v")) // duplicate key → Add fails
-}
+	expiredAnHourAgo := time.Now().Add(-time.Hour).UnixNano()
+	c := &Cache{c: cache.NewFrom(time.Minute, 0, map[string]cache.Item{
+		"k": {Object: "stale", Expiration: expiredAnHourAgo},
+	})}
 
-func TestCache_Fetch(t *testing.T) {
-	t.Parallel()
+	_, err := c.Fetch("k")
+	require.Error(t, err, "an expired entry must read as absent, not as a stale hit")
 
-	c := NewCache(time.Minute)
-	require.NoError(t, c.Push("k", "hello"))
+	_, err = c.Pull("k")
+	require.Error(t, err, "an expired entry must not be pullable")
+
+	require.NoError(t, c.Push("k", "fresh"),
+		"an expired entry must not block a Push: Add treats it as absent")
 
 	val, err := c.Fetch("k")
 	require.NoError(t, err)
-	require.Equal(t, "hello", val)
-
-	val, err = c.Fetch("k")
-	require.NoError(t, err)
-	require.Equal(t, "hello", val)
-
-	_, err = c.Fetch("missing")
-	require.Error(t, err)
+	require.Equal(t, "fresh", val)
 }
 
-func TestCache_Pull(t *testing.T) {
+// TestPullDeliversToExactlyOneCaller pins the reason Pull keeps a mutex when Fetch and
+// Push do not. It reads and then deletes, and go-cache has no atomic take, so without
+// serialisation two callers can both observe the value before either removes it.
+//
+// Many short rounds rather than one crowded one: the window between the read and the
+// delete is a few instructions, so the way to land inside it is to try often. Verified to
+// detect the defect — with the lock removed this fails within a run.
+func TestPullDeliversToExactlyOneCaller(t *testing.T) {
 	t.Parallel()
 
+	const (
+		rounds     = 400
+		contenders = 8
+	)
+
 	c := NewCache(time.Minute)
-	require.NoError(t, c.Push("k", 42))
+	var wins atomic.Int32
 
-	val, err := c.Pull("k")
-	require.NoError(t, err)
-	require.Equal(t, 42, val)
+	for round := range rounds {
+		key := fmt.Sprintf("k%d", round)
+		require.NoError(t, c.Push(key, "only-once"))
 
-	_, err = c.Pull("k") // already deleted
-	require.Error(t, err)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		wg.Add(contenders)
+		for range contenders {
+			go func() {
+				defer wg.Done()
+				<-start
+				if _, err := c.Pull(key); err == nil {
+					wins.Add(1)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+	}
+
+	require.Equal(t, int32(rounds), wins.Load(),
+		"exactly one concurrent Pull per key may receive the value")
 }
