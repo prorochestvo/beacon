@@ -24,16 +24,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # lint-new compares against LINT_BASE with --new-from-rev, and
+          # scripts/lint-checks.sh asks git what changed since it. The default
+          # shallow clone has neither the base commit nor the history to reach it,
+          # and both would fail on a ref that does not resolve rather than on code.
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+      # Pinned to the same version the Makefile names, so a local run and CI
+      # cannot disagree about what a finding is.
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
       # Tee each fail-prone step into a shared trace so the Telegram failure
       # notification can paste the real reason inline (see Notify failure).
+      #
+      # lint-new, not lint: the tree carries standing findings that are being
+      # worked off under #68, so the full run is a worklist rather than a gate.
+      # Wiring CI to it would paint every branch red on findings its author did
+      # not introduce, which is how a gate stops being read.
       - name: Lint
         run: |
           exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
-          make lint
+          make lint-new
       - name: Test
         run: |
           exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
