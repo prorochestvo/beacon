@@ -476,6 +476,36 @@ func TestStaticHandler(t *testing.T) {
 		assert.True(t, bytes.Equal(adminBody, indexBody))
 	})
 
+	t.Run("HTML entry points are served no-cache", func(t *testing.T) {
+		t.Parallel()
+		for _, url := range []string{"/", "/index.html", "/admin/", "/admin/index.html"} {
+			w := get(t, url)
+			assert.Equal(t, "no-cache", w.Result().Header.Get("Cache-Control"),
+				"%s must be revalidated: it is the only document naming the immutable hashed assets", url)
+		}
+	})
+
+	t.Run("HTML revalidation returns 304 and keeps the directive", func(t *testing.T) {
+		t.Parallel()
+		w := get(t, "/", "If-Modified-Since", bootTime.UTC().Format(http.TimeFormat))
+		result := w.Result()
+		assert.Equal(t, http.StatusNotModified, result.StatusCode,
+			"no-cache must cost a revalidation round trip, not a body retransmit")
+		assert.Equal(t, "no-cache", result.Header.Get("Cache-Control"))
+		body, readErr := io.ReadAll(result.Body)
+		require.NoError(t, readErr)
+		assert.Empty(t, body)
+	})
+
+	t.Run("hashed assets carry no origin Cache-Control", func(t *testing.T) {
+		t.Parallel()
+		for _, url := range []string{hashedWasmURL, hashedJsURL} {
+			w := get(t, url)
+			assert.Empty(t, w.Result().Header.Get("Cache-Control"),
+				"%s: nginx is the sole source of truth for the immutable policy", url)
+		}
+	})
+
 	t.Run("GET hashed wasm without gzip header returns plain bytes", func(t *testing.T) {
 		t.Parallel()
 		w := get(t, hashedWasmURL)
@@ -638,7 +668,9 @@ func TestHTMLCache_Serve(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
 		handled := c.serve(w, r)
 		assert.True(t, handled)
-		body, readErr := io.ReadAll(w.Result().Body)
+		result := w.Result()
+		assert.Equal(t, "no-cache", result.Header.Get("Cache-Control"))
+		body, readErr := io.ReadAll(result.Body)
 		require.NoError(t, readErr)
 		assert.Equal(t, c.body, body)
 	})
@@ -649,6 +681,7 @@ func TestHTMLCache_Serve(t *testing.T) {
 		r := httptest.NewRequest(http.MethodHead, "/", nil)
 		handled := c.serve(w, r)
 		assert.True(t, handled)
+		assert.Equal(t, "no-cache", w.Result().Header.Get("Cache-Control"))
 	})
 
 	t.Run("POST returns false", func(t *testing.T) {
@@ -658,6 +691,10 @@ func TestHTMLCache_Serve(t *testing.T) {
 		handled := c.serve(w, r)
 		assert.False(t, handled)
 		assert.Equal(t, http.StatusOK, w.Code, "serve must not write to w when returning false")
+		// Pins the header set below the method guard: hoisting it above would keep the
+		// two assertions above green while leaking the directive onto every response
+		// that falls through to the FileServer.
+		assert.Empty(t, w.Header().Get("Cache-Control"))
 	})
 
 	t.Run("DELETE returns false", func(t *testing.T) {
