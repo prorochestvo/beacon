@@ -11,7 +11,18 @@ TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 BUILD_OPTIONS := "-s -w -X main.BuildVersion=${BRANCH} -X main.BuildTime=${TIME} -X main.BuildHash=${BUILD}"
 
-.PHONY: all run build build-collector build-notifier build-web build-wasm build-migrator migrate test lint format audit audit-help doctor-help swagger clean init backups db-inspect config-drift
+GOLANGCI_VERSION := v2.12.2
+# Revision the adoption gate compares against: only code newer than this is
+# required to be clean while the standing findings are worked off.
+#
+# origin/alpha, not origin/main: main only ever moves to the latest non-prerelease
+# tag, so it trails alpha by a whole alpha series. Comparing against it would
+# classify that entire series as "new code" and demand it be clean today, which is
+# the opposite of a baseline — measured at 88 findings against main versus 0
+# against alpha.
+LINT_BASE ?= origin/alpha
+
+.PHONY: all run build build-collector build-notifier build-web build-wasm build-migrator migrate test lint lint-new format audit audit-help doctor-help swagger clean init backups db-inspect config-drift
 
 
 
@@ -98,21 +109,23 @@ test: format
 		echo "WARNING: 'node' not found — skipping WASM tests (install Node.js 18+ to run them)"; \
 	fi
 
-## lint: go vet + forbidden-import guard (no CGO-dependent SQLite driver in go.mod)
+## lint: golangci-lint over the whole tree, then the text-level review checks
 lint:
-	CGO_ENABLED=0 go vet ./...
-	@if grep -qE 'github.com/mattn/go-sqlite3' go.mod; then \
-		echo "lint failure: forbidden CGO-dependent SQLite driver in go.mod (use modernc.org/sqlite)"; \
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+		echo "golangci-lint not found — install $(GOLANGCI_VERSION): https://golangci-lint.run/docs/welcome/install/local/"; \
 		exit 1; \
-	fi
-	@if grep -rEn '(log\.Fatalf?|infraFail)\("settings[^"]*",[^)]*\berr' --include='*.go' cmd/ internal/ | grep -v '_test.go'; then \
-		echo "lint failure: a settings failure above logs the parser error."; \
-		echo "  dsninjector.Parse embeds its whole input in that error, and BEACON_TELEGRAMBOT_DSN"; \
-		echo "  is the bot token while the AI DSNs carry API keys. internal.NewLogger points the"; \
-		echo "  standard logger at the persisted log file, so this writes credentials to disk."; \
-		echo "  Name the variable, drop the error text."; \
+	}
+	CGO_ENABLED=0 golangci-lint run ./...
+	@scripts/lint-checks.sh
+
+## lint-new: lint only code changed since $(LINT_BASE); this is the mergeable gate
+lint-new:
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+		echo "golangci-lint not found — install $(GOLANGCI_VERSION): https://golangci-lint.run/docs/welcome/install/local/"; \
 		exit 1; \
-	fi
+	}
+	CGO_ENABLED=0 golangci-lint run --new-from-rev=$(LINT_BASE) ./...
+	@scripts/lint-checks.sh $(LINT_BASE)
 
 ## audit: probe seeded rate sources; default audits all sources; override with ARGS="--source halyk_usd" (exits non-zero on any MISS)
 ARGS ?= --all
