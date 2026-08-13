@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/seilbekskindirov/beacon/internal"
 )
 
 // NewOpenMeteoInspector returns an advisory Inspector for the Open-Meteo API.
@@ -77,7 +79,7 @@ const (
 	openMeteoProbeURL = "https://geocoding-api.open-meteo.com/v1/search?name=Berlin&count=1&language=en"
 
 	// openMeteoInspectorUA identifies the health probe in Open-Meteo access logs.
-	openMeteoInspectorUA = "Beacon/1.0 health-check (+https://github.com/seilbekskindirov/beacon)"
+	openMeteoInspectorUA = internal.HealthCheckUserAgent
 
 	// openMeteoProbeTimeout is the per-request timeout for the health probe. It is
 	// shorter than the agent sweep budget (3 s) to leave headroom for other inspectors.

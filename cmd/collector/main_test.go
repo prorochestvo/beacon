@@ -97,6 +97,7 @@ func TestProxyEnvAloneDoesNotRouteCollection(t *testing.T) {
 
 	extractor, err := rateextractor.NewRateExtractor(
 		&discardingRateValueRepository{}, os.Getenv(internal.EnvProxyURL), 5*time.Second, io.Discard,
+		internal.UserAgent,
 	)
 	require.NoError(t, err)
 

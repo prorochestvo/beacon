@@ -10,10 +10,6 @@ import (
 	"time"
 )
 
-// DefaultUserAgent is the audit tool's User-Agent header, matching the
-// production extractor value.
-const DefaultUserAgent = "Beacon/1.0 (+https://github.com/seilbekskindirov/beacon)"
-
 // FetchResult holds the response from a single HTTP GET.
 type FetchResult struct {
 	Body        []byte
@@ -22,8 +18,8 @@ type FetchResult struct {
 }
 
 // Fetcher performs HTTP GETs and returns the body with metadata.
-// headers are per-source overrides applied after the default User-Agent; nil
-// is safe and results in only the default header being sent.
+// headers are per-source overrides applied after the User-Agent the fetcher was
+// constructed with; nil is safe and results in only that header being sent.
 type Fetcher interface {
 	Fetch(ctx context.Context, url string, headers map[string]string) (*FetchResult, error)
 }
@@ -35,8 +31,9 @@ const maxResponseBytes = 10 << 20 // 10 MB
 // httpFetcher is the production Fetcher implementation. Not tested directly
 // against the network; coverage comes from cmd/doctor audit integration.
 type httpFetcher struct {
-	client  *http.Client
-	timeout time.Duration
+	client    *http.Client
+	timeout   time.Duration
+	userAgent string
 }
 
 func (f *httpFetcher) Fetch(ctx context.Context, url string, headers map[string]string) (*FetchResult, error) {
@@ -47,7 +44,7 @@ func (f *httpFetcher) Fetch(ctx context.Context, url string, headers map[string]
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("User-Agent", DefaultUserAgent)
+	req.Header.Set("User-Agent", f.userAgent)
 	// Per-source headers override defaults; applied after so source wins.
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -79,11 +76,15 @@ func (f *httpFetcher) Fetch(ctx context.Context, url string, headers map[string]
 // proxyURL is an optional HTTP proxy URL (e.g. "http://127.0.0.1:7788"); pass ""
 // for no proxy.
 //
+// userAgent is supplied by the caller rather than held here. This package audits
+// arbitrary rate sources and has no business knowing whose project it serves; the
+// composition root passes internal.UserAgent (#65).
+//
 // When proxyURL is empty an explicit &http.Transport{} with no Proxy field is
 // used: a nil Transport would fall back to http.DefaultTransport, whose Proxy
 // reads HTTPS_PROXY/HTTP_PROXY from the environment and would silently route
 // traffic the caller never configured.
-func NewHTTPFetcher(timeout time.Duration, proxyURL string) (Fetcher, error) {
+func NewHTTPFetcher(timeout time.Duration, proxyURL, userAgent string) (Fetcher, error) {
 	var client *http.Client
 	if proxyURL != "" {
 		parsed, err := url.Parse(proxyURL)
@@ -101,7 +102,8 @@ func NewHTTPFetcher(timeout time.Duration, proxyURL string) (Fetcher, error) {
 		}
 	}
 	return &httpFetcher{
-		client:  client,
-		timeout: timeout,
+		client:    client,
+		timeout:   timeout,
+		userAgent: userAgent,
 	}, nil
 }

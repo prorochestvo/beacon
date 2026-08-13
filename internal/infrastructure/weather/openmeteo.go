@@ -16,6 +16,7 @@ import (
 	_ "time/tzdata" // embed IANA tzdata so LoadLocation works without system tzdata (WASM, containers)
 
 	"github.com/prorochestvo/loginjector"
+	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
@@ -282,7 +283,7 @@ func (o *OpenMeteo) attempt(ctx context.Context, rawURL string) ([]byte, error) 
 const (
 	openMeteoGeocodingBase = "https://geocoding-api.open-meteo.com/v1/search"
 	openMeteoForecastBase  = "https://api.open-meteo.com/v1/forecast"
-	openMeteoUserAgent     = "Beacon/1.0 (+https://github.com/seilbekskindirov/beacon)"
+	openMeteoUserAgent     = internal.UserAgent
 	openMeteoTimeout       = 10 * time.Second
 
 	// openMeteoMaxResponseBytes caps the response body read to protect against

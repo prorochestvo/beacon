@@ -10,6 +10,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testUserAgent stands in for the value the composition root injects. Deliberately not
+// the project's real User-Agent: this package audits arbitrary sources and must not know
+// the brand, and a test spelling it would reintroduce the copy #65 removed.
+const testUserAgent = "TestAgent/1.0 (+https://example.invalid/test)"
+
 var _ Fetcher = (*httpFetcher)(nil)
 
 func TestNewHTTPFetcher(t *testing.T) {
@@ -17,7 +22,7 @@ func TestNewHTTPFetcher(t *testing.T) {
 
 	t.Run("empty proxyURL produces transport with nil Proxy field", func(t *testing.T) {
 		t.Parallel()
-		f, err := NewHTTPFetcher(30*time.Second, "")
+		f, err := NewHTTPFetcher(30*time.Second, "", testUserAgent)
 		require.NoError(t, err)
 		hf, ok := f.(*httpFetcher)
 		require.True(t, ok)
@@ -29,7 +34,7 @@ func TestNewHTTPFetcher(t *testing.T) {
 
 	t.Run("non-empty proxyURL produces transport with non-nil Proxy field", func(t *testing.T) {
 		t.Parallel()
-		f, err := NewHTTPFetcher(30*time.Second, "http://127.0.0.1:7788")
+		f, err := NewHTTPFetcher(30*time.Second, "http://127.0.0.1:7788", testUserAgent)
 		require.NoError(t, err)
 		hf, ok := f.(*httpFetcher)
 		require.True(t, ok)
@@ -40,7 +45,7 @@ func TestNewHTTPFetcher(t *testing.T) {
 
 	t.Run("invalid proxyURL returns error", func(t *testing.T) {
 		t.Parallel()
-		_, err := NewHTTPFetcher(30*time.Second, "://bad-url")
+		_, err := NewHTTPFetcher(30*time.Second, "://bad-url", testUserAgent)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "parse proxy URL")
 	})
@@ -60,7 +65,7 @@ func TestHTTPFetcher_Fetch(t *testing.T) {
 		}))
 		t.Cleanup(srv.Close)
 
-		f, err := NewHTTPFetcher(5*time.Second, "")
+		f, err := NewHTTPFetcher(5*time.Second, "", testUserAgent)
 		require.NoError(t, err)
 
 		res, err := f.Fetch(t.Context(), srv.URL, map[string]string{"User-Agent": "CustomAudit/1.0"})
@@ -70,7 +75,7 @@ func TestHTTPFetcher_Fetch(t *testing.T) {
 			"non-nil headers must override the default User-Agent")
 	})
 
-	t.Run("nil headers use default Beacon User-Agent", func(t *testing.T) {
+	t.Run("nil headers use the injected User-Agent", func(t *testing.T) {
 		t.Parallel()
 
 		var receivedUA string
@@ -81,13 +86,13 @@ func TestHTTPFetcher_Fetch(t *testing.T) {
 		}))
 		t.Cleanup(srv.Close)
 
-		f, err := NewHTTPFetcher(5*time.Second, "")
+		f, err := NewHTTPFetcher(5*time.Second, "", testUserAgent)
 		require.NoError(t, err)
 
 		res, err := f.Fetch(t.Context(), srv.URL, nil)
 		require.NoError(t, err)
 		require.NotNil(t, res)
-		assert.Equal(t, DefaultUserAgent, receivedUA,
-			"nil headers must result in the default Beacon/1.0 User-Agent")
+		assert.Equal(t, testUserAgent, receivedUA,
+			"nil headers must result in the injected User-Agent being sent verbatim")
 	})
 }
