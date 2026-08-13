@@ -15,19 +15,30 @@ func NewCache(defaultExpiration time.Duration) *Cache {
 }
 
 // Cache is a goroutine-safe in-memory key-value store with TTL expiration.
-// All operations are serialised with a mutex.
+//
+// Safety comes from go-cache's own RWMutex, so reads of different keys proceed
+// concurrently. This type does not add a lock of its own except on Pull, which is
+// the one compound operation here — see the comment there.
+//
+// Expiry is likewise the library's: Get and Add both consult an item's expiration
+// and treat an expired entry as absent, so no method sweeps the map to stay correct.
+// Reclaiming the memory is the janitor's job, started by NewCache at a quarter of the
+// TTL. TestExpiredEntryIsNeverReturned pins that assumption; if this type is ever
+// moved off go-cache, that test is what says whether the replacement can carry it.
 type Cache struct {
 	c *cache.Cache
-	m sync.Mutex
+
+	// pullMu serialises Pull against other Pulls so at most one caller receives a
+	// given value. Nothing weaker suffices: go-cache has no atomic take, so Pull
+	// reads and then deletes, and without this two callers can both observe the
+	// value before either removes it. It deliberately does not guard Fetch or Push —
+	// serialising those buys nothing the library does not already provide, and costs
+	// the concurrency it does.
+	pullMu sync.Mutex
 }
 
 // Fetch returns the value stored under key, or an error if the key is absent or expired.
 func (s *Cache) Fetch(key string) (interface{}, error) {
-	s.m.Lock()
-	defer s.m.Unlock()
-
-	s.c.DeleteExpired()
-
 	val, found := s.c.Get(key)
 	if !found {
 		err := fmt.Errorf("key %s not found in cache", key)
@@ -38,11 +49,11 @@ func (s *Cache) Fetch(key string) (interface{}, error) {
 }
 
 // Pull returns and removes the value stored under key, or an error if absent.
+//
+// At most one concurrent caller receives the value; the rest get the absent error.
 func (s *Cache) Pull(key string) (interface{}, error) {
-	s.m.Lock()
-	defer s.m.Unlock()
-
-	s.c.DeleteExpired()
+	s.pullMu.Lock()
+	defer s.pullMu.Unlock()
 
 	val, found := s.c.Get(key)
 	if !found {
@@ -57,11 +68,8 @@ func (s *Cache) Pull(key string) (interface{}, error) {
 
 // Push stores val under key with the default expiration. Returns an error if the
 // key already exists (uses cache.Add semantics — no overwrite).
+//
+// An expired entry does not block a Push: Add treats it as absent.
 func (s *Cache) Push(key string, val interface{}) error {
-	s.m.Lock()
-	defer s.m.Unlock()
-
-	s.c.DeleteExpired()
-
 	return s.c.Add(key, val, cache.DefaultExpiration)
 }
