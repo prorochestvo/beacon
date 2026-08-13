@@ -947,10 +947,15 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 		}))
 		defer srv.Close()
 
+		// Its own buffer, not the one shared with the sibling subtests: the assertion
+		// below is on log content, and against a shared buffer it would be satisfied by
+		// any parallel subtest that happened to log the same line.
+		ownLogger := threadsafe.NewBuffer(nil)
+
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
 			srv.Client(),
-			logger, testUserAgent)
+			ownLogger, testUserAgent)
 
 		require.NoError(t, err)
 
@@ -958,13 +963,26 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 		//   1. Fetch() finds the key but the empty-byte guard skips the cache hit.
 		//   2. The post-fetch Push() fails (key already exists in go-cache.Add).
 		//   3. fetchHtmlPage logs the error and still returns the body with nil error.
-		cacheKey := fmt.Sprintf("GET:%s", srv.URL)
+		//
+		// The key comes from fetchKey rather than being spelled out. A hand-built
+		// "GET:<url>" drifted silently when the route segment was added with per-source
+		// proxy routing: the seeded entry stopped matching, so the fetch simply
+		// succeeded and none of the three steps above ran. The subtest passed and would
+		// have passed with the entire error path deleted (#62).
+		cacheKey := fetchKey(srv.URL, false)
 		require.NoError(t, ext.cache.Push(cacheKey, []byte{}))
 
 		body, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil, false)
 		require.NoError(t, err)
 		require.NotNil(t, body)
 		require.Equal(t, []byte(responseBody), body)
+
+		// The assertion that makes the subtest about the Push-error branch rather than
+		// about a fetch that happens to work. Without it, deleting that branch leaves
+		// every requirement above satisfied.
+		require.Contains(t, ownLogger.String(),
+			"rate_extractor: could not push response payload to cache",
+			"a failed cache Push must be reported, not swallowed")
 	})
 }
 
