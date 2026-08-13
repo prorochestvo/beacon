@@ -34,6 +34,7 @@ import (
 	integration "github.com/seilbekskindirov/beacon/internal/infrastructure/telegrambot"
 	weatherinfra "github.com/seilbekskindirov/beacon/internal/infrastructure/weather"
 	"github.com/seilbekskindirov/beacon/internal/repository"
+	"github.com/seilbekskindirov/beacon/internal/tools/hashedassets"
 	_ "modernc.org/sqlite"
 )
 
@@ -219,33 +220,33 @@ func main() {
 	// Build the hashed-asset registry from the active FS. It hashes raw bytes (not
 	// .gz siblings) so a gzip-level change alone doesn't invalidate the cache-busting
 	// URL. Missing assets are fatal here.
-	hashSpecs := []assetSpec{
-		{sourcePath: "app.wasm", contentType: "application/wasm", gzipPath: "app.wasm.gz"},
-		{sourcePath: "wasm_exec.js", contentType: "text/javascript; charset=utf-8"},
+	hashSpecs := []hashedassets.Spec{
+		{SourcePath: "app.wasm", ContentType: "application/wasm", GzipPath: "app.wasm.gz"},
+		{SourcePath: "wasm_exec.js", ContentType: "text/javascript; charset=utf-8"},
 	}
-	registry, err := newHashedAssetRegistry(fsSub, hashSpecs)
+	registry, err := hashedassets.NewRegistry(fsSub, hashSpecs)
 	if err != nil {
 		log.Fatalf("hashed assets: %v", err)
 	}
-	registry.logEntries()
+	registry.LogEntries()
 
 	// Build the boot-time HTML caches: both entry points are rewritten once so the
 	// served HTML references the registry's hashed asset URLs.
 	bootTime := time.Now()
-	indexCache, err := newHTMLCache(fsSub, "index.html", registry, bootTime)
+	indexCache, err := hashedassets.NewHTMLCache(fsSub, "index.html", registry, bootTime)
 	if err != nil {
 		log.Fatalf("html cache: %v", err)
 	}
-	adminCache, err := newHTMLCache(fsSub, "admin/index.html", registry, bootTime)
+	adminCache, err := hashedassets.NewHTMLCache(fsSub, "admin/index.html", registry, bootTime)
 	if err != nil {
 		log.Fatalf("html cache: %v", err)
 	}
 
-	// staticHandler dispatches hashed-asset and HTML-cache paths first, then falls
+	// hashedassets.Handler dispatches hashed-asset and HTML-cache paths first, then falls
 	// through to the plain FileServer for unhashed paths (stale-HTML recovery) and
 	// other static content. The mux's API routes shadow this catch-all.
 	fileHandler := http.FileServer(httpFsys)
-	mux.Handle("/", staticHandler(fileHandler, fsSub, indexCache, adminCache, registry))
+	mux.Handle("/", hashedassets.Handler(fileHandler, fsSub, indexCache, adminCache, registry))
 	tbotAPI, err := service.NewTelegramApi(tbot, subscriptionRepo, rateValueRepo, sourceRepo, profileRepo, webAppURL)
 	if err != nil {
 		log.Fatalf("services: telegram api is failed, %s", err.Error())
