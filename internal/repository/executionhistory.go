@@ -203,6 +203,9 @@ func (r *ExecutionHistoryRepository) ObtainLastNExecutionHistoryErrors(ctx conte
 		item.Timestamp = time.Unix(timestamp, 0).UTC()
 		items = append(items, item)
 	}
+	if iterErr := dbRows.Err(); iterErr != nil {
+		return nil, errors.Join(iterErr, loginjector.NewTraceError())
+	}
 
 	if items == nil {
 		items = []domain.ExecutionHistory{}
@@ -509,6 +512,11 @@ func executionHistoryQueryContext(tx *sql.Tx, ctx context.Context, condition str
 		item.Timestamp = time.Unix(timestamp, 0).UTC()
 
 		items = append(items, item)
+	}
+
+	if err = rows.Err(); err != nil {
+		err = errors.Join(err, loginjector.NewTraceError())
+		return nil, err
 	}
 
 	return

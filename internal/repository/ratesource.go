@@ -468,6 +468,11 @@ func rateSourceQueryContext(tx *sql.Tx, ctx context.Context, condition string, a
 		items = append(items, item)
 	}
 
+	if err = rows.Err(); err != nil {
+		err = errors.Join(err, loginjector.NewTraceError())
+		return nil, err
+	}
+
 	return
 }
 
