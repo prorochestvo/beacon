@@ -39,60 +39,6 @@ type Registry struct {
 	byURL map[string]hashedAssetEntry
 }
 
-// lookup returns the entry for a given hashed URL, or false if not registered.
-func (reg *Registry) lookup(url string) (hashedAssetEntry, bool) {
-	e, ok := reg.byURL[url]
-	return e, ok
-}
-
-// LogEntries writes one log line listing the active hashes for operator verification.
-func (reg *Registry) LogEntries() {
-	var parts []string
-	// Key by the source filename's base stem so the log line is deterministic
-	// despite Go map-iteration randomness.
-	stems := make(map[string]hashedAssetEntry, len(reg.byURL))
-	for _, e := range reg.byURL {
-		stem := strings.TrimSuffix(path.Base(e.sourcePath), path.Ext(e.sourcePath))
-		stems[stem] = e
-	}
-	for _, stem := range []string{"app", "wasm_exec"} {
-		if e, ok := stems[stem]; ok {
-			// "/app.<hash>.wasm" → "<hash>".
-			base := strings.TrimPrefix(e.hashedURL, "/")
-			parts = append(parts, stem+"="+extractHashFromBase(base))
-		}
-	}
-	log.Printf("hashed assets: %s", strings.Join(parts, " "))
-}
-
-// HTMLCache holds the boot-time rewritten HTML body for a single entry point.
-type HTMLCache struct {
-	body     []byte
-	modTime  time.Time
-	filename string // for http.ServeContent name hint
-}
-
-// serve writes the cached HTML to w. It returns false without writing if the
-// request method is neither GET nor HEAD, so the caller can fall through to the
-// FileServer. Sets Content-Type: text/html; charset=utf-8 and Cache-Control: no-cache.
-//
-// The no-cache directive is what makes the "immutable" policy on the hashed asset
-// URLs safe: this HTML is the only document that names them, so a client that
-// reuses it without revalidating stays pinned to the previous build for the whole
-// seven-day asset lifetime. Without an explicit directive the response falls to
-// heuristic caching off Last-Modified, whose window grows with process uptime.
-// no-cache still permits storing, so ServeContent answers If-Modified-Since with a
-// 304 and the body is not retransmitted.
-func (c *HTMLCache) serve(w http.ResponseWriter, r *http.Request) bool {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		return false
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	http.ServeContent(w, r, c.filename, c.modTime, bytes.NewReader(c.body))
-	return true
-}
-
 // NewRegistry returns a registry built from specs against fsys, or an
 // error if any spec's source file cannot be read. The hash is over raw
 // (uncompressed) bytes, so a gzip-level change alone does not change the hashed URL.
@@ -128,22 +74,37 @@ func NewRegistry(fsys fs.FS, specs []Spec) (*Registry, error) {
 	return r, nil
 }
 
-// insertHash derives the public hashed URL from a source path.
-// "app.wasm" → "/app.<hash>.wasm"; "wasm_exec.js" → "/wasm_exec.<hash>.js".
-func insertHash(sourcePath, hashPrefix string) string {
-	ext := path.Ext(sourcePath)
-	base := strings.TrimSuffix(path.Base(sourcePath), ext)
-	return "/" + base + "." + hashPrefix + ext
+// LogEntries writes one log line listing the active hashes for operator verification.
+func (reg *Registry) LogEntries() {
+	var parts []string
+	// Key by the source filename's base stem so the log line is deterministic
+	// despite Go map-iteration randomness.
+	stems := make(map[string]hashedAssetEntry, len(reg.byURL))
+	for _, e := range reg.byURL {
+		stem := strings.TrimSuffix(path.Base(e.sourcePath), path.Ext(e.sourcePath))
+		stems[stem] = e
+	}
+	for _, stem := range []string{"app", "wasm_exec"} {
+		if e, ok := stems[stem]; ok {
+			// "/app.<hash>.wasm" → "<hash>".
+			base := strings.TrimPrefix(e.hashedURL, "/")
+			parts = append(parts, stem+"="+extractHashFromBase(base))
+		}
+	}
+	log.Printf("hashed assets: %s", strings.Join(parts, " "))
 }
 
-// extractHashFromBase extracts the 8-hex segment from a base filename.
-// "app.deadbeef.wasm" → "deadbeef".
-func extractHashFromBase(base string) string {
-	parts := strings.Split(base, ".")
-	if len(parts) >= 3 {
-		return parts[len(parts)-2]
-	}
-	return base
+// lookup returns the entry for a given hashed URL, or false if not registered.
+func (reg *Registry) lookup(url string) (hashedAssetEntry, bool) {
+	e, ok := reg.byURL[url]
+	return e, ok
+}
+
+// HTMLCache holds the boot-time rewritten HTML body for a single entry point.
+type HTMLCache struct {
+	body     []byte
+	modTime  time.Time
+	filename string // for http.ServeContent name hint
 }
 
 // NewHTMLCache reads filePath from fsys, replaces /app.wasm and /wasm_exec.js with
@@ -180,6 +141,27 @@ func NewHTMLCache(fsys fs.FS, filePath string, reg *Registry, modTime time.Time)
 		modTime:  modTime,
 		filename: path.Base(filePath),
 	}, nil
+}
+
+// serve writes the cached HTML to w. It returns false without writing if the
+// request method is neither GET nor HEAD, so the caller can fall through to the
+// FileServer. Sets Content-Type: text/html; charset=utf-8 and Cache-Control: no-cache.
+//
+// The no-cache directive is what makes the "immutable" policy on the hashed asset
+// URLs safe: this HTML is the only document that names them, so a client that
+// reuses it without revalidating stays pinned to the previous build for the whole
+// seven-day asset lifetime. Without an explicit directive the response falls to
+// heuristic caching off Last-Modified, whose window grows with process uptime.
+// no-cache still permits storing, so ServeContent answers If-Modified-Since with a
+// 304 and the body is not retransmitted.
+func (c *HTMLCache) serve(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	http.ServeContent(w, r, c.filename, c.modTime, bytes.NewReader(c.body))
+	return true
 }
 
 // Handler returns an http.Handler that:
@@ -278,4 +260,22 @@ func serveHashedAsset(w http.ResponseWriter, r *http.Request, fsys fs.FS, entry 
 	}
 	w.Header().Set("Content-Type", entry.contentType)
 	http.ServeContent(w, r, fi.Name(), fi.ModTime(), rs)
+}
+
+// insertHash derives the public hashed URL from a source path.
+// "app.wasm" → "/app.<hash>.wasm"; "wasm_exec.js" → "/wasm_exec.<hash>.js".
+func insertHash(sourcePath, hashPrefix string) string {
+	ext := path.Ext(sourcePath)
+	base := strings.TrimSuffix(path.Base(sourcePath), ext)
+	return "/" + base + "." + hashPrefix + ext
+}
+
+// extractHashFromBase extracts the 8-hex segment from a base filename.
+// "app.deadbeef.wasm" → "deadbeef".
+func extractHashFromBase(base string) string {
+	parts := strings.Split(base, ".")
+	if len(parts) >= 3 {
+		return parts[len(parts)-2]
+	}
+	return base
 }
