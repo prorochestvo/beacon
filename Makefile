@@ -11,7 +11,12 @@ TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 BUILD_OPTIONS := "-s -w -X main.BuildVersion=${BRANCH} -X main.BuildTime=${TIME} -X main.BuildHash=${BUILD}"
 
-.PHONY: all run build build-collector build-notifier build-web build-wasm build-migrator migrate test lint format audit audit-help doctor-help swagger clean init backups
+GOLANGCI_VERSION := v2.12.2
+# Revision the adoption gate compares against: only code newer than this is
+# required to be clean while the standing findings are worked off.
+LINT_BASE ?= origin/main
+
+.PHONY: all run build build-collector build-notifier build-web build-wasm build-migrator migrate test lint lint-new format audit audit-help doctor-help swagger clean init backups
 
 
 
@@ -98,13 +103,23 @@ test: format
 		echo "WARNING: 'node' not found — skipping WASM tests (install Node.js 18+ to run them)"; \
 	fi
 
-## lint: go vet + forbidden-import guard (no CGO-dependent SQLite driver in go.mod)
+## lint: golangci-lint over the whole tree, then the text-level review checks
 lint:
-	CGO_ENABLED=0 go vet ./...
-	@if grep -qE 'github.com/mattn/go-sqlite3' go.mod; then \
-		echo "lint failure: forbidden CGO-dependent SQLite driver in go.mod (use modernc.org/sqlite)"; \
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+		echo "golangci-lint not found — install $(GOLANGCI_VERSION): https://golangci-lint.run/docs/welcome/install/local/"; \
 		exit 1; \
-	fi
+	}
+	CGO_ENABLED=0 golangci-lint run ./...
+	@scripts/lint-checks.sh
+
+## lint-new: lint only code changed since $(LINT_BASE); this is the mergeable gate
+lint-new:
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+		echo "golangci-lint not found — install $(GOLANGCI_VERSION): https://golangci-lint.run/docs/welcome/install/local/"; \
+		exit 1; \
+	}
+	CGO_ENABLED=0 golangci-lint run --new-from-rev=$(LINT_BASE) ./...
+	@scripts/lint-checks.sh
 
 ## audit: probe seeded rate sources; default audits all sources; override with ARGS="--source halyk_usd" (exits non-zero on any MISS)
 ARGS ?= --all
