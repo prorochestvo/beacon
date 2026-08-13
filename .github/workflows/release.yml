@@ -74,8 +74,11 @@ jobs:
           APP_BUILD_OPTIONS: "-s -w -X 'main.BuildVersion=${{ github.ref_name }}' -X main.BuildTime=${{ steps.vid.outputs.build_time }} -X main.BuildHash=${{ steps.vid.outputs.commit_hash }}"
         run: |
           mkdir -p ./cmd/web/static ./build
-          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" ./cmd/web/static/wasm_exec.js
-          CGO_ENABLED=0 GOOS=js GOARCH=wasm go build -o ./cmd/web/static/app.wasm ./cmd/wasm
+          # make build-wasm, not the commands inline: this step used to restate them and
+          # left out the gzip, so app.wasm.gz was absent from the embedded FS and the
+          # server's precompressed path silently fell through to serving 4.59 MB raw.
+          # One definition means the omission cannot recur (#79).
+          make build-wasm
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${APP_BUILD_OPTIONS}" -o ./build/webapp    ./cmd/web
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${APP_BUILD_OPTIONS}" -o ./build/collector ./cmd/collector
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${APP_BUILD_OPTIONS}" -o ./build/notifier  ./cmd/notifier

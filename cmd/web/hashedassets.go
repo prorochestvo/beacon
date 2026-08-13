@@ -96,12 +96,24 @@ func (c *htmlCache) serve(w http.ResponseWriter, r *http.Request) bool {
 // newHashedAssetRegistry returns a registry built from specs against fsys, or an
 // error if any spec's source file cannot be read. The hash is over raw
 // (uncompressed) bytes, so a gzip-level change alone does not change the hashed URL.
+//
+// A declared gzipPath that does not resolve is an error too, not a shrug. serveHashedAsset
+// treats a failed open of the sibling as a signal to serve the plain file, which is the
+// right behaviour for a spec that declares no sibling and the wrong one for a build that
+// was supposed to produce it: the release workflow omitted the gzip step for months and
+// production served 4.59 MB where 1.21 MB would do, with nothing anywhere reporting it
+// (#79). Startup is where a missing build artifact should be noticed.
 func newHashedAssetRegistry(fsys fs.FS, specs []assetSpec) (*hashedAssetRegistry, error) {
 	r := &hashedAssetRegistry{byURL: make(map[string]hashedAssetEntry, len(specs))}
 	for _, s := range specs {
 		b, err := fs.ReadFile(fsys, s.sourcePath)
 		if err != nil {
 			return nil, fmt.Errorf("hashed asset: read %s: %w", s.sourcePath, err)
+		}
+		if s.gzipPath != "" {
+			if _, statErr := fs.Stat(fsys, s.gzipPath); statErr != nil {
+				return nil, fmt.Errorf("hashed asset: %s declares gzip sibling %s: %w", s.sourcePath, s.gzipPath, statErr)
+			}
 		}
 		sum := sha256.Sum256(b)
 		prefix := hex.EncodeToString(sum[:4]) // 8 hex characters
