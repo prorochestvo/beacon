@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 
 	"github.com/stretchr/testify/assert"
@@ -113,6 +114,38 @@ func healthSource(name, interval string, active bool) domain.RateSource {
 		BaseCurrency:  "USD",
 		QuoteCurrency: "KZT",
 		Kind:          domain.RateSourceKindBID,
+	}
+}
+
+// TestSourceHealthAgent_AbortIsMarked covers the worst case #74 names. This agent is the
+// watchdog that reports a source gone silent, so when its own pre-flight read fails, the
+// outage it exists to announce disappears along with it.
+func TestSourceHealthAgent_AbortIsMarked(t *testing.T) {
+	t.Parallel()
+
+	for name, build := range map[string]func(error) (*SourceHealthAgent, error){
+		"source read": func(readErr error) (*SourceHealthAgent, error) {
+			return NewSourceHealthAgent(&fakeHealthSourceRepo{err: readErr}, &fakeHealthHistoryRepo{},
+				newFakeHealthStateRepo(), &fakeHealthEventRepo{}, testAdminChatID, 0, 0, io.Discard)
+		},
+		"collection history read": func(readErr error) (*SourceHealthAgent, error) {
+			return NewSourceHealthAgent(&fakeHealthSourceRepo{}, &fakeHealthHistoryRepo{err: readErr},
+				newFakeHealthStateRepo(), &fakeHealthEventRepo{}, testAdminChatID, 0, 0, io.Discard)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			readErr := errors.New("read interrupted")
+			agent, buildErr := build(readErr)
+			require.NoError(t, buildErr)
+
+			_, err := agent.Run(t.Context())
+			require.Error(t, err)
+			require.ErrorIs(t, err, internal.ErrAgentAborted,
+				"the watchdog going quiet is the failure that must reach a human")
+			require.ErrorIs(t, err, readErr, "the cause must survive the marking")
+		})
 	}
 }
 

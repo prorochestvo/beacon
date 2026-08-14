@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -184,8 +185,30 @@ func main() {
 	if err = dispatchAgent.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		errs = append(errs, err)
 	}
-	if err = errors.Join(errs...); err != nil {
-		log.Printf("execution: completed with errors: %s", err)
+	runErr := errors.Join(errs...)
+	if runErr != nil {
+		log.Printf("execution: completed with errors: %s", runErr)
+	}
+
+	// An agent that did no work at all is the one failure nobody would otherwise hear
+	// about. The log file is the only destination for everything above, cron discards
+	// stderr, and /health/check cannot see it — its inspectors probe connectivity, not
+	// whether a sweep ran. Worst case is SourceHealthAgent itself: it is the watchdog
+	// that reports a source gone silent, so when it aborts, the outage it exists to
+	// announce becomes invisible along with it (#74).
+	//
+	// Deliberately not sent for runErr as a whole. RateAgent reports an error when any
+	// single source of thirty fails to fetch, which on scraped third-party pages happens
+	// most ticks; a message that arrives every tick is one nobody reads by the end of the
+	// week, and SourceHealthAgent already exists because only sustained silence is news.
+	//
+	// Failing to deliver this is logged and nothing more: there is no third channel to
+	// escalate to, and taking the run down over it would help no one.
+	if errors.Is(runErr, internal.ErrAgentAborted) {
+		text := fmt.Sprintf("Beacon notifier: an agent aborted before doing any work.\n\n%s", runErr)
+		if sendErr := tbot.SendPlainTextMessage(context.Background(), integration.TelegramChatID(tbot.AdminChatID()), text); sendErr != nil {
+			log.Printf("execution: could not report the aborted agent to the admin chat: %s", sendErr)
+		}
 	}
 	if ctx.Err() != nil {
 		log.Printf("execution: stopped by signal: %s", ctx.Err())

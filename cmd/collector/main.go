@@ -143,8 +143,9 @@ func main() {
 			}
 		}()
 	}
-	if err = errors.Join(errs...); err != nil {
-		log.Printf("execution: completed with errors: %s", err)
+	runErr := errors.Join(errs...)
+	if runErr != nil {
+		log.Printf("execution: completed with errors: %s", runErr)
 	}
 
 	// Vacuum stale weather observations to prevent unbounded table growth.
@@ -170,6 +171,18 @@ func main() {
 	}
 
 	log.Println("execution: done")
+
+	// A non-zero exit is reserved for an agent that did no work at all. Exiting on
+	// runErr as a whole would mean exiting most ticks: RateAgent reports an error when
+	// any single source of thirty fails to fetch, and on scraped third-party pages that
+	// is routine rather than news. A signal that fires every run is not one (#74).
+	//
+	// This binary holds no Telegram client, by the same reasoning recorded in
+	// cmd/notifier: the component that just failed to collect is the wrong one to
+	// announce it. The exit code is what the cron wrapper can see.
+	if errors.Is(runErr, internal.ErrAgentAborted) {
+		os.Exit(1)
+	}
 }
 
 func init() {

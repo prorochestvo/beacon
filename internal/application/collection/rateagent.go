@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/prorochestvo/loginjector"
+	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/tools/rateextractor"
 )
@@ -97,7 +98,7 @@ func (a *RateAgent) Run(ctx context.Context) (err error) {
 
 	var sources []domain.RateSource
 	if s, errSource := a.rateSourceRepository.ObtainAllRateSources(ctx); errSource != nil {
-		errSource = errors.Join(errSource, loginjector.NewTraceError())
+		errSource = errors.Join(internal.ErrAgentAborted, errSource, loginjector.NewTraceError())
 		return errSource
 	} else if len(s) > 0 {
 		now := time.Now().UTC()
