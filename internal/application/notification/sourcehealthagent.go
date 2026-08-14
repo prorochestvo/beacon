@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/prorochestvo/loginjector"
+	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
@@ -117,12 +118,14 @@ func (a *SourceHealthAgent) Run(ctx context.Context) (SourceHealthReport, error)
 
 	sources, err := a.sourceRepo.ObtainAllRateSources(ctx)
 	if err != nil {
-		return report, errors.Join(fmt.Errorf("source health: read sources: %w", err), loginjector.NewTraceError())
+		return report, errors.Join(internal.ErrAgentAborted,
+			fmt.Errorf("source health: read sources: %w", err), loginjector.NewTraceError())
 	}
 
 	health, err := a.historyRepo.ObtainSourceCollectionHealth(ctx)
 	if err != nil {
-		return report, errors.Join(fmt.Errorf("source health: read collection history: %w", err), loginjector.NewTraceError())
+		return report, errors.Join(internal.ErrAgentAborted,
+			fmt.Errorf("source health: read collection history: %w", err), loginjector.NewTraceError())
 	}
 	byName := make(map[string]domain.SourceCollectionHealth, len(health))
 	for _, h := range health {

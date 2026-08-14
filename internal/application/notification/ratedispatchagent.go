@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/prorochestvo/loginjector"
+	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	integration "github.com/seilbekskindirov/beacon/internal/infrastructure/telegrambot"
 )
@@ -44,7 +45,7 @@ type RateDispatchAgent struct {
 func (a *RateDispatchAgent) Run(ctx context.Context) error {
 	events, err := a.rateUserEventRepository.ObtainUnprocessedRateUserEvents(ctx)
 	if err != nil {
-		err = errors.Join(err, loginjector.NewTraceError())
+		err = errors.Join(internal.ErrAgentAborted, err, loginjector.NewTraceError())
 		return err
 	}
 

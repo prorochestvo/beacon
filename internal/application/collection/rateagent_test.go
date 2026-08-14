@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/repository"
 	"github.com/stretchr/testify/require"
@@ -104,6 +105,53 @@ func TestRateAgent_execution(t *testing.T) {
 		errs := a.execution(t.Context(), []domain.RateSource{{Name: "src1"}, {Name: "src2"}})
 		require.Empty(t, errs)
 		require.Len(t, histRepo.retained, 2)
+	})
+}
+
+// TestRateAgent_AbortIsDistinguishableFromSourceFailures guards the distinction #74 turns
+// on. Marking every error would make the signal fire most ticks — a source of thirty
+// failing to fetch is routine on scraped pages — and a signal that fires every tick is
+// read by nobody within a week.
+func TestRateAgent_AbortIsDistinguishableFromSourceFailures(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a failed source read aborts and is marked", func(t *testing.T) {
+		t.Parallel()
+
+		readErr := errors.New("rate_sources read interrupted")
+		a := &RateAgent{
+			rateSourceRepository:       &mockRateSourceRepository{err: readErr},
+			executionHistoryRepository: &mockExecutionHistoryRepository{},
+			rateValueRepository:        &mockRateValueRepository{},
+			plainExtractor:             &mockRateExtractor{},
+			logger:                     io.Discard,
+		}
+
+		err := a.Run(t.Context())
+		require.Error(t, err)
+		require.ErrorIs(t, err, internal.ErrAgentAborted,
+			"nothing was collected, and that is the failure worth waking someone for")
+		require.ErrorIs(t, err, readErr, "the cause must survive the marking")
+	})
+
+	t.Run("a failing source is not an abort", func(t *testing.T) {
+		t.Parallel()
+
+		extractor := &mockRateExtractor{err: errors.New("fetch error")}
+		a := &RateAgent{
+			rateSourceRepository: &mockRateSourceRepository{sources: []domain.RateSource{
+				{Name: "src1", Interval: "1s", Active: true},
+			}},
+			executionHistoryRepository: &mockExecutionHistoryRepository{},
+			rateValueRepository:        &mockRateValueRepository{},
+			plainExtractor:             extractor,
+			logger:                     io.Discard,
+		}
+
+		err := a.Run(t.Context())
+		require.Error(t, err, "the source failure is still reported")
+		require.NotErrorIs(t, err, internal.ErrAgentAborted,
+			"the sweep ran; one source failing is what SourceHealthAgent exists to judge, not an alert")
 	})
 }
 

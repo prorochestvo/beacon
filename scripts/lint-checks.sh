@@ -51,7 +51,12 @@ report() {
 scan_list() {
 	local pattern="$1"
 	if [ -z "$base" ]; then
-		git ls-files -- . 2>/dev/null | grep -E "$pattern"
+		# Tracked and untracked both. git ls-files alone omits a file that has not been
+		# added yet, which is precisely the file someone is writing when they run this.
+		{
+			git ls-files -- . 2>/dev/null
+			git ls-files --others --exclude-standard -- . 2>/dev/null
+		} | sort -u | grep -E "$pattern"
 		return
 	fi
 	{
@@ -118,7 +123,15 @@ while IFS= read -r file; do
 	[ -n "$types" ] || continue
 	while IFS= read -r t; do
 		[ -n "$t" ] || continue
-		if ! grep -qE "^var _ .* = \(?\*?&?$t\b" "$file"; then
+		# Both forms, because the block one is how most of this tree writes them:
+		#
+		#   var _ Iface = (*mockThing)(nil)
+		#   var ( _ Iface = (*mockThing)(nil) )
+		#
+		# A "^var _" grep sees only the first and reports every block member as missing —
+		# the exact failure R1's own detect note warns about, and it fired here: four
+		# assertions had been sitting in sourcehealthagent_test.go all along.
+		if ! grep -qE "^(var )?[[:space:]]*_ .* = \(?\*?&?$t\b" "$file"; then
 			report "$file: $t has no compile-time interface assertion (var _ Iface = (*$t)(nil))"
 		fi
 	done <<<"$types"

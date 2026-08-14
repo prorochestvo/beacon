@@ -18,6 +18,20 @@ import (
 // ErrNotFound is returned when a requested entity does not exist in the data store.
 var ErrNotFound = errors.New("not found")
 
+// ErrAgentAborted marks an agent that gave up before doing any of its work — a
+// pre-flight read that failed, leaving nothing collected, nothing evaluated, nothing
+// dispatched.
+//
+// It exists to separate that from the errors these agents return routinely. RateAgent
+// returns one when any single source of thirty fails to fetch, which on scraped
+// third-party pages happens most ticks; SourceHealthAgent exists precisely because a
+// per-tick failure is not news and only sustained silence is. Reporting on the joined
+// error would therefore alert on every tick and be ignored within a day, while
+// reporting on nothing at all is what makes a total outage invisible (#74).
+//
+// Wrap the return of a load that precedes the work, not an error from inside the loop.
+var ErrAgentAborted = errors.New("agent aborted before doing any work")
+
 // NewPublicError creates a new PublicError with the given details.
 // Multiple detail strings are joined with spaces to form the error message.
 func NewPublicError(details ...string) *PublicError {
