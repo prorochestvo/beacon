@@ -20,8 +20,7 @@ import (
 // last_notified_at column via domain.ForecastDateKey) caps a row to at most one
 // fire per forecast_date — the anti-jitter backstop for a daily min/max that
 // crosses the fire/re-arm boundary more than once within one calendar day as the
-// collector rewrites the observation. See the alert-phase loop below and
-// plans/262-weather-alert-edge-trigger-hysteresis.md for the full design.
+// collector rewrites the observation. The alert-phase loop below is the whole of it.
 //
 // rain_alert is the one kind outside both of those generalisations: it notifies on
 // BOTH latch edges (rain expected / rain cleared) and is exempt from the fire cap,
@@ -70,14 +69,25 @@ type WeatherCheckAgent struct {
 // notified so the next run retries. A city with no observation yet is skipped
 // without advancing so it fires once collection data arrives.
 func (a *WeatherCheckAgent) Run(ctx context.Context) error {
-	cities, err := a.cityRepo.ObtainDueWeatherUserCities(ctx, domain.WeatherNotifyMorningSummary)
-	if err != nil {
-		return errors.Join(err, loginjector.NewTraceError())
-	}
-
 	now := time.Now().UTC()
 	var errs []error
 	var totalQueued, totalAttempted int
+
+	// A failure here is recorded and execution continues. The alert phase below issues
+	// its own queries per kind and shares nothing with this one, so returning would
+	// suppress heat, frost, thunderstorm, rain and thaw for the whole tick over a fault
+	// in the morning-summary read (#75). Nothing is lost either way — IsMorningDue stays
+	// true until AdvanceLastNotifiedAt fires and the alert latches hold — but a delayed
+	// thunderstorm alert is the part of "delayed" that matters.
+	//
+	// cities is nil on error, so the loop below is a no-op without a guard.
+	cities, err := a.cityRepo.ObtainDueWeatherUserCities(ctx, domain.WeatherNotifyMorningSummary)
+	if err != nil {
+		errs = append(errs, errors.Join(
+			fmt.Errorf("weather summary: load due cities: %w", err),
+			loginjector.NewTraceError(),
+		))
+	}
 
 	for _, city := range cities {
 		due, tzErr := city.IsMorningDue(now)

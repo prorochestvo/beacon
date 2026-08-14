@@ -965,14 +965,17 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 	})
 }
 
-// mockLatchCall records one SetWeatherAlertLatched call.
-type mockLatchCall struct {
+// latchCall records one SetWeatherAlertLatched call.
+// latchCall and firedCall record calls for assertion. They are not mocks — they
+// implement no interface — and were named mock* until R1's check reasonably read the
+// prefix as a promise of a compile-time assertion there is nothing to assert.
+type latchCall struct {
 	id      string
 	latched bool
 }
 
-// mockFiredCall records one MarkWeatherAlertFired call.
-type mockFiredCall struct {
+// firedCall records one MarkWeatherAlertFired call.
+type firedCall struct {
 	id           string
 	firedForDate time.Time
 }
@@ -986,14 +989,20 @@ type mockWeatherCheckCityRepo struct {
 	cities       []domain.WeatherUserCity
 	citiesByKind map[domain.WeatherNotifyKind][]domain.WeatherUserCity
 	err          error
-	advanced     []string        // IDs passed to AdvanceLastNotifiedAt
-	latched      []mockLatchCall // SetWeatherAlertLatched calls, in call order
-	fired        []mockFiredCall // MarkWeatherAlertFired calls, in call order
+	// errByKind fails only the listed kinds, so a test can break one phase and leave
+	// the other working — which is the whole subject of #75.
+	errByKind map[domain.WeatherNotifyKind]error
+	advanced  []string    // IDs passed to AdvanceLastNotifiedAt
+	latched   []latchCall // SetWeatherAlertLatched calls, in call order
+	fired     []firedCall // MarkWeatherAlertFired calls, in call order
 }
 
 func (m *mockWeatherCheckCityRepo) ObtainDueWeatherUserCities(_ context.Context, kind domain.WeatherNotifyKind) ([]domain.WeatherUserCity, error) {
 	if m.err != nil {
 		return nil, m.err
+	}
+	if kindErr, ok := m.errByKind[kind]; ok {
+		return nil, kindErr
 	}
 	if m.citiesByKind != nil {
 		if cities, ok := m.citiesByKind[kind]; ok {
@@ -1015,12 +1024,12 @@ func (m *mockWeatherCheckCityRepo) AdvanceLastNotifiedAt(_ context.Context, id s
 }
 
 func (m *mockWeatherCheckCityRepo) SetWeatherAlertLatched(_ context.Context, id string, latched bool) error {
-	m.latched = append(m.latched, mockLatchCall{id: id, latched: latched})
+	m.latched = append(m.latched, latchCall{id: id, latched: latched})
 	return nil
 }
 
 func (m *mockWeatherCheckCityRepo) MarkWeatherAlertFired(_ context.Context, id string, firedForDate time.Time) error {
-	m.fired = append(m.fired, mockFiredCall{id: id, firedForDate: firedForDate})
+	m.fired = append(m.fired, firedCall{id: id, firedForDate: firedForDate})
 	return nil
 }
 
@@ -1080,6 +1089,79 @@ func (m *mockCountingObsRepo) ObtainLatestObservation(_ context.Context, _, prov
 // alert used to notify only on the way into the condition, and the per-forecast_date fire
 // cap made a second notification on the same day impossible. Both directions must now
 // reach the queue, within one forecast_date, and neither may touch the fire cursor.
+// TestWeatherCheckAgent_MorningFailureDoesNotSuppressAlerts is the regression guard for
+// #75. Run used to return on the first ObtainDueWeatherUserCities error, so a fault in the
+// morning-summary read silently cancelled heat, frost, thunderstorm, rain and thaw for the
+// whole tick — two phases that share no query and no state.
+func TestWeatherCheckAgent_MorningFailureDoesNotSuppressAlerts(t *testing.T) {
+	t.Parallel()
+
+	morningErr := errors.New("morning read interrupted")
+
+	newStormFixture := func() (*mockWeatherCheckCityRepo, *mockWeatherCheckObsRepo, *mockCheckEventRepository) {
+		stormCode := 95 // thunderstorm band
+		stormCity := domain.WeatherUserCity{
+			ID:           "storm-c1",
+			UserType:     domain.UserTypeTelegram,
+			UserID:       "user-storm",
+			LocationID:   "loc-storm",
+			DisplayName:  "Storm City",
+			Timezone:     "UTC",
+			NotifyKind:   domain.WeatherNotifyAlertThunderstorm,
+			AlertLatched: false, // armed
+		}
+		obs := &domain.WeatherObservation{
+			Provider:     domain.ProviderOpenMeteo,
+			LocationID:   "loc-storm",
+			WeatherCode:  &stormCode,
+			ForecastDate: "2026-01-10",
+		}
+		cityRepo := &mockWeatherCheckCityRepo{
+			citiesByKind: map[domain.WeatherNotifyKind][]domain.WeatherUserCity{
+				domain.WeatherNotifyAlertThunderstorm: {stormCity},
+			},
+			errByKind: map[domain.WeatherNotifyKind]error{
+				domain.WeatherNotifyMorningSummary: morningErr,
+			},
+		}
+		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{
+			domain.ProviderOpenMeteo: obs,
+		}}
+		return cityRepo, obsRepo, &mockCheckEventRepository{}
+	}
+
+	t.Run("the alert phase still runs and queues", func(t *testing.T) {
+		t.Parallel()
+		cityRepo, obsRepo, eventRepo := newStormFixture()
+
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		err := a.Run(t.Context())
+
+		require.Error(t, err, "the morning failure must still be reported")
+		require.ErrorIs(t, err, morningErr)
+		require.Len(t, eventRepo.retained, 1,
+			"a thunderstorm alert must fire even though the morning-summary read failed")
+		require.Len(t, cityRepo.fired, 1)
+		assert.Equal(t, "storm-c1", cityRepo.fired[0].id)
+	})
+
+	t.Run("a failure in each phase is reported, not just the first", func(t *testing.T) {
+		t.Parallel()
+		cityRepo, obsRepo, eventRepo := newStormFixture()
+		frostErr := errors.New("frost read interrupted")
+		cityRepo.errByKind[domain.WeatherNotifyAlertFrost] = frostErr
+
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		err := a.Run(t.Context())
+
+		require.Error(t, err)
+		require.ErrorIs(t, err, morningErr, "the morning failure must survive the join")
+		require.ErrorIs(t, err, frostErr, "the alert-phase failure must survive the join")
+		require.Len(t, eventRepo.retained, 1,
+			"the kinds that did load must still fire")
+	})
+}
+
 func TestWeatherCheckAgent_RainBothEdges(t *testing.T) {
 	t.Parallel()
 
