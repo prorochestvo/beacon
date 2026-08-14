@@ -103,6 +103,7 @@ func (reg *Registry) lookup(url string) (hashedAssetEntry, bool) {
 // HTMLCache holds the boot-time rewritten HTML body for a single entry point.
 type HTMLCache struct {
 	body     []byte
+	etag     string // strong validator over body, quoted per RFC 9110
 	modTime  time.Time
 	filename string // for http.ServeContent name hint
 }
@@ -136,8 +137,15 @@ func NewHTMLCache(fsys fs.FS, filePath string, reg *Registry, modTime time.Time)
 		b = bytes.ReplaceAll(b, []byte("/wasm_exec.js"), []byte(jsHashedURL))
 	}
 
+	// The validator is the content, not the clock. modTime is the process start, so
+	// without this every restart invalidates the document for every client at once and
+	// re-sends it whole — even for a release that did not touch the HTML, which is most
+	// of them. Cheap to compute: the rewritten body is already in hand (#83).
+	sum := sha256.Sum256(b)
+
 	return &HTMLCache{
 		body:     b,
+		etag:     `"` + hex.EncodeToString(sum[:]) + `"`,
 		modTime:  modTime,
 		filename: path.Base(filePath),
 	}, nil
@@ -160,6 +168,11 @@ func (c *HTMLCache) serve(w http.ResponseWriter, r *http.Request) bool {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
+	// Set before ServeContent, which then answers If-None-Match itself and prefers it
+	// over If-Modified-Since. Last-Modified stays for the 200 — it says when this
+	// process started, which is worth having in a header — but it no longer decides
+	// revalidation, and writeNotModified strips it from the 304 anyway.
+	w.Header().Set("Etag", c.etag)
 	http.ServeContent(w, r, c.filename, c.modTime, bytes.NewReader(c.body))
 	return true
 }
