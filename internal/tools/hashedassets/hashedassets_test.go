@@ -744,5 +744,89 @@ func TestHTMLCache_Serve(t *testing.T) {
 	})
 }
 
+// TestHTMLCacheETagSurvivesRestart is the regression guard for #83. Cache-Control:
+// no-cache means every page open costs a conditional request, so the validator's quality
+// decides whether that request is a 304 or a full 36 KB transfer. The old validator was
+// the process start time, which moves on every restart regardless of content — so a
+// server-only release re-sent the document to every client for nothing.
+func TestHTMLCacheETagSurvivesRestart(t *testing.T) {
+	t.Parallel()
+
+	mapFS := minimalMapFS()
+	reg, err := NewRegistry(mapFS, defaultSpecs())
+	require.NoError(t, err)
+
+	firstBoot := time.Now().Add(-time.Hour)
+	before, err := NewHTMLCache(mapFS, "index.html", reg, firstBoot)
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	before.serve(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
+	etag := w.Result().Header.Get("Etag")
+	require.NotEmpty(t, etag, "the 200 must carry a validator to revalidate against")
+
+	// The restart: same bytes, a modTime an hour later. Under Last-Modified alone this is
+	// exactly the case that produced a 200.
+	after, err := NewHTMLCache(mapFS, "index.html", reg, time.Now())
+	require.NoError(t, err)
+
+	afterRec := httptest.NewRecorder()
+	after.serve(afterRec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
+	require.Equal(t, etag, afterRec.Result().Header.Get("Etag"),
+		"the validator must be the content, so a restart alone cannot change it")
+
+	t.Run("unchanged content revalidates to 304 across the restart", func(t *testing.T) {
+		t.Parallel()
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+		r.Header.Set("If-None-Match", etag)
+		rec := httptest.NewRecorder()
+		require.True(t, after.serve(rec, r))
+
+		result := rec.Result()
+		assert.Equal(t, http.StatusNotModified, result.StatusCode,
+			"a restart that did not change the HTML must not re-send it")
+		assert.Equal(t, "no-cache", result.Header.Get("Cache-Control"),
+			"the directive must accompany the 304, or the next open skips revalidation")
+		body, readErr := io.ReadAll(result.Body)
+		require.NoError(t, readErr)
+		assert.Empty(t, body)
+	})
+
+	t.Run("the stale Last-Modified alone would have re-sent it", func(t *testing.T) {
+		t.Parallel()
+		// Same request without the ETag, carrying the pre-restart timestamp: 200, because
+		// modTime moved. This is the behaviour the ETag replaces, pinned so the reason
+		// for the ETag cannot quietly stop being true.
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+		r.Header.Set("If-Modified-Since", firstBoot.UTC().Format(http.TimeFormat))
+		rec := httptest.NewRecorder()
+		require.True(t, after.serve(rec, r))
+		assert.Equal(t, http.StatusOK, rec.Result().StatusCode)
+	})
+
+	t.Run("changed content gets a different validator and a 200", func(t *testing.T) {
+		t.Parallel()
+		changed := minimalMapFS()
+		changed["index.html"] = &fstest.MapFile{Data: []byte(`<html><script src="/wasm_exec.js"></script>CHANGED</html>`)}
+		changedReg, regErr := NewRegistry(changed, defaultSpecs())
+		require.NoError(t, regErr)
+		changedCache, cacheErr := NewHTMLCache(changed, "index.html", changedReg, firstBoot)
+		require.NoError(t, cacheErr)
+
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+		r.Header.Set("If-None-Match", etag)
+		rec := httptest.NewRecorder()
+		require.True(t, changedCache.serve(rec, r))
+
+		result := rec.Result()
+		assert.Equal(t, http.StatusOK, result.StatusCode,
+			"a client holding the old validator must receive the new document")
+		assert.NotEqual(t, etag, result.Header.Get("Etag"))
+		body, readErr := io.ReadAll(result.Body)
+		require.NoError(t, readErr)
+		assert.Contains(t, string(body), "CHANGED")
+	})
+}
+
 // Compile-time check: fstest.MapFS satisfies fs.FS.
 var _ fs.FS = fstest.MapFS{}
