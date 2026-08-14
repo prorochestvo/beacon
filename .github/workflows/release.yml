@@ -39,7 +39,7 @@ jobs:
       # than assumed to be present. An unresolvable base fails the run rather than
       # degrading, so leaving it to checkout's defaults would trade one release failure
       # for another.
-      - run: git fetch --no-tags --depth=0 origin +refs/heads/alpha:refs/remotes/origin/alpha
+      - run: git fetch --no-tags origin +refs/heads/alpha:refs/remotes/origin/alpha
       # lint-new, not lint: the tree carries standing findings being worked off under #68,
       # so the full run is a worklist and is expected to be red. This job was left on
       # `make lint` when ci.main.yml moved, and the first tag after the linter landed
