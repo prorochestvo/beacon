@@ -24,11 +24,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # lint-new resolves LINT_BASE and asks git what changed since it; the default
+          # shallow clone has neither the commit nor the history to reach it.
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - run: make lint
+      # Pinned to the version the Makefile names, so a release and a local run cannot
+      # disagree about what a finding is.
+      - run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+      # This job builds a tag, not a branch, so LINT_BASE is fetched explicitly rather
+      # than assumed to be present. An unresolvable base fails the run rather than
+      # degrading, so leaving it to checkout's defaults would trade one release failure
+      # for another.
+      - run: git fetch --no-tags --depth=0 origin +refs/heads/alpha:refs/remotes/origin/alpha
+      # lint-new, not lint: the tree carries standing findings being worked off under #68,
+      # so the full run is a worklist and is expected to be red. This job was left on
+      # `make lint` when ci.main.yml moved, and the first tag after the linter landed
+      # failed here — before deploying, which is the one thing that went right.
+      #
+      # On a tag cut from alpha's tip this checks little, because the two coincide. The
+      # gate with teeth is ci.main.yml's, which every commit passed on its PR; this one
+      # is here to stay consistent and to catch a tag cut from somewhere unexpected.
+      - run: make lint-new
       - run: make test
 
   deploy:
