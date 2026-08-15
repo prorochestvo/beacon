@@ -166,7 +166,11 @@ func (r *RateValueRepository) ObtainLastNRateValuesBySourceName(ctx context.Cont
 	return rates, nil
 }
 
-// RetainRateValue inserts or updates the given rate value record; Timestamp is always set to now.
+// RetainRateValue inserts or updates the given rate value record.
+//
+// Timestamp is set here and a caller's value is ignored: the field records when this
+// project stored the rate, and nothing upstream supplies a quote time to record instead.
+// See domain.RateValue.Timestamp.
 func (r *RateValueRepository) RetainRateValue(ctx context.Context, record *domain.RateValue) error {
 	if record == nil {
 		err := errors.New("rate value is nil")
@@ -384,9 +388,13 @@ func (r *RateValueRepository) ObtainHistoryForPairsPaged(
 
 	// Query 3: grouped count of distinct (title, timestamp) tuples, in the same
 	// read-only transaction for a consistent snapshot. Pipe-delimited
-	// concatenation because SQLite's COUNT(DISTINCT) takes a single expression;
-	// '|' is safe as long as provider titles contain no '|' — see
-	// plans/015-history-group-by-provider.md Assumption 2.
+	// concatenation because SQLite's COUNT(DISTINCT) takes a single expression.
+	//
+	// Two invariants hold this together, and both are load-bearing rather than
+	// incidental: a provider title is unique per provider, so the title identifies the
+	// series; and no title contains '|', so the concatenation cannot collide two
+	// distinct tuples into one. A seed that violates either undercounts the group total
+	// silently — the page renders, with the wrong number of rows behind it.
 	//
 	// The join resolves against the live rate_sources — one of the things keeping both
 	// tiers in one file buys: the archive needs no mirror of that table for its titles.
