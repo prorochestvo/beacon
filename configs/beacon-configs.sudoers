@@ -1,0 +1,25 @@
+# Narrow passwordless sudo for the operator account (pi5_aide), so a configuration
+# change has a delivery path of its own instead of re-running the provisioning.
+# Install to /etc/sudoers.d/beacon-configs with mode 0440; validate: sudo visudo -c.
+#
+# This adds no capability. pi5_aide already holds (ALL:ALL) ALL on this host; the
+# line below removes a password prompt from something the account can already do.
+# That prompt is the whole problem: it cannot be answered by anything scripted, so
+# `make init` was the only delivery path for configs/ and configuration fixes sat
+# in git without taking effect.
+#
+# Why the grant names a script and not `install`: with a parameterised `install`
+# the caller chooses the destination, which is passwordless root by construction.
+# /usr/local/sbin/beacon-install-configs is root:root 0755, so pi5_aide cannot
+# edit the source-to-destination table it carries, and the reachable set of paths
+# is fixed when `make init` puts the script there. The script installs neither
+# itself nor this file, so neither can be rewritten through the grant either.
+#
+# The argument lists are spelled out rather than left open, which means adding a
+# flag to the script also means updating this file and re-running `make init`.
+# That friction is intended: it keeps the grant readable as exactly what it allows.
+# The CI account (github_aide) is deliberately not granted this — see
+# configs/beacon-deploy.sudoers for the boundary that keeps a leaked deploy key
+# confined to /opt/beacon/{artifacts,bin}.
+pi5_aide ALL=(root) NOPASSWD: /usr/local/sbin/beacon-install-configs "", \
+                              /usr/local/sbin/beacon-install-configs --dry-run
