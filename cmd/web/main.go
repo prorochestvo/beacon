@@ -1,6 +1,7 @@
 // Command web serves the HTTP API and the embedded Mini App static files.
 // It reads BEACON_SQLITEDB_DSN and BEACON_TELEGRAMBOT_DSN from the environment, starts the
-// Telegram bot update loop, and listens on the port configured by --port (default 8080).
+// Telegram bot update loop, and listens on the address configured by --bind and --port
+// (default 127.0.0.1:8080).
 package main
 
 import (
@@ -8,7 +9,6 @@ import (
 	"embed"
 	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -268,7 +269,7 @@ func main() {
 	// a probe grepping for the marker can race the goroutine and connect to a
 	// not-yet-bound port.
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", HttpPort),
+		Addr:         listenAddress(HttpBindAddress, HttpPort),
 		Handler:      middleware.Logger(mux, l.WriterAs(internal.LogLevelInfo)),
 		ReadTimeout:  HttpTimeOut,
 		WriteTimeout: HttpTimeOut,
@@ -282,7 +283,10 @@ func main() {
 	// between bind and Serve. Double-close on the happy path is a harmless no-op,
 	// so the error is intentionally discarded.
 	defer func() { _ = listener.Close() }()
-	log.Printf("http server: listening on %d port", HttpPort)
+	// The full bound address, not just the port: a wildcard bind and a loopback bind
+	// are otherwise indistinguishable in the log, and telling them apart is the whole
+	// point of --bind.
+	log.Printf("http server: listening on %s", srv.Addr)
 	go func() {
 		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("http server: %s", err)
@@ -306,6 +310,7 @@ func init() {
 	// testing package registers them ("flag provided but not defined"). main()
 	// calls flag.Parse() once; tests never invoke main().
 	flagPort = flag.Int("port", HttpPort, "http server port")
+	flagBindAddress = flag.String("bind", HttpBindAddress, "http server bind address, IP literal without a port (127.0.0.1 loopback-only, 0.0.0.0 or :: every interface)")
 	flagTimeout = flag.String("timeout", HttpTimeOut.String(), "HTTP read/write/idle timeout duration")
 	flagLogsDir = flag.String("logs-dir", LogsDir, "path to logs directory")
 	flagVerbosity = flag.String("verbosity", "warning", "minimum stdout log level (debug, info, warning, error, severe, critical)")
@@ -326,6 +331,15 @@ var (
 	LogVerbosity = internal.LogLevelWarning
 	// HttpPort is the TCP port the HTTP server listens on.
 	HttpPort = 8080
+	// HttpBindAddress is the interface the HTTP server binds, overridable with --bind.
+	//
+	// The default is the IPv4 loopback because nginx is the only client: the vhost
+	// reaches the origin over loopback either way, so a wildcard bind buys nothing and
+	// publishes the API on every interface the host happens to have. That left the
+	// firewall as the only thing between an unauthenticated /health/check and the
+	// network (issue #93). A container deployment that must publish the port passes
+	// --bind 0.0.0.0 explicitly.
+	HttpBindAddress = "127.0.0.1"
 	// HttpTimeOut is the read/write/idle timeout for the HTTP server.
 	HttpTimeOut = 30 * time.Second
 	// StaticDir overrides the embedded static file system when non-empty.
@@ -341,12 +355,13 @@ var staticFS embed.FS
 // main. They are package-level so initFlags can apply them to the exported globals,
 // keeping the flag-registration init() free of flag.Parse.
 var (
-	flagPort      *int
-	flagTimeout   *string
-	flagLogsDir   *string
-	flagVerbosity *string
-	flagStaticDir *string
-	flagAPIDsn    *string
+	flagPort        *int
+	flagBindAddress *string
+	flagTimeout     *string
+	flagLogsDir     *string
+	flagVerbosity   *string
+	flagStaticDir   *string
+	flagAPIDsn      *string
 )
 
 // openMeteoGeoAdapter adapts *weatherinfra.OpenMeteo to the gateway's
@@ -388,6 +403,19 @@ func initFlags() {
 		HttpPort = *flagPort
 	}
 
+	// Only an IP literal is accepted. A hostname would let net.Listen pick one of
+	// several resolved addresses, and the forms that carry a port (":8000",
+	// "127.0.0.1:8000", "[::1]:8000") would be re-joined with HttpPort into an
+	// address nothing can bind. Rejection falls back to the loopback default, so a
+	// malformed --bind can never widen exposure.
+	if addr := strings.TrimSpace(*flagBindAddress); addr != "" {
+		if net.ParseIP(addr) == nil {
+			log.Printf("invalid bind address: %s, expected an IP literal without a port, using default %s", addr, HttpBindAddress)
+		} else {
+			HttpBindAddress = addr
+		}
+	}
+
 	if value, err := time.ParseDuration(*flagTimeout); err != nil {
 		log.Printf("invalid timeout value: %s, using default %s", *flagTimeout, HttpTimeOut.String())
 	} else if value > 10*time.Second {
@@ -409,4 +437,11 @@ func initFlags() {
 	if v := *flagAPIDsn; v != "" {
 		APIDsn = v
 	}
+}
+
+// listenAddress returns the address net.Listen binds for the given host and port,
+// bracketing an IPv6 literal the way net.Listen requires. It takes its inputs as
+// arguments rather than reading the globals so it stays a pure function under test.
+func listenAddress(host string, port int) string {
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }

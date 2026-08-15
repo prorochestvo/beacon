@@ -164,9 +164,15 @@ case. Pick the cron interval accordingly — for example, five
 chromedp sources need at least a 150 s gap between invocations to
 avoid overlapping ticks.
 
-The `cmd/web` `http server: listening on N port` line fires only after
-the kernel has bound the port, so monitoring probes may use it as a
-reliable readiness marker. For in-process health checks the webapp exposes two endpoints:
+The `cmd/web` `http server: listening on HOST:PORT` line fires only after
+the kernel has bound the address, so monitoring probes may use it as a
+reliable readiness marker. It reports the full bound address because
+`--bind` decides whether the origin is reachable from off-host at all:
+it defaults to `127.0.0.1`, so `ss -ltn` must show `127.0.0.1:8000` and
+never `*:8000`. Only a deployment that has to publish the port itself —
+a container, say — passes `--bind 0.0.0.0`; behind nginx it is wrong,
+because the vhost reaches the origin over loopback either way.
+For in-process health checks the webapp exposes two endpoints:
 `GET /ping` (liveness — always 200, touches no dependency) and
 `GET /health/check` (readiness — probes SQLite and the Telegram bot,
 returns per-component JSON; 200 when all healthy, 503 when any are down).

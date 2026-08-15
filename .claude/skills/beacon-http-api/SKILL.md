@@ -56,6 +56,19 @@ are written down here.
   (`open-meteo`) appears but never forces 503 (a weather outage must not fail the deploy
   gate). No auth.
 
+## Where cmd/web listens
+
+`--bind` defaults to `127.0.0.1` and `listenAddress()` joins it with `--port`; only an IP
+literal is accepted, and anything else falls back to loopback so a malformed value can
+never widen exposure. Keep it that way: nginx reaches the origin over loopback either way,
+so a wildcard bind buys nothing and publishes an unauthenticated `/health/check` — deployed
+version, uptime, per-dependency status — on every interface the host has. It bound `*:8000`
+for exactly that reason once (#93), and nothing failed; only `ss -ltn` said so. A container
+deployment that must publish the port passes `--bind 0.0.0.0` explicitly.
+
+Binding loopback is not what stops a *co-hosted* vhost reaching Beacon — that neighbour
+proxies over loopback too. Only the port or the neighbour's upstream settles that.
+
 ## Forced weather subscriptions
 
 `alert_thaw` and `rain_alert` are **forced, system-managed rows**. Creating any city
