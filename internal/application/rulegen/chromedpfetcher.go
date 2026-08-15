@@ -9,16 +9,17 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"github.com/seilbekskindirov/beacon/internal/tools/rateextractor"
 )
 
 // NewChromedpFetcher constructs a ChromedpFetcher with the given options, applying
 // defaults for any zero-valued numeric fields.
 func NewChromedpFetcher(opts ChromedpFetcherOptions) *ChromedpFetcher {
 	if opts.Timeout <= 0 {
-		opts.Timeout = defaultChromedpTimeout
+		opts.Timeout = rateextractor.DefaultChromedpTimeout
 	}
 	if opts.NetworkIdleMillis <= 0 {
-		opts.NetworkIdleMillis = defaultChromedpNetworkIdleMs
+		opts.NetworkIdleMillis = rateextractor.DefaultChromedpNetworkIdleMs
 	}
 	if opts.Logger == nil {
 		opts.Logger = io.Discard
@@ -124,9 +125,11 @@ func (f *ChromedpFetcher) buildExecAllocatorOptions(proxyURL string) []chromedp.
 }
 
 // ChromedpFetcherOptions carries construction parameters for ChromedpFetcher.
-// Zero values for numeric fields default to the package constants below.
+// Zero values for the numeric fields fall back to the shared browser budgets in
+// rateextractor, which bound the same browser over the same pages.
 type ChromedpFetcherOptions struct {
-	// Timeout is the hard wall-clock deadline per Fetch call. Defaults to 30 s.
+	// Timeout is the hard wall-clock deadline per Fetch call. Defaults to
+	// rateextractor.DefaultChromedpTimeout.
 	Timeout time.Duration
 	// ChromiumPath is the absolute path to the Chromium/Chrome binary. When
 	// empty, chromedp falls back to its own PATH lookup order: chromium,
@@ -136,8 +139,7 @@ type ChromedpFetcherOptions struct {
 	// When empty, Chromium runs without a proxy.
 	ProxyURL string
 	// NetworkIdleMillis is the additional wait after body is visible before
-	// capturing outerHTML. Defaults to 5000 ms — bank SPAs need 3–5 s post-body
-	// for the rate table to hydrate.
+	// capturing outerHTML. Defaults to rateextractor.DefaultChromedpNetworkIdleMs.
 	NetworkIdleMillis int
 	// WaitSelector, if non-empty, replaces the default body+sleep strategy with
 	// WaitVisible(selector) for SPAs where the rate table appears only after JS
@@ -147,11 +149,6 @@ type ChromedpFetcherOptions struct {
 	// io.Discard (best-effort; errors writing to logger are not returned).
 	Logger io.Writer
 }
-
-const (
-	defaultChromedpTimeout       = 30 * time.Second
-	defaultChromedpNetworkIdleMs = 5000
-)
 
 // fixedExecAllocatorOptionCount is the count of options buildExecAllocatorOptions
 // appends unconditionally (Headless, DisableGPU, NoSandbox, disable-blink-features).

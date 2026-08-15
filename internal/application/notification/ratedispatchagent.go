@@ -17,6 +17,23 @@ import (
 	integration "github.com/seilbekskindirov/beacon/internal/infrastructure/telegrambot"
 )
 
+// defaultEventRetention is how long a settled notification event is kept before
+// Vacuum deletes it. Only sent, failed and canceled rows are eligible; a pending
+// event is never removed by age.
+//
+// This is a destructive delete, not a tiering boundary: rate_user_events has no
+// archive twin, so what this drops is gone. Six months is chosen to outlast any
+// plausible "why did I get this alert?" question while keeping an unbounded,
+// per-user table from growing forever.
+//
+// It equals collection.DefaultHotWindow and is deliberately not the same constant.
+// That one moves aged rate history into an archive that keeps it forever, and its
+// value follows from the dashboard's 360-day chart period. Nothing about a chart
+// range should decide how long a user's delivery log survives, and sharing the
+// declaration would let a change to one silently retune the other — with only this
+// side of the pair able to destroy data.
+const defaultEventRetention = 180 * 24 * time.Hour
+
 // NewRateDispatchAgent constructs a RateDispatchAgent wired to the given transport and event repository.
 func NewRateDispatchAgent(
 	cltTelegram telegramClient,
@@ -94,9 +111,9 @@ func (a *RateDispatchAgent) Run(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// Vacuum removes all non-pending records older than 180 days.
+// Vacuum removes all non-pending records older than defaultEventRetention.
 func (a *RateDispatchAgent) Vacuum(ctx context.Context) error {
-	return a.rateUserEventRepository.RemoveRateUserEventOlderThan(ctx, 180*24*time.Hour)
+	return a.rateUserEventRepository.RemoveRateUserEventOlderThan(ctx, defaultEventRetention)
 }
 
 func (a *RateDispatchAgent) runUserTypeTelegram(ctx context.Context, event *domain.RateUserEvent) error {

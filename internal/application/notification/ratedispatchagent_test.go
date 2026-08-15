@@ -231,6 +231,9 @@ func TestRateDispatchAgent_Vacuum(t *testing.T) {
 		require.NoError(t, err)
 
 		require.NoError(t, agent.Vacuum(t.Context()))
+		// Spelled out rather than compared against defaultEventRetention, which would
+		// assert the constant equals itself. This deletes user data irreversibly, so
+		// the retention window is pinned here and changing it has to be deliberate.
 		require.Equal(t, 180*24*time.Hour, repo.removedDuration)
 	})
 

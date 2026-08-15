@@ -141,12 +141,12 @@ func (e *ChromedpRateExtractor) buildExecAllocatorOptions(proxyURL string) []chr
 }
 
 // runOneInAllocator fetches one source under an existing allocator and applies
-// the extraction pipeline. The per-source 30 s timeout is scoped inside
+// the extraction pipeline. The per-source wall-clock timeout is scoped inside
 // fetchRenderedPageInAllocator so a slow source cannot starve the rest of the batch.
 //
 // applyRulesAndStore runs under allocCtx (batch lifetime), not the per-source
 // timeout: rendering is done, the payload is in memory, and the DB write must
-// not be cut off by the 30 s navigation deadline. allocCtx has no deadline of
+// not be cut off by the navigation deadline. allocCtx has no deadline of
 // its own — it carries whatever RunBatch's caller passed in.
 func (e *ChromedpRateExtractor) runOneInAllocator(allocCtx context.Context, source *domain.RateSource) error {
 	payload, err := e.fetchRenderedPageInAllocator(allocCtx, source)
@@ -158,7 +158,7 @@ func (e *ChromedpRateExtractor) runOneInAllocator(allocCtx context.Context, sour
 
 // fetchRenderedPageInAllocator navigates to source.URL inside the supplied
 // allocator and returns the post-hydration outer HTML. The per-source
-// wall-clock timeout (defaultChromedpTimeout) is applied locally so its expiry
+// wall-clock timeout (DefaultChromedpTimeout) is applied locally so its expiry
 // affects only this source, not the batch's other sources or the subprocess.
 // Short-circuits if a prior fetch for source.URL failed this process lifetime;
 // see recordFailedURL.
@@ -179,7 +179,7 @@ func (e *ChromedpRateExtractor) fetchRenderedPageInAllocator(allocCtx context.Co
 		return nil, err
 	}
 
-	sourceCtx, cancelSource := context.WithTimeout(allocCtx, defaultChromedpTimeout)
+	sourceCtx, cancelSource := context.WithTimeout(allocCtx, DefaultChromedpTimeout)
 	defer cancelSource()
 
 	browserCtx, cancelBrowser := chromedp.NewContext(sourceCtx)
@@ -194,7 +194,7 @@ func (e *ChromedpRateExtractor) fetchRenderedPageInAllocator(allocCtx context.Co
 	if waitSelector != "" {
 		actions = append(actions, chromedp.WaitVisible(waitSelector, chromedp.ByQuery))
 	} else {
-		actions = append(actions, chromedp.Sleep(time.Duration(defaultChromedpNetworkIdleMs)*time.Millisecond))
+		actions = append(actions, chromedp.Sleep(time.Duration(DefaultChromedpNetworkIdleMs)*time.Millisecond))
 	}
 	var rendered string
 	actions = append(actions, chromedp.OuterHTML("html", &rendered, chromedp.ByQuery))
@@ -235,8 +235,27 @@ func (e *ChromedpRateExtractor) recordFailedURL(url string, err error) {
 const fixedExecAllocatorOptionCount = 4
 
 const (
-	defaultChromedpTimeout       = 30 * time.Second
-	defaultChromedpNetworkIdleMs = 5000
+	// DefaultChromedpTimeout is the wall-clock budget for rendering one page with
+	// headless Chrome — navigate, wait for the DOM, read the outer HTML back.
+	//
+	// It bounds a single page rather than a batch: the collector renders every
+	// chromedp source under one shared subprocess, so a per-source deadline is what
+	// stops one unreachable bank from consuming the whole tick.
+	//
+	// Exported because internal/application/rulegen drives the same browser over the
+	// same pages to generate their extraction rules, and takes this as the default
+	// for its own fetcher. The two budgets have always been equal; sharing the
+	// declaration is what keeps them that way.
+	DefaultChromedpTimeout = 30 * time.Second
+
+	// DefaultChromedpNetworkIdleMs is how much longer to wait, in milliseconds, once
+	// the body is visible and the source declares no wait selector.
+	//
+	// Body-visible is not rate-visible on a JS-rendered page: the bank SPAs this
+	// project scrapes need a further 3-5 s to hydrate their rate table. A source that
+	// names a wait selector skips this wait entirely, and is the better option
+	// wherever the DOM offers a stable hook to wait on.
+	DefaultChromedpNetworkIdleMs = 5000
 )
 
 // validateNavigableURL rejects URLs Navigate must never touch — empty,
