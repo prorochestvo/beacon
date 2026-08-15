@@ -33,7 +33,7 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		temp := 22.5
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/current": currentResponse([]dto.WeatherCurrentItem{
+				"/api/v1/me/weather/current": currentResponse([]dto.WeatherCurrentItem{
 					{
 						LocationID:     "1234",
 						DisplayName:    "Almaty",
@@ -62,7 +62,7 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/current": currentResponse(nil),
+				"/api/v1/me/weather/current": currentResponse(nil),
 			},
 		}
 		page := currentPageWithFetcher(f)
@@ -77,7 +77,7 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/current": currentResponse([]dto.WeatherCurrentItem{
+				"/api/v1/me/weather/current": currentResponse([]dto.WeatherCurrentItem{
 					{LocationID: "1234", DisplayName: "Almaty", Timezone: "Asia/Almaty", HasData: false},
 				}),
 			},
@@ -95,7 +95,7 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlErr: map[string]error{
-				"/api/me/weather/current": errors.New("http 401"),
+				"/api/v1/me/weather/current": errors.New("http 401"),
 			},
 		}
 		page := currentPageWithFetcher(f)
@@ -111,7 +111,7 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlErr: map[string]error{
-				"/api/me/weather/current": errors.New("connection refused"),
+				"/api/v1/me/weather/current": errors.New("connection refused"),
 			},
 		}
 		page := currentPageWithFetcher(f)
@@ -127,7 +127,7 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/current": currentResponse(nil),
+				"/api/v1/me/weather/current": currentResponse(nil),
 			},
 		}
 		page := currentPageWithFetcher(f)
@@ -139,7 +139,7 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlErr: map[string]error{
-				"/api/me/weather/current": errors.New("network down"),
+				"/api/v1/me/weather/current": errors.New("network down"),
 			},
 		}
 		page := currentPageWithFetcher(f)

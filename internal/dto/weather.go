@@ -1,8 +1,8 @@
 package dto
 
 // WeatherCitySearchItem is one geocoding result returned by
-// GET /api/me/weather/cities/search. The client picks one and posts it to
-// POST /api/me/weather/cities. All string fields are ready for display.
+// GET /api/v1/me/weather/cities/search. The client picks one and posts it to
+// POST /api/v1/me/weather/cities. All string fields are ready for display.
 type WeatherCitySearchItem struct {
 	// LocationID is the canonical location key derived from the geocoding result.
 	// It is stable for a given city and used to de-duplicate subscriptions.
@@ -15,13 +15,13 @@ type WeatherCitySearchItem struct {
 	Admin1      string  `json:"admin1"`
 }
 
-// WeatherCitySearchResponse is the JSON envelope for GET /api/me/weather/cities/search.
+// WeatherCitySearchResponse is the JSON envelope for GET /api/v1/me/weather/cities/search.
 // Items is always a non-nil slice; an empty search result returns an empty array.
 type WeatherCitySearchResponse struct {
 	Items []WeatherCitySearchItem `json:"items"`
 }
 
-// WeatherCityCreateRequest is the JSON body for POST /api/me/weather/cities.
+// WeatherCityCreateRequest is the JSON body for POST /api/v1/me/weather/cities.
 // The client copies the resolved fields from the chosen search result verbatim.
 // NotifyHour is the local hour (0–23) for the daily morning summary; when
 // omitted the server applies its default (7 = 07:00 local time).
@@ -54,7 +54,7 @@ type WeatherCityCreateRequest struct {
 }
 
 // WeatherCityCreateResponse is the JSON envelope for a successful
-// POST /api/me/weather/cities (201 Created). Carries the generated city row ID.
+// POST /api/v1/me/weather/cities (201 Created). Carries the generated city row ID.
 type WeatherCityCreateResponse struct {
 	ID string `json:"id"`
 }
@@ -83,14 +83,14 @@ type WeatherCityRow struct {
 	ConditionValue string `json:"condition_value,omitempty"`
 }
 
-// WeatherCitiesResponse is the JSON envelope for GET /api/me/weather/cities.
+// WeatherCitiesResponse is the JSON envelope for GET /api/v1/me/weather/cities.
 // Items is always a non-nil slice.
 type WeatherCitiesResponse struct {
 	Items []WeatherCityRow `json:"items"`
 }
 
 // WeatherCurrentItem is one city's latest stored weather observation in the
-// GET /api/me/weather/current response. HasData is false when the collector has
+// GET /api/v1/me/weather/current response. HasData is false when the collector has
 // not yet produced an observation for this location; all observation fields are
 // omitted in that case so the client can render a "no data yet" state without
 // interpreting absent numeric fields as zero.
@@ -127,7 +127,7 @@ type WeatherCurrentItem struct {
 	CapturedAt string `json:"captured_at,omitempty"`
 }
 
-// WeatherCurrentResponse is the JSON envelope for GET /api/me/weather/current.
+// WeatherCurrentResponse is the JSON envelope for GET /api/v1/me/weather/current.
 // Items contains one entry per distinct subscribed location_id; it is always a
 // non-nil slice so the client can distinguish "no subscriptions" from an error.
 type WeatherCurrentResponse struct {

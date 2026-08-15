@@ -25,7 +25,7 @@ func TestSourcesURL(t *testing.T) {
 	t.Run("encodes limit as query param", func(t *testing.T) {
 		t.Parallel()
 		path, q := parseQuery(t, sourcesURL(100))
-		assert.Equal(t, "/api/sources", path)
+		assert.Equal(t, "/api/v1/sources", path)
 		assert.Equal(t, "100", q.Get("limit"))
 	})
 }
@@ -36,7 +36,7 @@ func TestRatesURL(t *testing.T) {
 	t.Run("encodes name as path segment and limit as query param", func(t *testing.T) {
 		t.Parallel()
 		path, q := parseQuery(t, ratesURL("usd-eur", 50))
-		assert.Equal(t, "/api/sources/usd-eur/rates", path)
+		assert.Equal(t, "/api/v1/sources/usd-eur/rates", path)
 		assert.Equal(t, "50", q.Get("limit"))
 	})
 
@@ -44,13 +44,13 @@ func TestRatesURL(t *testing.T) {
 		t.Parallel()
 		raw := ratesURL("a/b", 10)
 		// url.PathEscape encodes "/" as "%2F"
-		assert.Contains(t, raw, "/api/sources/a%2Fb/rates")
+		assert.Contains(t, raw, "/api/v1/sources/a%2Fb/rates")
 	})
 
 	t.Run("path-escapes name containing percent", func(t *testing.T) {
 		t.Parallel()
 		raw := ratesURL("100%", 10)
-		assert.Contains(t, raw, "/api/sources/100%25/rates")
+		assert.Contains(t, raw, "/api/v1/sources/100%25/rates")
 	})
 }
 
@@ -60,14 +60,14 @@ func TestSubscriptionsURL(t *testing.T) {
 	t.Run("encodes name and page", func(t *testing.T) {
 		t.Parallel()
 		path, q := parseQuery(t, subscriptionsURL("btc-usd", 3))
-		assert.Equal(t, "/api/sources/btc-usd/subscriptions/list", path)
+		assert.Equal(t, "/api/v1/sources/btc-usd/subscriptions/list", path)
 		assert.Equal(t, "3", q.Get("page"))
 	})
 
 	t.Run("path-escapes name containing slash", func(t *testing.T) {
 		t.Parallel()
 		raw := subscriptionsURL("a/b", 1)
-		assert.Contains(t, raw, "/api/sources/a%2Fb/subscriptions/list")
+		assert.Contains(t, raw, "/api/v1/sources/a%2Fb/subscriptions/list")
 	})
 }
 
@@ -77,14 +77,14 @@ func TestDailyEventsURL(t *testing.T) {
 	t.Run("encodes name and page", func(t *testing.T) {
 		t.Parallel()
 		path, q := parseQuery(t, dailyEventsURL("eth-usd", 2))
-		assert.Equal(t, "/api/sources/eth-usd/events/daily", path)
+		assert.Equal(t, "/api/v1/sources/eth-usd/events/daily", path)
 		assert.Equal(t, "2", q.Get("page"))
 	})
 
 	t.Run("path-escapes name containing slash", func(t *testing.T) {
 		t.Parallel()
 		raw := dailyEventsURL("a/b", 1)
-		assert.Contains(t, raw, "/api/sources/a%2Fb/events/daily")
+		assert.Contains(t, raw, "/api/v1/sources/a%2Fb/events/daily")
 	})
 }
 
@@ -94,7 +94,7 @@ func TestExecutionErrorsURL(t *testing.T) {
 	t.Run("encodes page as query param", func(t *testing.T) {
 		t.Parallel()
 		path, q := parseQuery(t, executionErrorsURL(4))
-		assert.Equal(t, "/api/errors/execution", path)
+		assert.Equal(t, "/api/v1/errors/execution", path)
 		assert.Equal(t, "4", q.Get("page"))
 	})
 }
@@ -106,7 +106,7 @@ func TestFailedNotificationsURL(t *testing.T) {
 		t.Parallel()
 		// The server expects ?offset=&limit= (offset = (page-1)*50, limit = 50).
 		path, q := parseQuery(t, failedNotificationsURL(50, 50))
-		assert.Equal(t, "/api/notifications/failed", path)
+		assert.Equal(t, "/api/v1/notifications/failed", path)
 		assert.Equal(t, "50", q.Get("offset"))
 		assert.Equal(t, "50", q.Get("limit"))
 	})
@@ -124,7 +124,7 @@ func TestStatsURL(t *testing.T) {
 
 	t.Run("returns correct path with no query string", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, "/api/stats", statsURL())
+		assert.Equal(t, "/api/v1/stats", statsURL())
 	})
 }
 
@@ -133,12 +133,12 @@ func TestSourceActiveURL(t *testing.T) {
 
 	t.Run("encodes name as path segment", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, "/api/sources/my-source/active", sourceActiveURL("my-source"))
+		assert.Equal(t, "/api/v1/sources/my-source/active", sourceActiveURL("my-source"))
 	})
 
 	t.Run("path-escapes name containing slash", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, "/api/sources/a%2Fb/active", sourceActiveURL("a/b"))
+		assert.Equal(t, "/api/v1/sources/a%2Fb/active", sourceActiveURL("a/b"))
 	})
 }
 
@@ -148,7 +148,7 @@ func TestMeSubscriptionsURL(t *testing.T) {
 	t.Run("encodes page and page_size", func(t *testing.T) {
 		t.Parallel()
 		path, q := parseQuery(t, meSubscriptionsURL(1, 10, ""))
-		assert.Equal(t, "/api/me/subscriptions", path)
+		assert.Equal(t, "/api/v1/me/subscriptions", path)
 		assert.Equal(t, "1", q.Get("page"))
 		assert.Equal(t, "10", q.Get("page_size"))
 		assert.Equal(t, "", q.Get("q"), "q should be absent when empty")
@@ -174,7 +174,7 @@ func TestMeRatesChartURL(t *testing.T) {
 	t.Run("encodes period as query param", func(t *testing.T) {
 		t.Parallel()
 		path, q := parseQuery(t, meRatesChartURL(7))
-		assert.Equal(t, "/api/me/rates/chart", path)
+		assert.Equal(t, "/api/v1/me/rates/chart", path)
 		assert.Equal(t, "7", q.Get("period"))
 	})
 
@@ -202,7 +202,7 @@ func TestMeRatesHistoryURL(t *testing.T) {
 	t.Run("page and limit are emitted correctly", func(t *testing.T) {
 		t.Parallel()
 		path, q := parseQuery(t, meRatesHistoryURL("EUR/KZT", "", 3, 50))
-		assert.Equal(t, "/api/me/rates/history", path)
+		assert.Equal(t, "/api/v1/me/rates/history", path)
 		assert.Equal(t, "3", q.Get("page"))
 		assert.Equal(t, "50", q.Get("limit"))
 	})
@@ -247,7 +247,7 @@ func TestPublicRatesChartURL(t *testing.T) {
 	t.Run("encodes page, limit, and period as query params", func(t *testing.T) {
 		t.Parallel()
 		path, q := parseQuery(t, publicRatesChartURL(2, 50, 90))
-		assert.Equal(t, "/api/public/rates/chart", path)
+		assert.Equal(t, "/api/v1/public/rates/chart", path)
 		assert.Equal(t, "2", q.Get("page"))
 		assert.Equal(t, "50", q.Get("limit"))
 		assert.Equal(t, "90", q.Get("period"))
@@ -256,7 +256,7 @@ func TestPublicRatesChartURL(t *testing.T) {
 	t.Run("page 1 limit 20 period 7 are encoded correctly", func(t *testing.T) {
 		t.Parallel()
 		path, q := parseQuery(t, publicRatesChartURL(1, 20, 7))
-		assert.Equal(t, "/api/public/rates/chart", path)
+		assert.Equal(t, "/api/v1/public/rates/chart", path)
 		assert.Equal(t, "1", q.Get("page"))
 		assert.Equal(t, "20", q.Get("limit"))
 		assert.Equal(t, "7", q.Get("period"))
@@ -285,7 +285,7 @@ func TestMeSubscriptionsCreateURL(t *testing.T) {
 
 	t.Run("returns POST endpoint with no query string", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, "/api/me/subscriptions", meSubscriptionsCreateURL())
+		assert.Equal(t, "/api/v1/me/subscriptions", meSubscriptionsCreateURL())
 	})
 }
 
@@ -294,7 +294,7 @@ func TestMeSubscriptionsRawURL(t *testing.T) {
 
 	t.Run("returns per-condition list endpoint", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, "/api/me/subscriptions/raw", meSubscriptionsRawURL())
+		assert.Equal(t, "/api/v1/me/subscriptions/raw", meSubscriptionsRawURL())
 	})
 }
 
@@ -303,13 +303,13 @@ func TestMeSubscriptionByIDURL(t *testing.T) {
 
 	t.Run("encodes plain id as path segment", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, "/api/me/subscriptions/sub-001", meSubscriptionByIDURL("sub-001"))
+		assert.Equal(t, "/api/v1/me/subscriptions/sub-001", meSubscriptionByIDURL("sub-001"))
 	})
 
 	t.Run("percent-escapes id containing slash so it cannot inject a new path segment", func(t *testing.T) {
 		t.Parallel()
 		raw := meSubscriptionByIDURL("a/b")
-		assert.Equal(t, "/api/me/subscriptions/a%2Fb", raw)
+		assert.Equal(t, "/api/v1/me/subscriptions/a%2Fb", raw)
 	})
 
 	t.Run("percent-escapes id containing hash so fragment is not stripped", func(t *testing.T) {

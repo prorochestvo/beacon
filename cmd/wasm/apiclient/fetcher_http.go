@@ -86,7 +86,7 @@ func (f *httpFetcher) newRequest(ctx context.Context, method, path string, body 
 
 // NewHTTPFetcher returns a Fetcher backed by net/http. baseURL is prepended to
 // every relative path passed to FetchJSON or FetchNoContent; a trailing slash
-// is trimmed so paths like "/api/sources" join cleanly. httpClient is optional —
+// is trimmed so paths like "/api/v1/sources" join cleanly. httpClient is optional —
 // when nil, a default with a 5 s timeout is used.
 func NewHTTPFetcher(baseURL string, httpClient *http.Client) Fetcher {
 	if httpClient == nil {

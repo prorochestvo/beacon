@@ -13,7 +13,7 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/application/service"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
-	"github.com/seilbekskindirov/beacon/internal/gateway/httpV1"
+	"github.com/seilbekskindirov/beacon/internal/gateway/httpv1"
 )
 
 // WeatherGatewayDeps groups the weather-specific dependencies passed to NewGateway.
@@ -24,7 +24,7 @@ type WeatherGatewayDeps struct {
 	// Geocoder is the geocoding provider for the city-search endpoint.
 	Geocoder meWeatherGeocoder
 	// ObsRepo is the weather observation repository for the on-demand
-	// current-weather endpoint (GET /api/me/weather/current).
+	// current-weather endpoint (GET /api/v1/me/weather/current).
 	ObsRepo meWeatherObsRepo
 }
 
@@ -83,7 +83,7 @@ type meWeatherObsRepo interface {
 }
 
 // NewGateway builds the v1 HTTP mux with all routes registered, ready for
-// http.ListenAndServe. chartSvc is required for GET /api/me/rates/chart.
+// http.ListenAndServe. chartSvc is required for GET /api/v1/me/rates/chart.
 // healthAgent drives GET /health/check; when nil the endpoint returns 503.
 // serverVersion and serverStart populate the "server" block in the health response.
 // weather groups the weather-specific dependencies; each is nil-safe — the
@@ -102,10 +102,10 @@ func NewGateway(
 	weather WeatherGatewayDeps,
 ) (*http.ServeMux, error) {
 	mux := http.NewServeMux()
-	mux, err := httpV1.NewRouter(
+	mux, err := httpv1.NewRouter(
 		mux, srvRateRestApi, botToken, subRepo, sourceRepo, rateValueRepo, profileRepo,
 		chartSvc, healthAgent, serverVersion, serverStart,
-		httpV1.WeatherGatewayDeps{
+		httpv1.WeatherGatewayDeps{
 			CityRepo: weather.CityRepo,
 			Geocoder: weather.Geocoder,
 			ObsRepo:  weather.ObsRepo,

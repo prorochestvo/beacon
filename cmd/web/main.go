@@ -175,7 +175,7 @@ func main() {
 	botToken := tbot.BotToken()
 	if botToken == "" {
 		// Without a bot token the Mini App initData HMAC can't be verified, so
-		// every /api/me/* call returns 401. Fail at startup rather than silently
+		// every /api/v1/me/* call returns 401. Fail at startup rather than silently
 		// rejecting every authenticated request.
 		log.Fatalf("services: bot token is empty — check BEACON_TELEGRAMBOT_DSN")
 	}

@@ -2,7 +2,7 @@ package dto
 
 import "time"
 
-// MeHistoryResponse is the JSON envelope returned by GET /api/me/rates/history.
+// MeHistoryResponse is the JSON envelope returned by GET /api/v1/me/rates/history.
 // Items is sorted newest first.
 type MeHistoryResponse struct {
 	// Pair is the canonical pair label (e.g. "USD/KZT") the results are scoped to.
@@ -45,7 +45,7 @@ type MeHistoryRow struct {
 	LastDeltaPct *float64 `json:"last_delta_pct,omitempty"`
 }
 
-// MeChartResponse is the JSON envelope returned by GET /api/me/rates/chart.
+// MeChartResponse is the JSON envelope returned by GET /api/v1/me/rates/chart.
 // Window is a human-readable label for the chart's time range (e.g. "7 days").
 type MeChartResponse struct {
 	Window string           `json:"window"`
@@ -91,7 +91,7 @@ type MeChartPoint struct {
 	Value     float64   `json:"value"`
 }
 
-// PublicChartResponse is the JSON envelope returned by GET /api/public/rates/chart.
+// PublicChartResponse is the JSON envelope returned by GET /api/v1/public/rates/chart.
 // Pairs reuses MeChartPairRow so both endpoints share the same chart-row wire
 // shape. The pagination fields (Page, Limit, Total) are absent from
 // MeChartResponse to keep the two contracts independent.

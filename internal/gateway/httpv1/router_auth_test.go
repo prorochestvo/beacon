@@ -1,4 +1,4 @@
-package httpV1_test
+package httpv1
 
 import (
 	"context"
@@ -18,12 +18,21 @@ import (
 
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
-	"github.com/seilbekskindirov/beacon/internal/gateway/httpV1"
-	"github.com/seilbekskindirov/beacon/internal/gateway/httpV1/routes"
+	"github.com/seilbekskindirov/beacon/internal/gateway/httpv1/routes"
 	"github.com/stretchr/testify/require"
 )
 
-// meRoutes is every method+path under /api/me, the project's only authenticated
+var (
+	_ meSubscriptionRepo = (*stubMeSubRepo)(nil)
+	_ meSourceRepo       = (*stubMeSourceRepo)(nil)
+	_ meRateValueRepo    = (*stubMeRateValueRepo)(nil)
+	_ meProfileRepo      = (*stubMeProfileRepo)(nil)
+	_ meWeatherCityRepo  = (*stubWeatherCityRepo)(nil)
+	_ weatherGeocoder    = (*stubGeocoder)(nil)
+	_ meWeatherObsRepo   = (*stubWeatherObsRepo)(nil)
+)
+
+// meRoutes is every method+path under /api/v1/me, the project's only authenticated
 // surface. TestEveryMeRouteRejectsUnauthenticated walks it; TestMeRouteTableIsComplete
 // proves the table has not fallen behind the route constants.
 var meRoutes = []struct {
@@ -52,14 +61,14 @@ const authTestBotToken = "12345:AAH-test-token"
 
 // newAuthTestRouter builds the real router with dependencies that refuse to be used.
 //
-// The booby-trapped stubs are the assertion, not a shortcut: the /api/me family is
+// The booby-trapped stubs are the assertion, not a shortcut: the /api/v1/me family is
 // mounted behind the initData middleware, so an unauthenticated request must never
 // reach a repository. A request that gets through anyway panics on its first
 // repository call instead of quietly returning data — which the subtests below catch
 // and report as the auth failure it is.
 func newAuthTestRouter(t *testing.T) http.Handler {
 	t.Helper()
-	mux, err := httpV1.NewRouter(
+	mux, err := NewRouter(
 		http.NewServeMux(),
 		// A nil *service.RateRestApi: a typed nil, so any method call on it is a nil
 		// dereference — the same trap the stubs set, without needing to restate the
@@ -74,7 +83,7 @@ func newAuthTestRouter(t *testing.T) http.Handler {
 		nil,        // health agent
 		"test",     // server version
 		time.Now(), // server start
-		httpV1.WeatherGatewayDeps{
+		WeatherGatewayDeps{
 			CityRepo: stubWeatherCityRepo{},
 			Geocoder: stubGeocoder{},
 			ObsRepo:  stubWeatherObsRepo{},
@@ -85,7 +94,7 @@ func newAuthTestRouter(t *testing.T) http.Handler {
 }
 
 // TestEveryMeRouteRejectsUnauthenticated is the guard against the failure mode that
-// makes the duplicated auth check dangerous: a new /api/me/* handler that forgets it
+// makes the duplicated auth check dangerous: a new /api/v1/me/* handler that forgets it
 // serves another user's data with no error and no log line. Fourteen copies of the
 // same four lines is the mechanism; nothing enforcing them is the risk.
 func TestEveryMeRouteRejectsUnauthenticated(t *testing.T) {
@@ -126,7 +135,7 @@ func TestEveryMeRouteRejectsUnauthenticated(t *testing.T) {
 }
 
 // TestMeRouteTableIsComplete keeps the table above honest. Without it, adding an
-// /api/me/* route and forgetting the auth check would also mean forgetting the row
+// /api/v1/me/* route and forgetting the auth check would also mean forgetting the row
 // that would have caught it, and the guard would pass while covering nothing.
 func TestMeRouteTableIsComplete(t *testing.T) {
 	t.Parallel()
@@ -135,8 +144,8 @@ func TestMeRouteTableIsComplete(t *testing.T) {
 	body, err := os.ReadFile("routes/routes.go")
 	require.NoError(t, err)
 
-	declared := regexp.MustCompile(`"(/api/me/[^"]*)"`).FindAllStringSubmatch(string(body), -1)
-	require.NotEmpty(t, declared, "found no /api/me/* constants to check against")
+	declared := regexp.MustCompile(`"(/api/v1/me/[^"]*)"`).FindAllStringSubmatch(string(body), -1)
+	require.NotEmpty(t, declared, "found no /api/v1/me/* constants to check against")
 
 	covered := make(map[string]bool, len(meRoutes))
 	for _, route := range meRoutes {
@@ -158,7 +167,7 @@ func TestMeRouteTableIsComplete(t *testing.T) {
 		}
 	}
 	require.Emptyf(t, missing,
-		"these /api/me/* routes have no row in meRoutes, so nothing checks that they "+
+		"these /api/v1/me/* routes have no row in meRoutes, so nothing checks that they "+
 			"require authentication:\n  %s", strings.Join(missing, "\n  "))
 }
 
@@ -272,7 +281,7 @@ func TestMeRoutesResolveThroughTheMount(t *testing.T) {
 				return
 			}
 			require.NotEqual(t, http.StatusNotFound, rec.Code,
-				"%s %s did not resolve through the /api/me/ mount", route.method, route.path)
+				"%s %s did not resolve through the /api/v1/me/ mount", route.method, route.path)
 			require.NotEqual(t, http.StatusUnauthorized, rec.Code,
 				"%s %s rejected a validly signed credential", route.method, route.path)
 		})

@@ -62,7 +62,7 @@ func TestPing(t *testing.T) {
 		t.Parallel()
 		h := newTestHandler(t, Config{})
 		rr := httptest.NewRecorder()
-		h.Ping(rr, httptest.NewRequest(http.MethodGet, "/ping", nil))
+		h.Ping(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ping", http.NoBody))
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.JSONEq(t, `{"status":"ok"}`, rr.Body.String())
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -76,7 +76,7 @@ func TestHealthCheck(t *testing.T) {
 		t.Parallel()
 		h := newTestHandler(t, Config{})
 		rr := httptest.NewRecorder()
-		h.HealthCheck(rr, httptest.NewRequest(http.MethodGet, "/health/check", nil))
+		h.HealthCheck(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health/check", http.NoBody))
 		require.Equal(t, http.StatusServiceUnavailable, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 		var body dto.HealthCheckResponse
@@ -93,7 +93,7 @@ func TestHealthCheck(t *testing.T) {
 			ServerStart:   time.Now(),
 		})
 		rr := httptest.NewRecorder()
-		h.HealthCheck(rr, httptest.NewRequest(http.MethodGet, "/health/check", nil))
+		h.HealthCheck(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health/check", http.NoBody))
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 		var body dto.HealthCheckResponse
@@ -114,7 +114,7 @@ func TestHealthCheck(t *testing.T) {
 			ServerStart:   time.Now(),
 		})
 		rr := httptest.NewRecorder()
-		h.HealthCheck(rr, httptest.NewRequest(http.MethodGet, "/health/check", nil))
+		h.HealthCheck(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health/check", http.NoBody))
 		require.Equal(t, http.StatusServiceUnavailable, rr.Code)
 		var body dto.HealthCheckResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
@@ -129,7 +129,7 @@ func TestHealthCheck(t *testing.T) {
 			HealthAgent: agent,
 		})
 		rr := httptest.NewRecorder()
-		h.HealthCheck(rr, httptest.NewRequest(http.MethodGet, "/health/check", nil))
+		h.HealthCheck(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health/check", http.NoBody))
 		require.Equal(t, http.StatusOK, rr.Code)
 		var body dto.HealthCheckResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
@@ -150,7 +150,7 @@ func TestHealthCheck(t *testing.T) {
 			ServerStart:   time.Now(),
 		})
 		rr := httptest.NewRecorder()
-		h.HealthCheck(rr, httptest.NewRequest(http.MethodGet, "/health/check", nil))
+		h.HealthCheck(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health/check", http.NoBody))
 		require.Equal(t, http.StatusOK, rr.Code, "advisory failure must not flip HTTP status to 503")
 		var body dto.HealthCheckResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
@@ -172,7 +172,7 @@ func TestHealthCheck(t *testing.T) {
 			ServerStart:   time.Now(),
 		})
 		rr := httptest.NewRecorder()
-		h.HealthCheck(rr, httptest.NewRequest(http.MethodGet, "/health/check", nil))
+		h.HealthCheck(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health/check", http.NoBody))
 		require.Equal(t, http.StatusServiceUnavailable, rr.Code, "critical sqlite failure must return 503")
 		var body dto.HealthCheckResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
@@ -204,7 +204,7 @@ func TestListSources(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListSources(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+		h.ListSources(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -224,7 +224,7 @@ func TestListSources(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListSources(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+		h.ListSources(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 
@@ -242,7 +242,7 @@ func TestListSources(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListSources(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+		h.ListSources(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 	})
@@ -261,7 +261,7 @@ func TestListSources(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListSources(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+		h.ListSources(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var body []dto.SourceResponse
@@ -289,7 +289,7 @@ func TestListRates(t *testing.T) {
 			RateService: svc,
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/rates", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/src1/rates", http.NoBody)
 		req.SetPathValue("name", "src1")
 		rr := httptest.NewRecorder()
 		h.ListRates(rr, req)
@@ -310,7 +310,7 @@ func TestListRates(t *testing.T) {
 			RateService: svc,
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/rates", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/src1/rates", http.NoBody)
 		req.SetPathValue("name", "src1")
 		rr := httptest.NewRecorder()
 		h.ListRates(rr, req)
@@ -331,7 +331,7 @@ func TestListRates(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListRates(rr, httptest.NewRequest(http.MethodGet, "/api/sources//rates", nil))
+		h.ListRates(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources//rates", http.NoBody))
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 	})
 
@@ -343,7 +343,7 @@ func TestListRates(t *testing.T) {
 			RateService: svc,
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/rates", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/src1/rates", http.NoBody)
 		req.SetPathValue("name", "src1")
 		rr := httptest.NewRecorder()
 		h.ListRates(rr, req)
@@ -369,7 +369,7 @@ func TestListHistory(t *testing.T) {
 			RateService: svc,
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/history", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/src1/history", http.NoBody)
 		req.SetPathValue("name", "src1")
 		rr := httptest.NewRecorder()
 		h.ListHistory(rr, req)
@@ -390,7 +390,7 @@ func TestListHistory(t *testing.T) {
 			RateService: svc,
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/history", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/src1/history", http.NoBody)
 		req.SetPathValue("name", "src1")
 		rr := httptest.NewRecorder()
 		h.ListHistory(rr, req)
@@ -417,7 +417,7 @@ func TestListNotifications(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListNotifications(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+		h.ListNotifications(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -439,7 +439,7 @@ func TestListNotifications(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListNotifications(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+		h.ListNotifications(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 	})
@@ -462,7 +462,7 @@ func TestListFailedNotifications(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListFailedNotifications(rr, httptest.NewRequest(http.MethodGet, "/?offset=50&limit=20", nil))
+		h.ListFailedNotifications(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/?offset=50&limit=20", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -481,7 +481,7 @@ func TestListFailedNotifications(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListFailedNotifications(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+		h.ListFailedNotifications(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 	})
@@ -495,7 +495,7 @@ func TestListFailedNotifications(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListFailedNotifications(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+		h.ListFailedNotifications(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 	})
@@ -518,7 +518,7 @@ func TestListPendingEvents(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListPendingEvents(rr, httptest.NewRequest(http.MethodGet, "/api/events/pending", nil))
+		h.ListPendingEvents(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/events/pending", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 
@@ -537,7 +537,7 @@ func TestListPendingEvents(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListPendingEvents(rr, httptest.NewRequest(http.MethodGet, "/api/events/pending", nil))
+		h.ListPendingEvents(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/events/pending", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 	})
@@ -551,7 +551,7 @@ func TestListPendingEvents(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListPendingEvents(rr, httptest.NewRequest(http.MethodGet, "/api/events/pending", nil))
+		h.ListPendingEvents(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/events/pending", http.NoBody))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 	})
@@ -573,7 +573,7 @@ func TestListSourceFailedEvents(t *testing.T) {
 			RateService: svc,
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/events/failed?page=1", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/src1/events/failed?page=1", http.NoBody)
 		req.SetPathValue("name", "src1")
 		rr := httptest.NewRecorder()
 		h.ListSourceFailedEvents(rr, req)
@@ -595,7 +595,7 @@ func TestListSourceFailedEvents(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListSourceFailedEvents(rr, httptest.NewRequest(http.MethodGet, "/api/sources//events/failed", nil))
+		h.ListSourceFailedEvents(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources//events/failed", http.NoBody))
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 	})
 
@@ -607,7 +607,7 @@ func TestListSourceFailedEvents(t *testing.T) {
 			RateService: svc,
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/events/failed", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/src1/events/failed", http.NoBody)
 		req.SetPathValue("name", "src1")
 		rr := httptest.NewRecorder()
 		h.ListSourceFailedEvents(rr, req)
@@ -637,7 +637,7 @@ func TestListSourceSubscriptions(t *testing.T) {
 			RateService: svc,
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/subscriptions", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/src1/subscriptions", http.NoBody)
 		req.SetPathValue("name", "src1")
 		rr := httptest.NewRecorder()
 		h.ListSourceSubscriptions(rr, req)
@@ -660,7 +660,7 @@ func TestListSourceSubscriptions(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListSourceSubscriptions(rr, httptest.NewRequest(http.MethodGet, "/api/sources//subscriptions", nil))
+		h.ListSourceSubscriptions(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources//subscriptions", http.NoBody))
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 	})
 
@@ -672,7 +672,7 @@ func TestListSourceSubscriptions(t *testing.T) {
 			RateService: svc,
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/subscriptions", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/src1/subscriptions", http.NoBody)
 		req.SetPathValue("name", "src1")
 		rr := httptest.NewRecorder()
 		h.ListSourceSubscriptions(rr, req)
@@ -689,7 +689,7 @@ func TestHandler_ToggleSourceActive(t *testing.T) {
 
 		h := newTestHandler(t, Config{})
 
-		req := httptest.NewRequest(http.MethodPatch, "/api/sources/src1/active", strings.NewReader(`{"active":true}`))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/sources/src1/active", strings.NewReader(`{"active":true}`))
 		req.SetPathValue("name", "src1")
 		rr := httptest.NewRecorder()
 		h.ToggleSourceActive(rr, req)
@@ -703,7 +703,7 @@ func TestHandler_ToggleSourceActive(t *testing.T) {
 			RateService: &mockRateService{err: internal.ErrNotFound},
 		})
 
-		req := httptest.NewRequest(http.MethodPatch, "/api/sources/unknown/active", strings.NewReader(`{"active":true}`))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/sources/unknown/active", strings.NewReader(`{"active":true}`))
 		req.SetPathValue("name", "unknown")
 		rr := httptest.NewRecorder()
 		h.ToggleSourceActive(rr, req)
@@ -715,7 +715,7 @@ func TestHandler_ToggleSourceActive(t *testing.T) {
 
 		h := newTestHandler(t, Config{})
 
-		req := httptest.NewRequest(http.MethodPatch, "/api/sources/src1/active", strings.NewReader(`not-json`))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/sources/src1/active", strings.NewReader(`not-json`))
 		req.SetPathValue("name", "src1")
 		rr := httptest.NewRecorder()
 		h.ToggleSourceActive(rr, req)
@@ -728,7 +728,7 @@ func TestHandler_ToggleSourceActive(t *testing.T) {
 		h := newTestHandler(t, Config{})
 
 		rr := httptest.NewRecorder()
-		h.ToggleSourceActive(rr, httptest.NewRequest(http.MethodPatch, "/api/sources//active", strings.NewReader(`{"active":true}`)))
+		h.ToggleSourceActive(rr, httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/sources//active", strings.NewReader(`{"active":true}`)))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 	})
@@ -739,7 +739,7 @@ func TestHandler_ToggleSourceActive(t *testing.T) {
 			RateService: &mockRateService{err: errors.New("db error")},
 		})
 
-		req := httptest.NewRequest(http.MethodPatch, "/api/sources/src1/active", strings.NewReader(`{"active":true}`))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/sources/src1/active", strings.NewReader(`{"active":true}`))
 		req.SetPathValue("name", "src1")
 		rr := httptest.NewRecorder()
 		h.ToggleSourceActive(rr, req)
@@ -760,7 +760,7 @@ func TestHandler_ListStats(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListStats(rr, httptest.NewRequest(http.MethodGet, "/api/stats", nil))
+		h.ListStats(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/stats", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -779,7 +779,7 @@ func TestHandler_ListStats(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListStats(rr, httptest.NewRequest(http.MethodGet, "/api/stats", nil))
+		h.ListStats(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/stats", http.NoBody))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 	})
@@ -802,7 +802,7 @@ func TestHandler_ListSourceSubscriptionDetails(t *testing.T) {
 			RateService: svc,
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/subscriptions/list?page=1", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/src1/subscriptions/list?page=1", http.NoBody)
 		req.SetPathValue("name", "src1")
 		rr := httptest.NewRecorder()
 		h.ListSourceSubscriptionDetails(rr, req)
@@ -823,7 +823,7 @@ func TestHandler_ListSourceSubscriptionDetails(t *testing.T) {
 		h := newTestHandler(t, Config{})
 
 		rr := httptest.NewRecorder()
-		h.ListSourceSubscriptionDetails(rr, httptest.NewRequest(http.MethodGet, "/api/sources//subscriptions/list", nil))
+		h.ListSourceSubscriptionDetails(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources//subscriptions/list", http.NoBody))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 	})
@@ -834,7 +834,7 @@ func TestHandler_ListSourceSubscriptionDetails(t *testing.T) {
 			RateService: &mockRateService{err: errors.New("db error")},
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/subscriptions/list", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/src1/subscriptions/list", http.NoBody)
 		req.SetPathValue("name", "src1")
 		rr := httptest.NewRecorder()
 		h.ListSourceSubscriptionDetails(rr, req)
@@ -859,7 +859,7 @@ func TestHandler_ListSourceDailyEvents(t *testing.T) {
 			RateService: svc,
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/events/daily?page=1", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/src1/events/daily?page=1", http.NoBody)
 		req.SetPathValue("name", "src1")
 		rr := httptest.NewRecorder()
 		h.ListSourceDailyEvents(rr, req)
@@ -879,7 +879,7 @@ func TestHandler_ListSourceDailyEvents(t *testing.T) {
 		h := newTestHandler(t, Config{})
 
 		rr := httptest.NewRecorder()
-		h.ListSourceDailyEvents(rr, httptest.NewRequest(http.MethodGet, "/api/sources//events/daily", nil))
+		h.ListSourceDailyEvents(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources//events/daily", http.NoBody))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 	})
@@ -890,7 +890,7 @@ func TestHandler_ListSourceDailyEvents(t *testing.T) {
 			RateService: &mockRateService{err: errors.New("db error")},
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/api/sources/src1/events/daily", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/src1/events/daily", http.NoBody)
 		req.SetPathValue("name", "src1")
 		rr := httptest.NewRecorder()
 		h.ListSourceDailyEvents(rr, req)
@@ -917,7 +917,7 @@ func TestHandler_ListExecutionErrors(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListExecutionErrors(rr, httptest.NewRequest(http.MethodGet, "/api/errors/execution?page=1", nil))
+		h.ListExecutionErrors(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/errors/execution?page=1", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -938,7 +938,7 @@ func TestHandler_ListExecutionErrors(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListExecutionErrors(rr, httptest.NewRequest(http.MethodGet, "/api/errors/execution?page=99", nil))
+		h.ListExecutionErrors(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/errors/execution?page=99", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 
@@ -954,7 +954,7 @@ func TestHandler_ListExecutionErrors(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.ListExecutionErrors(rr, httptest.NewRequest(http.MethodGet, "/api/errors/execution", nil))
+		h.ListExecutionErrors(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/errors/execution", http.NoBody))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 	})
@@ -1194,7 +1194,7 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 			MeSourceRepo:    sourceRepo,
 			MeRateValueRepo: rateRepo,
 		})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.ListMeSubscriptions(rr, withCaller(req, callerUserID))
@@ -1235,7 +1235,7 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 			MeSourceRepo:    sourceRepo,
 			MeRateValueRepo: rateRepo,
 		})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions?q=euro", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions?q=euro", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.ListMeSubscriptions(rr, withCaller(req, callerUserID))
@@ -1271,7 +1271,7 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 			MeSourceRepo:    sourceRepo,
 			MeRateValueRepo: rateRepo,
 		})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions?page=2&page_size=10", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions?page=2&page_size=10", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.ListMeSubscriptions(rr, withCaller(req, callerUserID))
@@ -1298,7 +1298,7 @@ func TestHandler_UpsertMeProfile(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeProfileRepo: profileRepo,
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/me/profile",
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/profile",
 			strings.NewReader(`{"timezone":""}`))
 		req.Header.Set("X-Telegram-Init-Data", "fake-but-allowed")
 		rr := httptest.NewRecorder()
@@ -1313,7 +1313,7 @@ func TestHandler_UpsertMeProfile(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeProfileRepo: profileRepo,
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/me/profile",
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/profile",
 			strings.NewReader(`{not json`))
 		req.Header.Set("X-Telegram-Init-Data", "fake")
 		rr := httptest.NewRecorder()
@@ -1327,7 +1327,7 @@ func TestHandler_UpsertMeProfile(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeProfileRepo: profileRepo,
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/me/profile",
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/profile",
 			strings.NewReader(`{"timezone":"Atlantis/Atlantis"}`))
 		req.Header.Set("X-Telegram-Init-Data", "fake")
 		rr := httptest.NewRecorder()
@@ -1342,7 +1342,7 @@ func TestHandler_UpsertMeProfile(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeProfileRepo: profileRepo,
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/me/profile",
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/profile",
 			strings.NewReader(`{"timezone":"UTC"}`))
 		req.Header.Set("X-Telegram-Init-Data", "fake")
 		rr := httptest.NewRecorder()
@@ -1356,7 +1356,7 @@ func TestHandler_UpsertMeProfile(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeProfileRepo: profileRepo,
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/me/profile",
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/profile",
 			strings.NewReader(`{"timezone":"Asia/Almaty","locale":"kk-KZ"}`))
 		req.Header.Set("X-Telegram-Init-Data", "fake")
 		rr := httptest.NewRecorder()
@@ -1376,7 +1376,7 @@ func TestHandler_UpsertMeProfile(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeProfileRepo: profileRepo,
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/me/profile",
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/profile",
 			strings.NewReader(`{"timezone":"UTC"}`))
 		req.Header.Set("X-Telegram-Init-Data", "fake")
 		rr := httptest.NewRecorder()
@@ -1393,7 +1393,7 @@ func TestHandler_UpsertMeProfile(t *testing.T) {
 			MeProfileRepo: profileRepo,
 		})
 		body := `{"timezone":"UTC","locale":"` + strings.Repeat("a", 65) + `"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/me/profile", strings.NewReader(body))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/profile", strings.NewReader(body))
 		req.Header.Set("X-Telegram-Init-Data", "fake")
 		rr := httptest.NewRecorder()
 		h.UpsertMeProfile(rr, withCaller(req, callerUserID))
@@ -1440,7 +1440,7 @@ func TestGetMeRatesChart(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeChartSvc: chartSvc,
 		})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/chart", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesChart(rr, withCaller(req, 42))
@@ -1456,7 +1456,7 @@ func TestGetMeRatesChart(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeChartSvc: chartSvc,
 		})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/chart", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesChart(rr, withCaller(req, 42))
@@ -1472,7 +1472,7 @@ func TestGetMeRatesChart(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeChartSvc: chartSvc,
 		})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/chart", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesChart(rr, withCaller(req, 42))
@@ -1518,7 +1518,7 @@ func TestGetMeRatesChart(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeChartSvc: chartSvc,
 		})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/chart", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesChart(rr, withCaller(req, 123))
@@ -1572,7 +1572,7 @@ func TestGetMeRatesChart(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeChartSvc: chartSvc,
 		})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/chart", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesChart(rr, withCaller(req, 1))
@@ -1591,7 +1591,7 @@ func TestGetMeRatesChart(t *testing.T) {
 		// nil meChartSvc must be caught after auth, before the service call, so
 		// an unauthenticated caller cannot learn whether the service is wired.
 		h := newTestHandler(t, Config{})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/chart", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesChart(rr, withCaller(req, 99))
@@ -1606,7 +1606,7 @@ func TestGetMeRatesChart(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeChartSvc: chartSvc,
 		})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/chart", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesChart(rr, withCaller(req, 1))
@@ -1623,7 +1623,7 @@ func TestGetMeRatesChart(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeChartSvc: chartSvc,
 		})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart?period=30", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/chart?period=30", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesChart(rr, withCaller(req, 1))
@@ -1643,7 +1643,7 @@ func TestGetMeRatesChart(t *testing.T) {
 			bad := bad
 			t.Run(bad, func(t *testing.T) {
 				t.Parallel()
-				req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart?period="+bad, nil)
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/chart?period="+bad, http.NoBody)
 				req.Header.Set("X-Telegram-Init-Data", "valid")
 				rr := httptest.NewRecorder()
 				h.GetMeRatesChart(rr, withCaller(req, 1))
@@ -1658,7 +1658,7 @@ func TestGetMeRatesChart(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeChartSvc: &mockMeChartService{},
 		})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart?period=7d", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/chart?period=7d", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesChart(rr, withCaller(req, 1))
@@ -1672,7 +1672,7 @@ func TestGetMeRatesChart(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeChartSvc: chartSvc,
 		})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart?period=", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/chart?period=", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesChart(rr, withCaller(req, 1))
@@ -1711,7 +1711,7 @@ func TestGetMeRatesChart(t *testing.T) {
 		h := newTestHandler(t, Config{
 			MeChartSvc: chartSvc,
 		})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/chart?period=360", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/chart?period=360", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesChart(rr, withCaller(req, 1))
@@ -1738,7 +1738,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart", nil))
+		h.GetPublicRatesChart(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/public/rates/chart", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var body dto.PublicChartResponse
@@ -1754,7 +1754,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?period=90", nil))
+		h.GetPublicRatesChart(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/public/rates/chart?period=90", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var body dto.PublicChartResponse
@@ -1773,7 +1773,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 			t.Run(bad, func(t *testing.T) {
 				t.Parallel()
 				rr := httptest.NewRecorder()
-				h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?period="+bad, nil))
+				h.GetPublicRatesChart(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/public/rates/chart?period="+bad, http.NoBody))
 				require.Equal(t, http.StatusBadRequest, rr.Code)
 				require.Contains(t, rr.Body.String(), "period must be one of 7, 30, 90, 180, 360")
 			})
@@ -1788,7 +1788,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?period=", nil))
+		h.GetPublicRatesChart(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/public/rates/chart?period=", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var body dto.PublicChartResponse
@@ -1801,7 +1801,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 		h := newTestHandler(t, Config{})
 
 		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart", nil))
+		h.GetPublicRatesChart(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/public/rates/chart", http.NoBody))
 
 		require.Equal(t, http.StatusServiceUnavailable, rr.Code)
 	})
@@ -1814,7 +1814,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart", nil))
+		h.GetPublicRatesChart(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/public/rates/chart", http.NoBody))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 	})
@@ -1827,7 +1827,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart", nil))
+		h.GetPublicRatesChart(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/public/rates/chart", http.NoBody))
 
 		require.Equal(t, 499, rr.Code)
 		assert.Contains(t, rr.Body.String(), "request cancelled")
@@ -1847,7 +1847,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart", nil))
+		h.GetPublicRatesChart(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/public/rates/chart", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -1871,7 +1871,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?page=2", nil))
+		h.GetPublicRatesChart(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/public/rates/chart?page=2", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp dto.PublicChartResponse
@@ -1887,7 +1887,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?limit=999", nil))
+		h.GetPublicRatesChart(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/public/rates/chart?limit=999", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp dto.PublicChartResponse
@@ -1902,7 +1902,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?limit=abc", nil))
+		h.GetPublicRatesChart(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/public/rates/chart?limit=abc", http.NoBody))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		publicErr := internal.NewPublicError("limit must be a number")
@@ -1917,7 +1917,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?page=9223372036854775807", nil))
+		h.GetPublicRatesChart(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/public/rates/chart?page=9223372036854775807", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp dto.PublicChartResponse
@@ -1933,7 +1933,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart", nil))
+		h.GetPublicRatesChart(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/public/rates/chart", http.NoBody))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		const errFallbackMessage = `{"error":"internal error"}` + "\n"
@@ -1971,7 +1971,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 		})
 
 		rr := httptest.NewRecorder()
-		h.GetPublicRatesChart(rr, httptest.NewRequest(http.MethodGet, "/api/public/rates/chart?period=90", nil))
+		h.GetPublicRatesChart(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/public/rates/chart?period=90", http.NoBody))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var body dto.PublicChartResponse
@@ -2012,7 +2012,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 			},
 		}}
 		h := newH(t, svc)
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/history?pair=USD/KZT", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
@@ -2030,7 +2030,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 	t.Run("200 OK with empty items when no subscription matches", func(t *testing.T) {
 		t.Parallel()
 		h := newH(t, &mockMeChartService{history: emptyHistoryResult})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/history?pair=USD/KZT", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
@@ -2045,7 +2045,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 	t.Run("400 when pair missing", func(t *testing.T) {
 		t.Parallel()
 		h := newH(t, &mockMeChartService{history: emptyHistoryResult})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/history", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
@@ -2057,7 +2057,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 	t.Run("400 when pair is whitespace only", func(t *testing.T) {
 		t.Parallel()
 		h := newH(t, &mockMeChartService{history: emptyHistoryResult})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=+++", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/history?pair=+++", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
@@ -2069,7 +2069,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 	t.Run("400 when limit not a number", func(t *testing.T) {
 		t.Parallel()
 		h := newH(t, &mockMeChartService{history: emptyHistoryResult})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT&limit=abc", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/history?pair=USD/KZT&limit=abc", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
@@ -2081,7 +2081,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 	t.Run("499 when ctx canceled", func(t *testing.T) {
 		t.Parallel()
 		h := newH(t, &mockMeChartService{err: context.Canceled})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/history?pair=USD/KZT", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
@@ -2093,7 +2093,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 	t.Run("499 when ctx deadline exceeded", func(t *testing.T) {
 		t.Parallel()
 		h := newH(t, &mockMeChartService{err: context.DeadlineExceeded})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/history?pair=USD/KZT", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
@@ -2105,7 +2105,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 	t.Run("limit clamped to max", func(t *testing.T) {
 		t.Parallel()
 		h := newH(t, &mockMeChartService{history: emptyHistoryResult})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT&limit=9999", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/history?pair=USD/KZT&limit=9999", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
@@ -2119,7 +2119,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 	t.Run("limit defaults when absent", func(t *testing.T) {
 		t.Parallel()
 		h := newH(t, &mockMeChartService{history: emptyHistoryResult})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/history?pair=USD/KZT", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
@@ -2133,7 +2133,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 	t.Run("page defaults to 1 when absent or invalid", func(t *testing.T) {
 		t.Parallel()
 		h := newH(t, &mockMeChartService{history: emptyHistoryResult})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT&page=bad", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/history?pair=USD/KZT&page=bad", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
@@ -2160,7 +2160,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		})
 		h.logger = testLogger
 
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/history?pair=USD/KZT", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", secretInitData)
 		rr := httptest.NewRecorder()
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
@@ -2172,7 +2172,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		t.Parallel()
 		svc := &mockMeChartService{history: emptyHistoryResult}
 		h := newH(t, svc)
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT&source_title=Kaspi", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/history?pair=USD/KZT&source_title=Kaspi", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
@@ -2185,7 +2185,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		t.Parallel()
 		svc := &mockMeChartService{history: emptyHistoryResult}
 		h := newH(t, svc)
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/history?pair=USD/KZT", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
@@ -2198,7 +2198,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		t.Parallel()
 		svc := &mockMeChartService{history: emptyHistoryResult}
 		h := newH(t, svc)
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT&source_title=+Kaspi+", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/history?pair=USD/KZT&source_title=+Kaspi+", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
@@ -2219,7 +2219,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 			},
 		}}
 		h := newH(t, svc)
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=AAPL/USD", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/history?pair=AAPL/USD", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
@@ -2249,7 +2249,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 			},
 		}}
 		h := newH(t, svc)
-		req := httptest.NewRequest(http.MethodGet, "/api/me/rates/history?pair=USD/KZT", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/history?pair=USD/KZT", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
@@ -2295,7 +2295,7 @@ func TestHandler_ListMeSubscriptionsRaw(t *testing.T) {
 	t.Run("200 empty items when user has no subscriptions", func(t *testing.T) {
 		t.Parallel()
 		h := newTestHandler(t, Config{})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions/raw", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions/raw", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.ListMeSubscriptionsRaw(rr, withCaller(req, callerID))
@@ -2325,7 +2325,7 @@ func TestHandler_ListMeSubscriptionsRaw(t *testing.T) {
 			MeSubRepo:    subRepo,
 			MeSourceRepo: sourceRepo,
 		})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions/raw", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions/raw", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.ListMeSubscriptionsRaw(rr, withCaller(req, callerID))
@@ -2363,7 +2363,7 @@ func TestHandler_ListMeSubscriptionsRaw(t *testing.T) {
 			MeSubRepo:    subRepo,
 			MeSourceRepo: sourceRepo,
 		})
-		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions/raw", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions/raw", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.ListMeSubscriptionsRaw(rr, withCaller(req, callerID))
@@ -2390,7 +2390,7 @@ func TestHandler_ListMeSubscriptionsRaw(t *testing.T) {
 		})
 		h.logger = log.New(log.Writer(), "", 0) // suppress output in test run
 
-		req := httptest.NewRequest(http.MethodGet, "/api/me/subscriptions/raw", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions/raw", http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.ListMeSubscriptionsRaw(rr, withCaller(req, callerID))
@@ -2415,7 +2415,7 @@ func TestHandler_CreateMeSubscription(t *testing.T) {
 	}
 
 	newReq := func(body string) *http.Request {
-		req := httptest.NewRequest(http.MethodPost, "/api/me/subscriptions", strings.NewReader(body))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/subscriptions", strings.NewReader(body))
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		req.Header.Set("Content-Type", "application/json")
 		return req
@@ -2582,7 +2582,7 @@ func TestHandler_UpdateMeSubscription(t *testing.T) {
 	}
 
 	newReq := func(id, body string) *http.Request {
-		req := httptest.NewRequest(http.MethodPatch, "/api/me/subscriptions/"+id, strings.NewReader(body))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/me/subscriptions/"+id, strings.NewReader(body))
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		req.Header.Set("Content-Type", "application/json")
 		req.SetPathValue("id", id)
@@ -2720,7 +2720,7 @@ func TestHandler_UpdateMeSubscription(t *testing.T) {
 		})
 		// 5 KiB body — exceeds the 4 KiB MaxBytesReader limit.
 		bigBody := strings.Repeat("x", 5<<10)
-		req := httptest.NewRequest(http.MethodPatch, "/api/me/subscriptions/sub-001", strings.NewReader(bigBody))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/me/subscriptions/sub-001", strings.NewReader(bigBody))
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		req.Header.Set("Content-Type", "application/json")
 		req.SetPathValue("id", "sub-001")
@@ -2751,7 +2751,7 @@ func TestHandler_DeleteMeSubscription(t *testing.T) {
 	}
 
 	newReq := func(id string) *http.Request {
-		req := httptest.NewRequest(http.MethodDelete, "/api/me/subscriptions/"+id, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/subscriptions/"+id, http.NoBody)
 		req.Header.Set("X-Telegram-Init-Data", "valid")
 		req.SetPathValue("id", id)
 		return req
@@ -2984,20 +2984,20 @@ func TestHandlersFailClosedWithoutACaller(t *testing.T) {
 	t.Parallel()
 
 	authenticated := map[string]func(*Handler) http.HandlerFunc{
-		"GET /api/me/subscriptions":            func(h *Handler) http.HandlerFunc { return h.ListMeSubscriptions },
-		"GET /api/me/subscriptions/raw":        func(h *Handler) http.HandlerFunc { return h.ListMeSubscriptionsRaw },
-		"POST /api/me/subscriptions":           func(h *Handler) http.HandlerFunc { return h.CreateMeSubscription },
-		"PATCH /api/me/subscriptions/{id}":     func(h *Handler) http.HandlerFunc { return h.UpdateMeSubscription },
-		"DELETE /api/me/subscriptions/{id}":    func(h *Handler) http.HandlerFunc { return h.DeleteMeSubscription },
-		"GET /api/me/rates/chart":              func(h *Handler) http.HandlerFunc { return h.GetMeRatesChart },
-		"GET /api/me/rates/history":            func(h *Handler) http.HandlerFunc { return h.GetMeRatesHistory },
-		"POST /api/me/profile":                 func(h *Handler) http.HandlerFunc { return h.UpsertMeProfile },
-		"GET /api/me/weather/current":          func(h *Handler) http.HandlerFunc { return h.GetMeWeatherCurrent },
-		"GET /api/me/weather/cities/search":    func(h *Handler) http.HandlerFunc { return h.SearchWeatherCities },
-		"GET /api/me/weather/cities":           func(h *Handler) http.HandlerFunc { return h.ListMeWeatherCities },
-		"POST /api/me/weather/cities":          func(h *Handler) http.HandlerFunc { return h.CreateMeWeatherCity },
-		"DELETE /api/me/weather/cities/{id}":   func(h *Handler) http.HandlerFunc { return h.DeleteMeWeatherCity },
-		"DELETE /api/me/weather/locations/{i}": func(h *Handler) http.HandlerFunc { return h.DeleteMeWeatherLocation },
+		"GET /api/v1/me/subscriptions":            func(h *Handler) http.HandlerFunc { return h.ListMeSubscriptions },
+		"GET /api/v1/me/subscriptions/raw":        func(h *Handler) http.HandlerFunc { return h.ListMeSubscriptionsRaw },
+		"POST /api/v1/me/subscriptions":           func(h *Handler) http.HandlerFunc { return h.CreateMeSubscription },
+		"PATCH /api/v1/me/subscriptions/{id}":     func(h *Handler) http.HandlerFunc { return h.UpdateMeSubscription },
+		"DELETE /api/v1/me/subscriptions/{id}":    func(h *Handler) http.HandlerFunc { return h.DeleteMeSubscription },
+		"GET /api/v1/me/rates/chart":              func(h *Handler) http.HandlerFunc { return h.GetMeRatesChart },
+		"GET /api/v1/me/rates/history":            func(h *Handler) http.HandlerFunc { return h.GetMeRatesHistory },
+		"POST /api/v1/me/profile":                 func(h *Handler) http.HandlerFunc { return h.UpsertMeProfile },
+		"GET /api/v1/me/weather/current":          func(h *Handler) http.HandlerFunc { return h.GetMeWeatherCurrent },
+		"GET /api/v1/me/weather/cities/search":    func(h *Handler) http.HandlerFunc { return h.SearchWeatherCities },
+		"GET /api/v1/me/weather/cities":           func(h *Handler) http.HandlerFunc { return h.ListMeWeatherCities },
+		"POST /api/v1/me/weather/cities":          func(h *Handler) http.HandlerFunc { return h.CreateMeWeatherCity },
+		"DELETE /api/v1/me/weather/cities/{id}":   func(h *Handler) http.HandlerFunc { return h.DeleteMeWeatherCity },
+		"DELETE /api/v1/me/weather/locations/{i}": func(h *Handler) http.HandlerFunc { return h.DeleteMeWeatherLocation },
 	}
 
 	for name, pick := range authenticated {
@@ -3008,7 +3008,7 @@ func TestHandlersFailClosedWithoutACaller(t *testing.T) {
 			rr := httptest.NewRecorder()
 			// Deliberately not wrapped in withCaller: this is a request the middleware
 			// never saw.
-			pick(h)(rr, httptest.NewRequest(http.MethodGet, "/api/me/anything", nil))
+			pick(h)(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/anything", http.NoBody))
 
 			require.Equal(t, http.StatusUnauthorized, rr.Code,
 				"%s served a request carrying no authenticated caller", name)

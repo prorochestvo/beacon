@@ -66,7 +66,7 @@ Implementation and operations detail lives next to the code, not here:
 - **Deployment, backups, nginx/Cloudflare edge** — [`deploy/README.md`](deploy/README.md)
 - **Operator tooling (`rulegen`, `audit`)** — [`cmd/doctor/README.md`](cmd/doctor/README.md)
 - **Rate source config** — [`configs/sources.example.json`](configs/sources.example.json)
-- **HTTP API surface** — route constants in `internal/gateway/httpV1/routes/routes.go`
+- **HTTP API surface** — route constants in `internal/gateway/httpv1/routes/routes.go`
 - **Architecture & conventions** — [`CLAUDE.md`](CLAUDE.md)
 
 ## License

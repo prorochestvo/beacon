@@ -13,7 +13,7 @@ import (
 //
 // Collection errors carry full URLs and wrapped transport messages and run to hundreds of
 // characters; the alert needs enough to recognise the fault, not the whole trace, which is
-// in execution_history and on /api/errors/execution for anyone who wants it.
+// in execution_history and on /api/v1/errors/execution for anyone who wants it.
 const sourceHealthMaxErrorRunes = 300
 
 // renderSourceDown builds the message for a source that has gone silent.

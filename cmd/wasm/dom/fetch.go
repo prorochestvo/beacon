@@ -11,7 +11,7 @@ import (
 
 // FetchNoContent issues an HTTP request via window.fetch and discards the
 // response body. For 204 No Content endpoints (e.g. PATCH
-// /api/sources/{name}/active), where JSON-decoding would yield an unmarshal
+// /api/v1/sources/{name}/active), where JSON-decoding would yield an unmarshal
 // error.
 //
 // Same js.Func lifecycle as FetchJSON: every allocation has a deferred Release.

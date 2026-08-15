@@ -64,5 +64,5 @@ production database.
 The same policy applies to log output, with one practical relaxation: the bot's existing log
 lines already include `chat=<chat_id>` for observability and that is fine. Do not log
 `@username`, message body content, or any other off-limits field. The access-log format
-`middleware [200] GET /api/me/subscriptions` intentionally omits the
+`middleware [200] GET /api/v1/me/subscriptions` intentionally omits the
 `X-Telegram-Init-Data` header for the same reason.

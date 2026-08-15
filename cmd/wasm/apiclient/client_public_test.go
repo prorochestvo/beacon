@@ -37,7 +37,7 @@ func TestClient_PublicRatesChart(t *testing.T) {
 		_, err := c.PublicRatesChart(t.Context(), 2, 5, 7)
 		require.NoError(t, err)
 		assert.Equal(t, "GET", f.lastMethod)
-		assert.Contains(t, f.lastURL, "/api/public/rates/chart")
+		assert.Contains(t, f.lastURL, "/api/v1/public/rates/chart")
 		assert.Contains(t, f.lastURL, "page=2")
 		assert.Contains(t, f.lastURL, "limit=5")
 		assert.Contains(t, f.lastURL, "period=7")

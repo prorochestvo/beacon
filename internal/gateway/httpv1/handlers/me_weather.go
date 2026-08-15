@@ -20,14 +20,14 @@ import (
 // for the q query parameter. Auth is required so the endpoint cannot be used
 // as an open geocoding proxy.
 //
-// GET /api/me/weather/cities/search?q=<city>
+// GET /api/v1/me/weather/cities/search?q=<city>
 // Auth: X-Telegram-Init-Data header only.
 //
 // 200 with WeatherCitySearchResponse on success.
 // 400 when q is absent or empty.
 // 401 on auth failure.
 func (h *Handler) SearchWeatherCities(w http.ResponseWriter, r *http.Request) {
-	// This is the one /api/me handler with no use for the caller's id, and it asks
+	// This is the one /api/v1/me handler with no use for the caller's id, and it asks
 	// for it anyway. Every other handler is protected twice — by the mount, and by
 	// failing closed when the id is absent — and skipping the second here would make
 	// this the only route that serves anyone if it were ever registered outside the
@@ -62,7 +62,7 @@ func (h *Handler) SearchWeatherCities(w http.ResponseWriter, r *http.Request) {
 
 // ListMeWeatherCities returns the authenticated caller's saved city subscriptions.
 //
-// GET /api/me/weather/cities
+// GET /api/v1/me/weather/cities
 // Auth: X-Telegram-Init-Data header only.
 func (h *Handler) ListMeWeatherCities(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.callerID(w, r)
@@ -101,7 +101,7 @@ func (h *Handler) ListMeWeatherCities(w http.ResponseWriter, r *http.Request) {
 // in [0,23], and coordinate range checks. The client must copy fields verbatim
 // from the search result; lat/lng/timezone are not re-geocoded here.
 //
-// POST /api/me/weather/cities
+// POST /api/v1/me/weather/cities
 // Body: WeatherCityCreateRequest
 // Auth: X-Telegram-Init-Data header only.
 //
@@ -285,7 +285,7 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 
 // DeleteMeWeatherCity removes a city subscription owned by the authenticated caller.
 //
-// DELETE /api/me/weather/cities/{id}
+// DELETE /api/v1/me/weather/cities/{id}
 // Auth: X-Telegram-Init-Data header only.
 //
 // 204 No Content on success.
@@ -312,7 +312,7 @@ func (h *Handler) DeleteMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 
 	if notice, forced := forcedWeatherKindNotice(city.NotifyKind); forced {
 		// Forced, system-managed row: it can only be removed by removing the whole
-		// city (DELETE /api/me/weather/locations/{location_id}). Reached only via
+		// city (DELETE /api/v1/me/weather/locations/{location_id}). Reached only via
 		// the API — the UI renders no delete control for these kinds.
 		pub := internal.NewPublicError(notice)
 		w.Header().Set("Content-Type", "application/json")
@@ -333,7 +333,7 @@ func (h *Handler) DeleteMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 // DeleteMeWeatherLocation removes every city subscription (all notify kinds, including the
 // forced alert_thaw row) owned by the authenticated caller at the given location.
 //
-// DELETE /api/me/weather/locations/{location_id}
+// DELETE /api/v1/me/weather/locations/{location_id}
 // Auth: X-Telegram-Init-Data header only.
 //
 // 204 No Content on success.
@@ -386,7 +386,7 @@ func (h *Handler) DeleteMeWeatherLocation(w http.ResponseWriter, r *http.Request
 // timezone so the WASM client requires no tzdata. A timezone that fails to load
 // is skipped (the numeric fields are still returned).
 //
-// GET /api/me/weather/current
+// GET /api/v1/me/weather/current
 // Auth: X-Telegram-Init-Data header only.
 //
 // 200 with WeatherCurrentResponse on success.

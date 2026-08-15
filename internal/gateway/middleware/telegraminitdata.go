@@ -41,7 +41,7 @@ type TelegramInitDataConfig struct {
 // credential and puts the caller's id on the request context, where UserIDFrom
 // reads it.
 //
-// It is mounted once over the whole /api/me/ family rather than wrapped around each
+// It is mounted once over the whole /api/v1/me/ family rather than wrapped around each
 // route. That is the point: the check used to be four lines copy-pasted into every
 // handler, so a new handler that forgot them served another user's data with no
 // error and no log line. Mounted, a route in that family is authenticated because of

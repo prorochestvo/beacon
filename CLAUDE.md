@@ -15,7 +15,7 @@ for its subject — this file only keeps the tripwire.
 |---|---|
 | `beacon-collection` | `cmd/collector`, `rateextractor`, `application/collection`, `infrastructure/weather`, `SourceHealthAgent`, `rate_sources` rows, `BEACON_PROXY_URL` / `options.use_proxy`, weather alert kinds |
 | `beacon-storage` | any `internal/repository` query, any `./migrations/*.sql`, `MaintenanceAgent`, `sqlitedb.Migrator`, reading the production database |
-| `beacon-http-api` | `internal/gateway`, `cmd/web`, `cmd/wasm`, `cmd/web/static`, `configs/nginx.*`, any `/api/me` or `/api/public` route |
+| `beacon-http-api` | `internal/gateway`, `cmd/web`, `cmd/wasm`, `cmd/web/static`, `configs/nginx.*`, any `/api/v1/me` or `/api/v1/public` route |
 | `beacon-forecasting` | `internal/tools/rateforecaster`, `internal/tools/rateanomaly` (load with `knowledge:forecasting`) |
 | `beacon-data-privacy` | any new column on a user-scoped table, anything captured from a Telegram update, any new log field |
 
@@ -105,17 +105,17 @@ source wants it. No source is opted in today, and the default is a measured deci
 - **Configuration injection** — `BEACON_SQLITEDB_DSN` and `BEACON_TELEGRAMBOT_DSN` are read via `dsninjector.Unmarshal(envName)` at startup in `cmd/web/main.go` and live in the systemd `EnvironmentFile`. The public HTTPS origin is passed via the `--api-dsn` CLI flag (format: `https://<host>/`, parsed by `dsninjector.Parse`) and is hardcoded in the systemd unit's `ExecStart` line — never in `.env`. All three configs must be present at startup; the binary calls `log.Fatalf` on any missing value.
 - **Startup ordering** — anything that logs or can `log.Fatalf` on bad config belongs in `main` *after* the logger exists, never in a package initialiser: the cron wrappers discard stderr, so a line emitted earlier is attributable to nothing. Operators grep the marker sequence `logger -> settings -> dependencies -> repositories -> runners`.
 - **Embedded assets** — `cmd/web/main.go` embeds the `static/` directory via `//go:embed static`. All static files served by `http.FileServer` live under `cmd/web/static/`.
-- **Auth: Telegram WebApp initData HMAC** — the `/api/me/...` endpoint family authenticates callers by verifying the Telegram WebApp `initData` HMAC-SHA256 signature. The signing algorithm uses `secret_key = HMAC_SHA256("WebAppData", botToken)` (the string literal is the key; the token is the message). Implementation lives in `internal/tools/tgwebapp/initdata.go`. The check runs **once**, in `middleware.TelegramInitData`, mounted over `routes.MePrefix` — **a new authenticated route belongs on that inner mux; putting it on the outer one is a bypass, and nothing will say so.** Handlers read the caller via `middleware.UserIDFrom` and refuse without it. No other endpoint requires this auth.
+- **Auth: Telegram WebApp initData HMAC** — the `/api/v1/me/...` endpoint family authenticates callers by verifying the Telegram WebApp `initData` HMAC-SHA256 signature. The signing algorithm uses `secret_key = HMAC_SHA256("WebAppData", botToken)` (the string literal is the key; the token is the message). Implementation lives in `internal/tools/tgwebapp/initdata.go`. The check runs **once**, in `middleware.TelegramInitData`, mounted over `routes.MePrefix` — **a new authenticated route belongs on that inner mux; putting it on the outer one is a bypass, and nothing will say so.** Handlers read the caller via `middleware.UserIDFrom` and refuse without it. No other endpoint requires this auth.
 
 ### HTTP surface
 
 Routes are registered in `internal/gateway/`; wire shapes live in `internal/dto`. Two rules
 hold everywhere and are easy to break silently:
 
-- The `/api/me/*` family is the **only** authenticated surface, and the signed `initData` is
+- The `/api/v1/me/*` family is the **only** authenticated surface, and the signed `initData` is
   accepted **only** in the `X-Telegram-Init-Data` header — never a query string, which would
   leak a signed payload into access logs and `Referer`.
-- A `/api/me/*` resource owned by another user returns **404, never 403**. Existence is not
+- A `/api/v1/me/*` resource owned by another user returns **404, never 403**. Existence is not
   disclosed, anywhere.
 
 Everything else — per-endpoint contracts, the forced weather subscriptions and their 409,
