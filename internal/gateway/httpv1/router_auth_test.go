@@ -25,12 +25,10 @@ import (
 )
 
 var (
-	_ meSubscriptionRepo            = (*stubMeSubRepo)(nil)
-	_ meSourceRepo                  = (*stubMeSourceRepo)(nil)
 	_ meProfileRepo                 = (*stubMeProfileRepo)(nil)
 	_ meWeatherCityRepo             = (*stubWeatherCityRepo)(nil)
 	_ weatherGeocoder               = (*stubGeocoder)(nil)
-	_ appsub.SubscriptionsLoader    = (*stubMeSubRepo)(nil)
+	_ appsub.SubscriptionsStore     = (*stubMeSubRepo)(nil)
 	_ appsub.SourcesLoader          = (*stubMeSourceRepo)(nil)
 	_ appsub.ValuesLoader           = (*stubMeRateValueRepo)(nil)
 	_ appweather.CitiesLoader       = (*stubWeatherCityRepo)(nil)
@@ -82,8 +80,6 @@ func newAuthTestRouter(t *testing.T) http.Handler {
 		nil,              // rate service
 		authTestBotToken, // botToken
 		appsub.NewService(stubMeSubRepo{}, stubMeSourceRepo{}, stubMeRateValueRepo{}),
-		stubMeSubRepo{},
-		stubMeSourceRepo{},
 		stubMeProfileRepo{},
 		nil,        // chart service
 		nil,        // health agent

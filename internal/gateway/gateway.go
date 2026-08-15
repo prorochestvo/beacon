@@ -29,20 +29,6 @@ type WeatherGatewayDeps struct {
 	Geocoder meWeatherGeocoder
 }
 
-// meSubscriptionRepo is a pass-through interface from the concrete repository layer.
-type meSubscriptionRepo interface {
-	ObtainRateUserSubscriptionsByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.RateUserSubscription, error)
-	ObtainRateUserSubscriptionByID(ctx context.Context, id string) (*domain.RateUserSubscription, error)
-	RetainRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
-	RemoveRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
-}
-
-// meSourceRepo is a pass-through interface for source look-ups.
-type meSourceRepo interface {
-	ObtainRateSourceByName(ctx context.Context, name string) (*domain.RateSource, error)
-	ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error)
-}
-
 // meProfileRepo is a pass-through interface for user-profile upserts.
 type meProfileRepo interface {
 	UpsertRateUserProfile(ctx context.Context, record *domain.RateUserProfile) error
@@ -72,8 +58,8 @@ type meWeatherGeocoder interface {
 }
 
 // NewGateway builds the v1 HTTP mux with all routes registered, ready for
-// http.ListenAndServe. subSvc backs the two /api/v1/me/subscriptions read
-// endpoints and chartSvc is required for GET /api/v1/me/rates/chart.
+// http.ListenAndServe. subSvc backs the /api/v1/me/subscriptions family and
+// chartSvc is required for GET /api/v1/me/rates/chart.
 // healthAgent drives GET /health/check; when nil the endpoint returns 503.
 // serverVersion and serverStart populate the "server" block in the health response.
 // weather groups the weather-specific dependencies.
@@ -81,8 +67,6 @@ func NewGateway(
 	srvRateRestApi *service.RateRestApi,
 	botToken string,
 	subSvc *appsub.Service,
-	subRepo meSubscriptionRepo,
-	sourceRepo meSourceRepo,
 	profileRepo meProfileRepo,
 	chartSvc *appchart.Service,
 	healthAgent healthCheckAgent,
@@ -92,7 +76,7 @@ func NewGateway(
 ) (*http.ServeMux, error) {
 	mux := http.NewServeMux()
 	mux, err := httpv1.NewRouter(
-		mux, srvRateRestApi, botToken, subSvc, subRepo, sourceRepo, profileRepo,
+		mux, srvRateRestApi, botToken, subSvc, profileRepo,
 		chartSvc, healthAgent, serverVersion, serverStart,
 		httpv1.WeatherGatewayDeps{
 			Service:  weather.Service,
