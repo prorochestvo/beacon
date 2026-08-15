@@ -1,6 +1,6 @@
 ---
 name: beacon-http-api
-description: Beacon's HTTP surface and browser client — endpoint contracts that are not obvious from the router code (chart period whitelist, weather city create validation, the forced alert rows and their 409, liveness vs readiness), the content-hashed WASM asset URLs and the nginx location ordering they depend on, and the Mini App's 2x2 screen navigation. Load before adding or changing anything under internal/gateway, cmd/web, cmd/wasm, cmd/web/static, configs/nginx.*, or any /api/me or /api/public route.
+description: Beacon's HTTP surface and browser client — endpoint contracts that are not obvious from the router code (chart period whitelist, weather city create validation, the forced alert rows and their 409, liveness vs readiness), the content-hashed WASM asset URLs and the nginx location ordering they depend on, and the Mini App's 2x2 screen navigation. Load before adding or changing anything under internal/gateway, cmd/web, cmd/wasm, cmd/web/static, configs/nginx.*, or any /api/v1/me or /api/v1/public route.
 ---
 
 # Beacon HTTP API and Mini App
@@ -11,7 +11,7 @@ are written down here.
 
 ## Endpoint contracts
 
-- **Auth** — the `/api/me/*` family is the only authenticated surface. The signed Telegram
+- **Auth** — the `/api/v1/me/*` family is the only authenticated surface. The signed Telegram
   WebApp `initData` is accepted **only** in the `X-Telegram-Init-Data` header, never via
   query string (a signed payload in the URL leaks into access logs and `Referer`). The HMAC
   algorithm is in CLAUDE.md's Key Patterns; implementation in
@@ -38,11 +38,11 @@ are written down here.
   live. `TestMeRoutesResolveThroughTheMount` does that — it signs a real credential and
   requires every route to reach its handler, and all fourteen cases fail when the mount loses
   its middleware.
-- **Ownership → 404, not 403** — reading or mutating a `/api/me/*` resource (subscription,
+- **Ownership → 404, not 403** — reading or mutating a `/api/v1/me/*` resource (subscription,
   weather city) owned by another user returns **404**, never 403, to avoid existence
   disclosure. Deleting a subscription does **not** cascade-delete its `rate_user_events`
   rows.
-- **Chart endpoints** (`/api/me/rates/chart`, `/api/public/rates/chart`) — `period` is an
+- **Chart endpoints** (`/api/v1/me/rates/chart`, `/api/v1/public/rates/chart`) — `period` is an
   integer-days whitelist `{7,30,90,180,360}` (default 7); anything else is 400 with a
   `PublicError` body. Equity (`kind=LAST`) pairs render under the `equity` category with an
   amber series (`#D98E04`).
@@ -76,9 +76,9 @@ auto-ensures both for that location, skipping whichever kind the request itself 
 thaw is always upserted, `rain_alert` is inserted at threshold `60` **only when absent**, so
 a user-tuned threshold is never stomped.
 
-Deleting one directly (`DELETE /api/me/weather/cities/{id}`) is **409 + PublicError**; the
+Deleting one directly (`DELETE /api/v1/me/weather/cities/{id}`) is **409 + PublicError**; the
 ownership check runs first, so cross-user or missing stays 404, never 409. Turning them off
-means removing the whole location — `DELETE /api/me/weather/locations/{location_id}` deletes
+means removing the whole location — `DELETE /api/v1/me/weather/locations/{location_id}` deletes
 every kind the caller owns there including the forced ones (204; 404 when the caller owns
 nothing there, no existence disclosure).
 
