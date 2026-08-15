@@ -13,7 +13,7 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/application/service"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
-	"github.com/seilbekskindirov/beacon/internal/gateway/httpV1"
+	"github.com/seilbekskindirov/beacon/internal/gateway/httpv1"
 )
 
 // WeatherGatewayDeps groups the weather-specific dependencies passed to NewGateway.
@@ -102,10 +102,10 @@ func NewGateway(
 	weather WeatherGatewayDeps,
 ) (*http.ServeMux, error) {
 	mux := http.NewServeMux()
-	mux, err := httpV1.NewRouter(
+	mux, err := httpv1.NewRouter(
 		mux, srvRateRestApi, botToken, subRepo, sourceRepo, rateValueRepo, profileRepo,
 		chartSvc, healthAgent, serverVersion, serverStart,
-		httpV1.WeatherGatewayDeps{
+		httpv1.WeatherGatewayDeps{
 			CityRepo: weather.CityRepo,
 			Geocoder: weather.Geocoder,
 			ObsRepo:  weather.ObsRepo,

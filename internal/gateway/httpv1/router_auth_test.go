@@ -1,4 +1,4 @@
-package httpV1_test
+package httpv1_test
 
 import (
 	"context"
@@ -18,8 +18,8 @@ import (
 
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
-	"github.com/seilbekskindirov/beacon/internal/gateway/httpV1"
-	"github.com/seilbekskindirov/beacon/internal/gateway/httpV1/routes"
+	"github.com/seilbekskindirov/beacon/internal/gateway/httpv1"
+	"github.com/seilbekskindirov/beacon/internal/gateway/httpv1/routes"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,7 +59,7 @@ const authTestBotToken = "12345:AAH-test-token"
 // and report as the auth failure it is.
 func newAuthTestRouter(t *testing.T) http.Handler {
 	t.Helper()
-	mux, err := httpV1.NewRouter(
+	mux, err := httpv1.NewRouter(
 		http.NewServeMux(),
 		// A nil *service.RateRestApi: a typed nil, so any method call on it is a nil
 		// dereference — the same trap the stubs set, without needing to restate the
@@ -74,7 +74,7 @@ func newAuthTestRouter(t *testing.T) http.Handler {
 		nil,        // health agent
 		"test",     // server version
 		time.Now(), // server start
-		httpV1.WeatherGatewayDeps{
+		httpv1.WeatherGatewayDeps{
 			CityRepo: stubWeatherCityRepo{},
 			Geocoder: stubGeocoder{},
 			ObsRepo:  stubWeatherObsRepo{},

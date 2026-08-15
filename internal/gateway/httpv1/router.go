@@ -1,5 +1,5 @@
-// Package httpV1 wires the v1 HTTP handlers onto the provided ServeMux.
-package httpV1
+// Package httpv1 wires the v1 HTTP handlers onto the provided ServeMux.
+package httpv1
 
 import (
 	"context"
@@ -10,8 +10,8 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/application/service"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
-	v1 "github.com/seilbekskindirov/beacon/internal/gateway/httpV1/handlers"
-	"github.com/seilbekskindirov/beacon/internal/gateway/httpV1/routes"
+	v1 "github.com/seilbekskindirov/beacon/internal/gateway/httpv1/handlers"
+	"github.com/seilbekskindirov/beacon/internal/gateway/httpv1/routes"
 	"github.com/seilbekskindirov/beacon/internal/gateway/middleware"
 )
 
