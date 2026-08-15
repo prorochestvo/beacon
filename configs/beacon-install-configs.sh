@@ -38,7 +38,7 @@
 set -euo pipefail
 
 STAGING_DIR=/opt/beacon/config-staging
-OPERATOR=pi5_aide
+OPERATOR=seil
 
 # staged basename | destination | mode
 CONFIG_TABLE=(

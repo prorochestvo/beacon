@@ -22,14 +22,14 @@ GOLANGCI_VERSION := v2.12.2
 # against alpha.
 LINT_BASE ?= origin/alpha
 
-.PHONY: all run build build-collector build-notifier build-web build-wasm build-migrator migrate test lint lint-new format audit audit-help doctor-help swagger clean init backups db-inspect config-drift deploy-configs verify-edge
+.PHONY: all run build build-collector build-notifier build-web build-wasm build-migrator migrate test lint lint-new check-operator format audit audit-help doctor-help swagger clean init backups db-inspect config-drift deploy-configs verify-edge
 
 # Host-side paths of the passwordless config-deploy mechanism. The operator account
 # owns the staging directory; the installer it feeds is root-owned and unwritable by
 # that account, which is what keeps its NOPASSWD grant narrow. Staging is under
 # /opt/beacon rather than /tmp so no other local user can swap a file between the
 # upload and the install — the installer runs as root.
-OPERATOR_ACCOUNT := pi5_aide
+OPERATOR_ACCOUNT := seil
 CONFIG_STAGING_DIR := /opt/beacon/config-staging
 CONFIG_INSTALLER := /usr/local/sbin/beacon-install-configs
 
@@ -82,8 +82,33 @@ endef
 
 
 
+## check-operator: refuse to provision for an account other than the one connecting
+##
+## The staging directory is created owned by OPERATOR_ACCOUNT with mode 0700, and the
+## NOPASSWD grant names it. Get it wrong and nothing fails: init provisions cleanly, and
+## the first `make deploy-configs` from the other account cannot write to staging and
+## cannot call the installer without a password. That happened — the account was set from
+## one machine's `whoami` and the deploys run from another.
+##
+## `ssh be-happy.kz` resolves to a different user per workstation, via each one's ssh
+## config, so this cannot be assumed. It is asked.
+check-operator:
+	@remote=$$(ssh be-happy.kz id -un 2>/dev/null); \
+	if [ -z "$$remote" ]; then \
+		echo "check-operator: cannot reach be-happy.kz to ask which account this is"; \
+		exit 1; \
+	fi; \
+	if [ "$$remote" != "$(OPERATOR_ACCOUNT)" ]; then \
+		echo "check-operator: ssh be-happy.kz connects as '$$remote', but OPERATOR_ACCOUNT is '$(OPERATOR_ACCOUNT)'."; \
+		echo "check-operator: the grant and the staging directory would be provisioned for the wrong account,"; \
+		echo "check-operator: and every later 'make deploy-configs' from here would fail on both."; \
+		echo "check-operator: set OPERATOR_ACCOUNT to '$$remote' — in the Makefile and in configs/beacon-configs.sudoers,"; \
+		echo "check-operator: which names it literally — or deploy from the '$(OPERATOR_ACCOUNT)' account."; \
+		exit 1; \
+	fi
+
 ## init: provision the host once — release-layout sandbox (artifacts/+bin/ owned by CI), systemd units, narrow sudoers, config installer, backup script, and the Cloudflare nginx vhost
-init:
+init: check-operator
 	scp $(INIT_CONFIGS) be-happy.kz:/tmp/
 	ssh -t be-happy.kz 'set -e; \
 		CI=github_aide; \
@@ -109,7 +134,7 @@ init:
 	echo "init done"
 
 ## deploy-configs: ship configs/ to a provisioned host and reload — no password, no re-provisioning
-deploy-configs:
+deploy-configs: check-operator
 	@ssh be-happy.kz 'test -d $(CONFIG_STAGING_DIR) && test -x $(CONFIG_INSTALLER)' || { \
 		echo "deploy-configs: $(CONFIG_INSTALLER) or $(CONFIG_STAGING_DIR) is not on the host."; \
 		echo "deploy-configs: this host is not bootstrapped for config deploys — run 'make init' once; it needs a password."; \
