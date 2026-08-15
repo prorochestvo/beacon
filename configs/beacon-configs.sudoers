@@ -1,0 +1,39 @@
+# Narrow passwordless sudo for the operator account (pi5_aide), so a configuration
+# change has a delivery path of its own instead of re-running the provisioning.
+# Install to /etc/sudoers.d/beacon-configs with mode 0440; validate: sudo visudo -c.
+#
+# What this grants, stated without softening, because this file is where the next
+# reader forms their threat model:
+#
+# Two of the six destinations are systemd units that run as root
+# (beacon.service, beacon-migrate.service). Writing one of those is root code
+# execution on the next restart. The installer runs daemon-reload but never
+# restarts a service, so the path is delayed rather than immediate — it is still
+# a path. Anything running as pi5_aide can therefore reach root without knowing
+# the password, which it could not do before this file exists.
+#
+# That is accepted deliberately. pi5_aide already holds (ALL:ALL) ALL on this
+# host, so the account was root-capable already; what changes is that a scripted
+# caller no longer needs a human at a prompt. That prompt is the whole problem —
+# nothing automated can answer it, so `make init` was the only delivery path for
+# configs/ and configuration fixes sat in git without taking effect, twice.
+#
+# The trade is: a modest widening for the operator account, against config
+# changes that ship at all. Revisit it if pi5_aide ever stops being an account
+# only its owner runs code as.
+#
+# Why the grant names a script and not `install`: with a parameterised `install`
+# the caller chooses the destination, which is passwordless root by construction.
+# /usr/local/sbin/beacon-install-configs is root:root 0755, so pi5_aide cannot
+# edit the source-to-destination table it carries, and the reachable set of paths
+# is fixed when `make init` puts the script there. The script installs neither
+# itself nor this file, so neither can be rewritten through the grant either.
+#
+# The argument lists are spelled out rather than left open, which means adding a
+# flag to the script also means updating this file and re-running `make init`.
+# That friction is intended: it keeps the grant readable as exactly what it allows.
+# The CI account (github_aide) is deliberately not granted this — see
+# configs/beacon-deploy.sudoers for the boundary that keeps a leaked deploy key
+# confined to /opt/beacon/{artifacts,bin}.
+pi5_aide ALL=(root) NOPASSWD: /usr/local/sbin/beacon-install-configs "", \
+                              /usr/local/sbin/beacon-install-configs --dry-run

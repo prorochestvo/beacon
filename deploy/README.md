@@ -16,6 +16,7 @@ sets and a channel symlink the service runs through.
     beacon.sqlite            root:root          0600   DB (+ -wal/-shm)
     logs/                    root:root          0750
     backups/                 root:root          0755   sqlite_dump output
+    config-staging/          pi5_aide:pi5_aide  0700   upload area for `make deploy-configs`
     artifacts/               github_aide:github_aide 0755   immutable builds, by VERSION_ID
         20260628T…-r_0.0.1/      webapp collector notifier migrator (+x)
     bin/                     github_aide:github_aide 0755
@@ -40,23 +41,80 @@ symlink. Old versions are pruned to the newest 5 not referenced by any channel.
   `bin/release/{collector,notifier}`.
 - `configs/beacon-deploy.sudoers` → `/etc/sudoers.d/beacon-deploy` (0440): grants
   `github_aide` exactly `systemctl restart beacon` and `systemctl start beacon-migrate`.
+- `configs/beacon-configs.sudoers` → `/etc/sudoers.d/beacon-configs` (0440): grants
+  `pi5_aide` exactly the config installer below, with no arguments or `--dry-run`.
+- `configs/beacon-install-configs.sh` → `/usr/local/sbin/beacon-install-configs`
+  (0755 root:root): the installer `make deploy-configs` drives.
 - Configuration (DB DSN, Telegram bot token, admin chat ID) lives in
   `/opt/beacon/.env`; the public origin is baked into the unit's `--api-dsn`,
   never the env file. `make init` provisions all of the above.
 
+## Shipping configuration
+
+`make init` provisions; `make deploy-configs` ships. The split exists because `init`
+is one-time, interactive machine setup — it chowns `.env` and the database, installs
+sudoers files, re-downloads the Cloudflare origin-pull CA — and needs a password, which
+nothing scripted can answer. Delivering two edited lines of nginx config through it
+means reasserting nine other files and re-running `daemon-reload` and `visudo`.
+
+    make deploy-configs
+
+uploads `configs/` to `/opt/beacon/config-staging`, runs the root-owned installer
+through one NOPASSWD grant, and ends by running `config-drift` and `verify-edge` as its
+own proof. It installs only what changed, reloads systemd only when a unit file moved
+and nginx only when an nginx file did, and rolls the whole set back if `nginx -t`
+rejects the result — a broken config left on disk would be everyone's outage on a host
+serving five sites. A unit-file change still needs `systemctl restart beacon` to reach
+the running process; the installer says so rather than restarting on your behalf.
+
+**Three files are deliberately outside that path** and reach the host only through
+`make init`: `/etc/sudoers.d/beacon-deploy`, `/etc/sudoers.d/beacon-configs` and
+`/usr/local/sbin/beacon-install-configs`. An installer able to rewrite its own
+destination table, or the grant that reaches it, would be passwordless root for the
+operator account — which is exactly what naming a fixed script instead of a
+parameterised `install` avoids. So editing the installer means re-running `make init`,
+and `config-drift` reports the host as behind until that happens.
+
+The staging directory is `0700` under `/opt/beacon` rather than `/tmp` for the same
+class of reason: the installer runs as root, and a world-writable source directory lets
+any local user swap a file between the upload and the install.
+
+Bootstrap ordering on a new host: `make init` first (password), then
+`make deploy-configs` for every subsequent change.
+
 ### Config drift
 
-**`make init` is the only thing that installs `configs/`, and the release pipeline never
-touches them.** A change to a systemd unit, an nginx snippet or the backup script therefore
-ships in the repository, passes CI, appears in a release, and silently does not take
-effect. That is not hypothetical: snapshot compression sat in git for three weeks while the
-host kept writing uncompressed backups, and was found by reading the output of a manual
-command rather than by anything checking.
+The release pipeline never touches `configs/`. A change to a systemd unit, an nginx
+snippet or the backup script therefore ships in the repository, passes CI, appears in a
+release, and silently does not take effect unless someone delivers it. That is not
+hypothetical: snapshot compression sat in git for three weeks while the host kept
+writing uncompressed backups, and was found by reading the output of a manual command
+rather than by anything checking.
 
 `make config-drift` compares each installed file against its repository copy and reports
 `same` / `DIFFERS` / `MISSING` / `UNKNOWN`. It is read-only and needs no privileges. The
 same check runs on every release as a non-fatal step, writing to the job summary and
-raising a workflow warning when anything has fallen behind.
+raising a workflow warning when anything has fallen behind, and `make deploy-configs`
+runs it as a blocking final gate — which is what turns a disagreement between the
+Makefile's install table and the installer's own table into a failed deploy instead of a
+silently skipped file.
+
+### Edge cache invariants
+
+`make verify-edge` asserts the two header rules the hashed-asset location encodes: a live
+hashed asset carries exactly one `Cache-Control` with `immutable` and no `Expires`, and a
+retired one carries no cache policy at all. Both are argued in comments in
+`configs/nginx.beacon_common_settings.conf`, and a comment cannot fail a build.
+Reintroducing `always` on the `add_header` pins a 404 in every client cache for a week,
+which no page reload recovers from; adding `expires` beside it emits a second `max-age` a
+strict cache may discard along with the `immutable`. Neither shows up in `nginx -t`.
+
+It reads only, runs through Cloudflare (the origin refuses connections without the edge's
+client certificate) and retries for three minutes before failing, because a graceful nginx
+reload keeps old workers alive until their connections drain — on 2026-08-13 the previous
+headers were still being served about ninety seconds after a successful reload. Exit `2`
+means the check could not run and proved nothing either way; exit `1` means an invariant
+is broken and names which.
 
 `UNKNOWN` is its own state on purpose: `/etc/sudoers.d/beacon-deploy` is `0440 root:root`
 and cannot be read by the SSH account, so the check has no opinion about it. Reporting that
