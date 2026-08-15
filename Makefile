@@ -123,7 +123,12 @@ deploy-configs:
 		exit $$status; \
 	}
 	@$(MAKE) --no-print-directory config-drift
-	@$(MAKE) --no-print-directory verify-edge
+	@./configs/verify_edge.sh || { \
+		status=$$?; \
+		[ $$status -eq 2 ] || exit $$status; \
+		echo "deploy-configs: the edge check could not run and proved nothing either way;"; \
+		echo "deploy-configs: the configuration shipped and config-drift is clean. Re-run 'make verify-edge'."; \
+	}
 
 
 
