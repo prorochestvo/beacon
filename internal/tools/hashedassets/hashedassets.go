@@ -144,8 +144,16 @@ func NewHTMLCache(fsys fs.FS, filePath string, reg *Registry, modTime time.Time)
 	sum := sha256.Sum256(b)
 
 	return &HTMLCache{
-		body:     b,
-		etag:     `"` + hex.EncodeToString(sum[:]) + `"`,
+		body: b,
+		// Weak, not strong. A strong validator claims byte equality of the exact
+		// representation, and Cloudflare compresses this document itself — it adds its
+		// own Vary: Accept-Encoding, which the origin never sets. A proxy that may
+		// re-encode must not forward a strong ETag, so it strips it, and #83 arrived in
+		// production doing nothing. Weak comparison ignores the encoding, which is
+		// precisely the claim being made here: same content, however it is packed.
+		// nginx demonstrates the same rule one hop earlier — it weakens a strong ETag
+		// when it gzips, and forwards the weak form (#92).
+		etag:     `W/"` + hex.EncodeToString(sum[:]) + `"`,
 		modTime:  modTime,
 		filename: path.Base(filePath),
 	}, nil
