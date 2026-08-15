@@ -16,6 +16,7 @@ import (
 	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
+	appprofile "github.com/seilbekskindirov/beacon/internal/application/profile"
 	appsub "github.com/seilbekskindirov/beacon/internal/application/subscription"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
@@ -28,24 +29,22 @@ import (
 // interfaces of similar shape sitting next to two strings, so a transposed pair
 // compiles cleanly and misbehaves only in production.
 //
-// Everything is required except MeChartSvc, HealthAgent and Logger.
-// The weather trio is required for a specific reason: it used to be attached
-// after construction by two setters, and every weather handler opened with a
-// nil check answering 503 — a per-request runtime failure standing in for a
-// wiring mistake that startup should refuse outright.
+// Everything is required except MeChartSvc, HealthAgent and Logger. The weather
+// pair is required for a specific reason: it used to be attached after
+// construction by two setters, and every weather handler opened with a nil check
+// answering 503 — a per-request runtime failure standing in for a wiring mistake
+// that startup should refuse outright.
 type Config struct {
 	// RateService backs every public and admin rate endpoint.
 	RateService rateService
 	// MeSubSvc backs the whole /api/v1/me/subscriptions family.
 	MeSubSvc meSubscriptionService
-	// MeProfileRepo backs the /api/v1/me/profile endpoint.
-	MeProfileRepo meProfileRepository
+	// MeProfileSvc backs the /api/v1/me/profile endpoint.
+	MeProfileSvc meProfileService
 
-	// MeWeatherSvc reads the caller's own weather subscriptions and their
-	// observations; WeatherCityRepo and WeatherGeocoder back the write and
-	// search endpoints under /api/v1/me/weather.
+	// MeWeatherSvc backs /api/v1/me/weather; WeatherGeocoder backs the city
+	// search endpoint beside it.
 	MeWeatherSvc    meWeatherService
-	WeatherCityRepo meWeatherCityRepository
 	WeatherGeocoder weatherGeocoder
 
 	// MeChartSvc drives GetMeRatesChart and GetPublicRatesChart. Optional: those
@@ -75,9 +74,8 @@ func NewHandler(cfg Config) (*Handler, error) {
 	}{
 		{"RateService", cfg.RateService != nil},
 		{"MeSubSvc", cfg.MeSubSvc != nil},
-		{"MeProfileRepo", cfg.MeProfileRepo != nil},
+		{"MeProfileSvc", cfg.MeProfileSvc != nil},
 		{"MeWeatherSvc", cfg.MeWeatherSvc != nil},
-		{"WeatherCityRepo", cfg.WeatherCityRepo != nil},
 		{"WeatherGeocoder", cfg.WeatherGeocoder != nil},
 	}
 	// Report every absentee at once: a composition root that forgot one
@@ -98,17 +96,16 @@ func NewHandler(cfg Config) (*Handler, error) {
 	}
 
 	return &Handler{
-		rateService:       cfg.RateService,
-		meSubSvc:          cfg.MeSubSvc,
-		meProfileRepo:     cfg.MeProfileRepo,
-		meChartSvc:        cfg.MeChartSvc,
-		healthAgent:       cfg.HealthAgent,
-		serverVersion:     cfg.ServerVersion,
-		serverStart:       cfg.ServerStart,
-		meWeatherSvc:      cfg.MeWeatherSvc,
-		meWeatherCityRepo: cfg.WeatherCityRepo,
-		weatherGeocoder:   cfg.WeatherGeocoder,
-		logger:            logger,
+		rateService:     cfg.RateService,
+		meSubSvc:        cfg.MeSubSvc,
+		meProfileSvc:    cfg.MeProfileSvc,
+		meChartSvc:      cfg.MeChartSvc,
+		healthAgent:     cfg.HealthAgent,
+		serverVersion:   cfg.ServerVersion,
+		serverStart:     cfg.ServerStart,
+		meWeatherSvc:    cfg.MeWeatherSvc,
+		weatherGeocoder: cfg.WeatherGeocoder,
+		logger:          logger,
 	}, nil
 }
 
@@ -116,17 +113,16 @@ func NewHandler(cfg Config) (*Handler, error) {
 type Handler struct {
 	rateService
 	meSubSvc      meSubscriptionService
-	meProfileRepo meProfileRepository
+	meProfileSvc  meProfileService
 	meChartSvc    meChartService
 	healthAgent   healthCheckAgent
 	serverVersion string
 	serverStart   time.Time
 
-	// Weather endpoints. NewHandler rejects a Config leaving any of these nil, so
-	// the handlers below may use them without a wiring check.
-	meWeatherSvc      meWeatherService
-	meWeatherCityRepo meWeatherCityRepository
-	weatherGeocoder   weatherGeocoder
+	// Weather endpoints. NewHandler rejects a Config leaving either of these nil,
+	// so the handlers below may use them without a wiring check.
+	meWeatherSvc    meWeatherService
+	weatherGeocoder weatherGeocoder
 
 	// logger receives the detail behind a 500 (see internalError). Ordinary
 	// wiring from Config.Logger, defaulted to log.Default() by NewHandler.
@@ -839,35 +835,13 @@ func (h *Handler) UpsertMeProfile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
 		return
 	}
-	body.Timezone = strings.TrimSpace(body.Timezone)
-	body.Locale = strings.TrimSpace(body.Locale)
-	if body.Timezone == "" {
-		http.Error(w, `{"error":"timezone is required"}`, http.StatusBadRequest)
-		return
-	}
-	// Bound locale so a buggy caller can't dump megabytes into the column.
-	// BCP-47 tags max out around 35 chars in practice; 64 is a safe cap that
-	// won't reject any realistic value.
-	if len(body.Locale) > 64 {
-		http.Error(w, `{"error":"locale too long"}`, http.StatusBadRequest)
-		return
-	}
 
-	tgUserID := strconv.FormatInt(userID, 10)
-	record := &domain.RateUserProfile{
-		UserType: domain.UserTypeTelegram,
-		UserID:   tgUserID,
+	err := h.meProfileSvc.UpsertMeProfile(r.Context(), strconv.FormatInt(userID, 10), appprofile.Profile{
 		Timezone: body.Timezone,
 		Locale:   body.Locale,
-	}
-	if err := h.meProfileRepo.UpsertRateUserProfile(r.Context(), record); err != nil {
-		// PublicError → 400 with the safe message. Other errors → 500.
-		var pub *internal.PublicError
-		if errors.As(err, &pub) {
-			http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
-			return
-		}
-		h.internalError(w, err)
+	})
+	if err != nil {
+		h.meWriteError(w, err, "UpsertMeProfile")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1149,6 +1123,21 @@ func (h *Handler) publicError(w http.ResponseWriter, message string, status int)
 	http.Error(w, `{"error":"`+pub.Details()+`"}`, status)
 }
 
+// publicErrorJSON sends message as a PublicError body under status, encoded
+// rather than concatenated. Some of these messages quote a value the caller
+// sent, and one quote in it would otherwise break the document.
+func (h *Handler) publicErrorJSON(w http.ResponseWriter, message string, status int, logContext string) {
+	pub := internal.NewPublicError(message)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": pub.Details()}); err != nil {
+		h.logger.Print(errors.Join(
+			fmt.Errorf("encode %s error response: %w", logContext, err),
+			loginjector.NewTraceError(),
+		))
+	}
+}
+
 // internalError logs the underlying error with a trace and returns a generic 500 to the client.
 func (h *Handler) internalError(w http.ResponseWriter, err error) {
 	h.logger.Print(errors.Join(err, loginjector.NewTraceError()))
@@ -1233,8 +1222,10 @@ type meSubscriptionService interface {
 	DeleteMeSubscription(ctx context.Context, userID, id string) error
 }
 
-type meProfileRepository interface {
-	UpsertRateUserProfile(ctx context.Context, record *domain.RateUserProfile) error
+// meProfileService is the application service behind POST /api/v1/me/profile,
+// satisfied by *appprofile.Service.
+type meProfileService interface {
+	UpsertMeProfile(ctx context.Context, userID string, p appprofile.Profile) error
 }
 
 // meChartService is the application service contract consumed by GetMeRatesChart,

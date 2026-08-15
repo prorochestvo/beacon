@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	appprofile "github.com/seilbekskindirov/beacon/internal/application/profile"
 	appsub "github.com/seilbekskindirov/beacon/internal/application/subscription"
 	appweather "github.com/seilbekskindirov/beacon/internal/application/weather"
 	"github.com/seilbekskindirov/beacon/internal/domain"
@@ -25,13 +26,12 @@ import (
 )
 
 var (
-	_ meProfileRepo                 = (*stubMeProfileRepo)(nil)
-	_ meWeatherCityRepo             = (*stubWeatherCityRepo)(nil)
 	_ weatherGeocoder               = (*stubGeocoder)(nil)
+	_ appprofile.Store              = (*stubMeProfileRepo)(nil)
 	_ appsub.SubscriptionsStore     = (*stubMeSubRepo)(nil)
 	_ appsub.SourcesLoader          = (*stubMeSourceRepo)(nil)
 	_ appsub.ValuesLoader           = (*stubMeRateValueRepo)(nil)
-	_ appweather.CitiesLoader       = (*stubWeatherCityRepo)(nil)
+	_ appweather.CitiesStore        = (*stubWeatherCityRepo)(nil)
 	_ appweather.ObservationsLoader = (*stubWeatherObsRepo)(nil)
 )
 
@@ -80,14 +80,13 @@ func newAuthTestRouter(t *testing.T) http.Handler {
 		nil,              // rate service
 		authTestBotToken, // botToken
 		appsub.NewService(stubMeSubRepo{}, stubMeSourceRepo{}, stubMeRateValueRepo{}),
-		stubMeProfileRepo{},
+		appprofile.NewService(stubMeProfileRepo{}),
 		nil,        // chart service
 		nil,        // health agent
 		"test",     // server version
 		time.Now(), // server start
 		WeatherGatewayDeps{
 			Service:  appweather.NewService(stubWeatherCityRepo{}, stubWeatherObsRepo{}),
-			CityRepo: stubWeatherCityRepo{},
 			Geocoder: stubGeocoder{},
 		},
 	)

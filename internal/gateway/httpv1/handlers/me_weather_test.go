@@ -21,11 +21,10 @@ import (
 )
 
 var _ meWeatherService = (*mockMeWeatherSvc)(nil)
-var _ meWeatherCityRepository = (*mockWeatherCityRepo)(nil)
 var _ weatherGeocoder = (*mockWeatherGeocoder)(nil)
 
-// mockMeWeatherSvc is a test double for meWeatherService. It records the caller
-// id the handler derived and replays whatever the test staged.
+// mockMeWeatherSvc is a test double for meWeatherService. It records what the
+// handler derived from the request and replays whatever the test staged.
 type mockMeWeatherSvc struct {
 	cities    []domain.WeatherUserCity
 	citiesErr error
@@ -33,7 +32,15 @@ type mockMeWeatherSvc struct {
 	current    []appweather.CurrentCity
 	currentErr error
 
-	gotUserID string
+	createID  string
+	createErr error
+	deleteErr error
+	locErr    error
+
+	gotUserID     string
+	gotID         string
+	gotLocationID string
+	gotCreate     *appweather.NewCity
 }
 
 func (m *mockMeWeatherSvc) ObtainMeCities(_ context.Context, userID string) ([]domain.WeatherUserCity, error) {
@@ -52,86 +59,25 @@ func (m *mockMeWeatherSvc) ObtainMeCurrent(_ context.Context, userID string) ([]
 	return m.current, nil
 }
 
-// mockWeatherCityRepo is a test double for meWeatherCityRepository.
-type mockWeatherCityRepo struct {
-	cities    map[string]*domain.WeatherUserCity // id → city
-	byUser    []domain.WeatherUserCity
-	retained  []*domain.WeatherUserCity
-	removed   []*domain.WeatherUserCity
-	retainErr error
-	removeErr error
-	listErr   error
-	getErr    error
-
-	// retainErrOnKind, when non-nil, is returned only for a retain whose record
-	// has this NotifyKind — used to simulate the thaw-retain failing while the
-	// requested-kind retain still succeeds.
-	retainErrOnKind  domain.WeatherNotifyKind
-	retainErrForKind error
-
-	removedByLocation   []removeByLocationCall
-	removeByLocationErr error
+func (m *mockMeWeatherSvc) CreateMeCity(_ context.Context, userID string, req appweather.NewCity) (string, error) {
+	m.gotUserID, m.gotCreate = userID, &req
+	if m.createErr != nil {
+		return "", m.createErr
+	}
+	if m.createID == "" {
+		return "generated-id", nil
+	}
+	return m.createID, nil
 }
 
-// removeByLocationCall records one RemoveWeatherUserCitiesByLocation invocation.
-type removeByLocationCall struct {
-	userType   domain.UserType
-	userID     string
-	locationID string
+func (m *mockMeWeatherSvc) DeleteMeCity(_ context.Context, userID, id string) error {
+	m.gotUserID, m.gotID = userID, id
+	return m.deleteErr
 }
 
-func (m *mockWeatherCityRepo) RetainWeatherUserCity(_ context.Context, record *domain.WeatherUserCity) error {
-	if m.retainErr != nil {
-		return m.retainErr
-	}
-	if m.retainErrForKind != nil && record.NotifyKind == m.retainErrOnKind {
-		return m.retainErrForKind
-	}
-	if record.ID == "" {
-		record.ID = "city-generated-id"
-	}
-	m.retained = append(m.retained, record)
-	return nil
-}
-
-func (m *mockWeatherCityRepo) ObtainWeatherUserCitiesByUserID(_ context.Context, _ domain.UserType, _ string) ([]domain.WeatherUserCity, error) {
-	if m.listErr != nil {
-		return nil, m.listErr
-	}
-	if m.byUser == nil {
-		return []domain.WeatherUserCity{}, nil
-	}
-	return m.byUser, nil
-}
-
-func (m *mockWeatherCityRepo) ObtainWeatherUserCityByID(_ context.Context, id string) (*domain.WeatherUserCity, error) {
-	if m.getErr != nil {
-		return nil, m.getErr
-	}
-	if m.cities == nil {
-		return nil, internal.ErrNotFound
-	}
-	c, ok := m.cities[id]
-	if !ok {
-		return nil, internal.ErrNotFound
-	}
-	return c, nil
-}
-
-func (m *mockWeatherCityRepo) RemoveWeatherUserCity(_ context.Context, record *domain.WeatherUserCity) error {
-	if m.removeErr != nil {
-		return m.removeErr
-	}
-	m.removed = append(m.removed, record)
-	return nil
-}
-
-func (m *mockWeatherCityRepo) RemoveWeatherUserCitiesByLocation(_ context.Context, userType domain.UserType, userID, locationID string) error {
-	if m.removeByLocationErr != nil {
-		return m.removeByLocationErr
-	}
-	m.removedByLocation = append(m.removedByLocation, removeByLocationCall{userType: userType, userID: userID, locationID: locationID})
-	return nil
+func (m *mockMeWeatherSvc) DeleteMeLocation(_ context.Context, userID, locationID string) error {
+	m.gotUserID, m.gotLocationID = userID, locationID
+	return m.locErr
 }
 
 // mockWeatherGeocoder is a test double for weatherGeocoder.
@@ -152,18 +98,10 @@ func (m *mockWeatherGeocoder) Geocode(_ context.Context, _ string, _ int) ([]dto
 
 // newWeatherHandler builds a Handler wired with the given weather test doubles
 // and a silenced logger so test output stays clean.
-func newWeatherHandler(t *testing.T, cityRepo meWeatherCityRepository, geo weatherGeocoder) *Handler {
-	t.Helper()
-	return newWeatherHandlerWithSvc(t, cityRepo, geo, &mockMeWeatherSvc{})
-}
-
-// newWeatherHandlerWithSvc builds a Handler wired with city repo, geocoder, and
-// the read service, for the tests of the two read endpoints that drive it.
-func newWeatherHandlerWithSvc(t *testing.T, cityRepo meWeatherCityRepository, geo weatherGeocoder, svc meWeatherService) *Handler {
+func newWeatherHandler(t *testing.T, svc meWeatherService, geo weatherGeocoder) *Handler {
 	t.Helper()
 	return newTestHandler(t, Config{
 		MeWeatherSvc:    svc,
-		WeatherCityRepo: cityRepo,
 		WeatherGeocoder: geo,
 		Logger:          log.New(io.Discard, "", 0),
 	})
@@ -176,7 +114,7 @@ func TestHandler_SearchWeatherCities(t *testing.T) {
 
 	t.Run("missing q parameter returns 400", func(t *testing.T) {
 		t.Parallel()
-		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
+		h := newWeatherHandler(t, &mockMeWeatherSvc{}, &mockWeatherGeocoder{})
 		rr := httptest.NewRecorder()
 		h.SearchWeatherCities(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities/search", http.NoBody), callerUserID))
 
@@ -186,7 +124,7 @@ func TestHandler_SearchWeatherCities(t *testing.T) {
 
 	t.Run("blank q parameter returns 400", func(t *testing.T) {
 		t.Parallel()
-		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
+		h := newWeatherHandler(t, &mockMeWeatherSvc{}, &mockWeatherGeocoder{})
 		// Raw spaces in URLs are invalid for httptest.NewRequest; encode them.
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities/search?q=%20%20%20", http.NoBody)
 		rr := httptest.NewRecorder()
@@ -198,7 +136,7 @@ func TestHandler_SearchWeatherCities(t *testing.T) {
 	t.Run("geocoder error returns 500", func(t *testing.T) {
 		t.Parallel()
 		geo := &mockWeatherGeocoder{err: errors.New("upstream down")}
-		h := newWeatherHandler(t, &mockWeatherCityRepo{}, geo)
+		h := newWeatherHandler(t, &mockMeWeatherSvc{}, geo)
 		rr := httptest.NewRecorder()
 		h.SearchWeatherCities(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities/search?q=Almaty", http.NoBody), callerUserID))
 
@@ -213,7 +151,7 @@ func TestHandler_SearchWeatherCities(t *testing.T) {
 			{LocationID: "1234", DisplayName: "Almaty", Latitude: 43.25, Longitude: 76.94, Timezone: "Asia/Almaty", Country: "Kazakhstan", Admin1: "Almaty"},
 			{LocationID: "5678", DisplayName: "Almatinka", Latitude: 43.10, Longitude: 76.80, Timezone: "Asia/Almaty", Country: "Kazakhstan", Admin1: "Almaty Region"},
 		}}
-		h := newWeatherHandler(t, &mockWeatherCityRepo{}, geo)
+		h := newWeatherHandler(t, &mockMeWeatherSvc{}, geo)
 		rr := httptest.NewRecorder()
 		h.SearchWeatherCities(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities/search?q=Almaty", http.NoBody), callerUserID))
 
@@ -229,7 +167,7 @@ func TestHandler_SearchWeatherCities(t *testing.T) {
 
 	t.Run("empty geocoder result returns empty items array (not null)", func(t *testing.T) {
 		t.Parallel()
-		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
+		h := newWeatherHandler(t, &mockMeWeatherSvc{}, &mockWeatherGeocoder{})
 		rr := httptest.NewRecorder()
 		h.SearchWeatherCities(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities/search?q=xyzzy", http.NoBody), callerUserID))
 
@@ -251,7 +189,7 @@ func TestHandler_ListMeWeatherCities(t *testing.T) {
 	t.Run("service error returns 500", func(t *testing.T) {
 		t.Parallel()
 		svc := &mockMeWeatherSvc{citiesErr: errors.New("db down")}
-		h := newWeatherHandlerWithSvc(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{}, svc)
+		h := newWeatherHandler(t, svc, &mockWeatherGeocoder{})
 		rr := httptest.NewRecorder()
 		h.ListMeWeatherCities(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities", http.NoBody), callerUserID))
 
@@ -262,7 +200,7 @@ func TestHandler_ListMeWeatherCities(t *testing.T) {
 
 	t.Run("empty list returns empty items array", func(t *testing.T) {
 		t.Parallel()
-		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
+		h := newWeatherHandler(t, &mockMeWeatherSvc{}, &mockWeatherGeocoder{})
 		rr := httptest.NewRecorder()
 		h.ListMeWeatherCities(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities", http.NoBody), callerUserID))
 
@@ -283,7 +221,7 @@ func TestHandler_ListMeWeatherCities(t *testing.T) {
 				NotifyKind: domain.WeatherNotifyMorningSummary, NotifyHour: 7,
 			},
 		}}
-		h := newWeatherHandlerWithSvc(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{}, svc)
+		h := newWeatherHandler(t, svc, &mockWeatherGeocoder{})
 		rr := httptest.NewRecorder()
 		h.ListMeWeatherCities(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities", http.NoBody), callerUserID))
 
@@ -302,464 +240,123 @@ func TestHandler_ListMeWeatherCities(t *testing.T) {
 	})
 }
 
+// TestHandler_CreateMeWeatherCity covers what the handler kept: reading the
+// body, mapping it onto the service request, and turning the answer into a
+// status. Which values are acceptable, and the forced alert rows every tracked
+// city carries, are exercised in internal/application/weather.
 func TestHandler_CreateMeWeatherCity(t *testing.T) {
 	t.Parallel()
 
-	const callerUserID = int64(55)
-	const callerIDStr = "55"
+	const callerUserID = int64(99)
 
+	notifyHour := 9
 	validBody := dto.WeatherCityCreateRequest{
-		LocationID:  "9999",
-		DisplayName: "Almaty",
-		Latitude:    43.25,
-		Longitude:   76.94,
-		Timezone:    "Asia/Almaty",
-		Country:     "Kazakhstan",
-		Admin1:      "Almaty",
+		LocationID:     "1234",
+		DisplayName:    "Almaty",
+		Latitude:       43.25,
+		Longitude:      76.94,
+		Timezone:       "Asia/Almaty",
+		Country:        "Kazakhstan",
+		Admin1:         "Almaty",
+		NotifyKind:     "alert_heat",
+		NotifyHour:     &notifyHour,
+		ConditionValue: "35",
 	}
 
-	bodyJSON := func(r dto.WeatherCityCreateRequest) io.Reader {
-		b, _ := json.Marshal(r)
-		return strings.NewReader(string(b))
+	bodyJSON := func(v any) *strings.Reader {
+		raw, err := json.Marshal(v)
+		require.NoError(t, err)
+		return strings.NewReader(string(raw))
 	}
 
-	t.Run("malformed JSON body returns 400", func(t *testing.T) {
-		t.Parallel()
-		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", strings.NewReader("{invalid json"))
+	post := func(t *testing.T, svc meWeatherService, body io.Reader) *httptest.ResponseRecorder {
+		t.Helper()
+		h := newWeatherHandler(t, svc, &mockWeatherGeocoder{})
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", body)
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
+		return rr
+	}
 
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-	})
-
-	t.Run("empty location_id returns 400", func(t *testing.T) {
+	t.Run("201 with the generated id, and every field forwarded", func(t *testing.T) {
 		t.Parallel()
-		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
-		b := validBody
-		b.LocationID = ""
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-		require.Contains(t, rr.Body.String(), "location_id is required")
-	})
-
-	t.Run("empty display_name returns 400", func(t *testing.T) {
-		t.Parallel()
-		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
-		b := validBody
-		b.DisplayName = ""
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-		require.Contains(t, rr.Body.String(), "display_name is required")
-	})
-
-	t.Run("invalid timezone returns 400", func(t *testing.T) {
-		t.Parallel()
-		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
-		b := validBody
-		b.Timezone = "Not/A/Timezone"
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-		require.Contains(t, rr.Body.String(), "invalid timezone")
-	})
-
-	t.Run("latitude out of range returns 400", func(t *testing.T) {
-		t.Parallel()
-		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
-		b := validBody
-		b.Latitude = 91.0
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-		require.Contains(t, rr.Body.String(), "latitude")
-	})
-
-	t.Run("longitude out of range returns 400", func(t *testing.T) {
-		t.Parallel()
-		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
-		b := validBody
-		b.Longitude = -181.0
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-		require.Contains(t, rr.Body.String(), "longitude")
-	})
-
-	t.Run("notify_hour out of range returns 400", func(t *testing.T) {
-		t.Parallel()
-		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
-		hour := 24
-		b := validBody
-		b.NotifyHour = &hour
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-		require.Contains(t, rr.Body.String(), "notify_hour")
-	})
-
-	t.Run("retain repo error returns 500", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{retainErr: errors.New("db down")}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusInternalServerError, rr.Code)
-		const errFallbackMessage = `{"error":"internal error"}`
-		assert.Contains(t, rr.Body.String(), errFallbackMessage)
-	})
-
-	t.Run("happy path returns 201 with generated id", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
+		svc := &mockMeWeatherSvc{createID: "city-new"}
+		rr := post(t, svc, bodyJSON(validBody))
 
 		require.Equal(t, http.StatusCreated, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 		var resp dto.WeatherCityCreateResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
-		require.NotEmpty(t, resp.ID)
+		assert.Equal(t, "city-new", resp.ID)
+
+		assert.Equal(t, "99", svc.gotUserID, "ownership comes from the authenticated caller, never from the body")
+		require.NotNil(t, svc.gotCreate)
+		assert.Equal(t, "1234", svc.gotCreate.LocationID)
+		assert.Equal(t, "Almaty", svc.gotCreate.DisplayName)
+		assert.InDelta(t, 43.25, svc.gotCreate.Latitude, 0.0001)
+		assert.InDelta(t, 76.94, svc.gotCreate.Longitude, 0.0001)
+		assert.Equal(t, "Asia/Almaty", svc.gotCreate.Timezone)
+		assert.Equal(t, "Kazakhstan", svc.gotCreate.Country)
+		assert.Equal(t, "Almaty", svc.gotCreate.Admin1)
+		assert.Equal(t, domain.WeatherNotifyAlertHeat, svc.gotCreate.NotifyKind)
+		assert.Equal(t, "35", svc.gotCreate.ConditionValue)
+		require.NotNil(t, svc.gotCreate.NotifyHour)
+		assert.Equal(t, 9, *svc.gotCreate.NotifyHour)
 	})
 
-	t.Run("happy path stores correct user fields", func(t *testing.T) {
+	t.Run("an omitted notify_hour stays absent rather than becoming zero", func(t *testing.T) {
 		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
-		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 3, "requested morning_summary row plus the auto-created thaw and rain rows")
-		stored := cityRepo.retained[0]
-		assert.Equal(t, callerIDStr, stored.UserID)
-		assert.Equal(t, domain.UserTypeTelegram, stored.UserType)
-		assert.Equal(t, "9999", stored.LocationID)
-		assert.Equal(t, "Almaty", stored.DisplayName)
-		assert.Equal(t, "Asia/Almaty", stored.Timezone)
+		body := validBody
+		body.NotifyHour = nil
+		svc := &mockMeWeatherSvc{}
+		require.Equal(t, http.StatusCreated, post(t, svc, bodyJSON(body)).Code)
+
+		require.NotNil(t, svc.gotCreate)
+		assert.Nil(t, svc.gotCreate.NotifyHour,
+			"flattening nil to 0 here would silently pick midnight instead of the default")
 	})
 
-	t.Run("default notify_hour is applied when omitted", func(t *testing.T) {
+	t.Run("400 on a malformed body, before the service is reached", func(t *testing.T) {
 		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		b := validBody
-		b.NotifyHour = nil // explicitly omit
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
-		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 3, "requested morning_summary row plus the auto-created thaw and rain rows")
-		assert.Equal(t, weatherDefaultNotifyHour, cityRepo.retained[0].NotifyHour)
-	})
-
-	t.Run("explicit notify_hour 0 is accepted", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		hour := 0
-		b := validBody
-		b.NotifyHour = &hour
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 3, "requested morning_summary row plus the auto-created thaw and rain rows")
-		assert.Equal(t, 0, cityRepo.retained[0].NotifyHour)
-	})
-
-	t.Run("alert_heat with valid condition_value returns 201", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		b := validBody
-		b.NotifyKind = "alert_heat"
-		b.ConditionValue = "35"
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 3, "requested alert_heat row plus the auto-created thaw and rain rows")
-		assert.Equal(t, domain.WeatherNotifyAlertHeat, cityRepo.retained[0].NotifyKind)
-		assert.Equal(t, "35", cityRepo.retained[0].ConditionValue)
-	})
-
-	t.Run("alert_frost with valid negative condition_value returns 201", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		b := validBody
-		b.NotifyKind = "alert_frost"
-		b.ConditionValue = "-5"
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 3, "requested alert_frost row plus the auto-created thaw and rain rows")
-		assert.Equal(t, domain.WeatherNotifyAlertFrost, cityRepo.retained[0].NotifyKind)
-		assert.Equal(t, "-5", cityRepo.retained[0].ConditionValue)
-	})
-
-	t.Run("alert_thunderstorm with no condition_value returns 201", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		b := validBody
-		b.NotifyKind = "alert_thunderstorm"
-		// ConditionValue intentionally omitted (empty)
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 3, "requested alert_thunderstorm row plus the auto-created thaw and rain rows")
-		assert.Equal(t, domain.WeatherNotifyAlertThunderstorm, cityRepo.retained[0].NotifyKind)
-		assert.Equal(t, "", cityRepo.retained[0].ConditionValue)
-	})
-
-	t.Run("rain_alert with valid percent returns 201 and stores kind and value", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		b := validBody
-		b.NotifyKind = "rain_alert"
-		b.ConditionValue = "70"
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 2, "requested rain_alert row plus the auto-created thaw row; rain is not ensured twice")
-		assert.Equal(t, domain.WeatherNotifyAlertRain, cityRepo.retained[0].NotifyKind)
-		assert.Equal(t, "70", cityRepo.retained[0].ConditionValue)
-	})
-
-	t.Run("rain_alert with percent above 100 returns 400 PublicError", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		b := validBody
-		b.NotifyKind = "rain_alert"
-		b.ConditionValue = "101"
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
+		svc := &mockMeWeatherSvc{}
+		rr := post(t, svc, strings.NewReader("not-json"))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
-		assert.Contains(t, rr.Body.String(), "probability percent")
-		assert.Contains(t, rr.Body.String(), `"error"`)
+		require.Contains(t, rr.Body.String(), "invalid request body")
+		assert.Nil(t, svc.gotCreate)
 	})
 
-	t.Run("rain_alert with percent at or below 0 returns 400 PublicError", func(t *testing.T) {
+	t.Run("400 on a body exceeding 4 KiB", func(t *testing.T) {
 		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		b := validBody
-		b.NotifyKind = "rain_alert"
-		b.ConditionValue = "0"
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
+
+		svc := &mockMeWeatherSvc{}
+		rr := post(t, svc, strings.NewReader(strings.Repeat("x", 5<<10)))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
-		assert.Contains(t, rr.Body.String(), "probability percent")
-		assert.Contains(t, rr.Body.String(), `"error"`)
+		assert.Nil(t, svc.gotCreate)
 	})
 
-	t.Run("alert_thaw with non-empty condition_value returns 201 and blanks it", func(t *testing.T) {
+	t.Run("a PublicError from the service becomes a 400 carrying its message", func(t *testing.T) {
 		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		b := validBody
-		b.NotifyKind = "alert_thaw"
-		b.ConditionValue = "ignored free text"
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
-		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 2, "requested alert_thaw row plus the auto-created rain row")
-		assert.Equal(t, domain.WeatherNotifyAlertThaw, cityRepo.retained[0].NotifyKind)
-		assert.Equal(t, "", cityRepo.retained[0].ConditionValue, "condition_value must be blanked for alert_thaw")
-	})
-
-	t.Run("unknown notify_kind returns 400 PublicError", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		b := validBody
-		b.NotifyKind = "alert_rainbow"
-		b.ConditionValue = "42"
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
+		rr := post(t, &mockMeWeatherSvc{createErr: internal.NewPublicError("latitude must be between -90 and 90")}, bodyJSON(validBody))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
-		assert.Contains(t, rr.Body.String(), "unknown notify_kind")
-		// Must be a PublicError payload, not a generic error.
-		assert.Contains(t, rr.Body.String(), `"error"`)
+		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
+		require.Contains(t, rr.Body.String(), "latitude must be between -90 and 90")
 	})
 
-	t.Run("alert_heat with non-numeric condition_value returns 400 PublicError", func(t *testing.T) {
+	t.Run("500 on any other service failure, with the detail kept out of the body", func(t *testing.T) {
 		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		b := validBody
-		b.NotifyKind = "alert_heat"
-		b.ConditionValue = "hot"
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-		assert.Contains(t, rr.Body.String(), "valid number")
-	})
-
-	t.Run("alert_heat with empty condition_value returns 400 PublicError", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		b := validBody
-		b.NotifyKind = "alert_heat"
-		b.ConditionValue = ""
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-	})
-
-	t.Run("requested morning_summary auto-creates a thaw row alongside it", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 3, "expected the requested row plus auto-created thaw and rain rows")
-		assert.Equal(t, domain.WeatherNotifyMorningSummary, cityRepo.retained[0].NotifyKind)
-		thaw := cityRepo.retained[1]
-		assert.Equal(t, domain.WeatherNotifyAlertThaw, thaw.NotifyKind)
-		assert.Equal(t, "9999", thaw.LocationID)
-		assert.Equal(t, "Almaty", thaw.DisplayName)
-		assert.Equal(t, "", thaw.ConditionValue)
-		assert.Equal(t, weatherDefaultNotifyHour, thaw.NotifyHour)
-		assert.Equal(t, callerIDStr, thaw.UserID)
-		assert.True(t, thaw.AlertLatched, "auto-created thaw row must seed pre-latched to avoid a spurious first-tick notification")
-
-		rain := cityRepo.retained[2]
-		assert.Equal(t, domain.WeatherNotifyAlertRain, rain.NotifyKind)
-		assert.Equal(t, "9999", rain.LocationID)
-		assert.Equal(t, weatherDefaultRainThreshold, rain.ConditionValue)
-		assert.Equal(t, callerIDStr, rain.UserID)
-		assert.False(t, rain.AlertLatched,
-			"auto-created rain row must seed armed: pre-latched would emit a spurious \"rain cleared\" on the first tick")
-	})
-
-	t.Run("requested alert_heat auto-creates a thaw row alongside it", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		b := validBody
-		b.NotifyKind = "alert_heat"
-		b.ConditionValue = "35"
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 3)
-		assert.Equal(t, domain.WeatherNotifyAlertHeat, cityRepo.retained[0].NotifyKind)
-		assert.Equal(t, domain.WeatherNotifyAlertThaw, cityRepo.retained[1].NotifyKind)
-		assert.True(t, cityRepo.retained[1].AlertLatched, "auto-created thaw row must seed pre-latched")
-		assert.Equal(t, domain.WeatherNotifyAlertRain, cityRepo.retained[2].NotifyKind)
-		assert.False(t, cityRepo.retained[2].AlertLatched, "auto-created rain row must seed armed")
-	})
-
-	t.Run("requested alert_thaw does not trigger a second retain", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		b := validBody
-		b.NotifyKind = "alert_thaw"
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 2, "requesting thaw directly must not re-ensure thaw, but the forced rain row is still added")
-		assert.Equal(t, domain.WeatherNotifyAlertThaw, cityRepo.retained[0].NotifyKind)
-	})
-
-	t.Run("thaw retain failure after a successful requested-row retain returns 500", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{
-			retainErrOnKind:  domain.WeatherNotifyAlertThaw,
-			retainErrForKind: errors.New("db down"),
-		}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
+		rr := post(t, &mockMeWeatherSvc{createErr: errors.New("db down")}, bodyJSON(validBody))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
-		const errFallbackMessage = `{"error":"internal error"}`
-		assert.Contains(t, rr.Body.String(), errFallbackMessage)
-		require.Len(t, cityRepo.retained, 1, "the requested row must still have been retained before the thaw retain failed")
-	})
-
-	t.Run("list returns notify_kind and condition_value for alert rows", func(t *testing.T) {
-		t.Parallel()
-		svc := &mockMeWeatherSvc{
-			cities: []domain.WeatherUserCity{
-				{
-					ID:             "city-id-1",
-					UserType:       domain.UserTypeTelegram,
-					UserID:         callerIDStr,
-					LocationID:     "loc1",
-					DisplayName:    "Almaty",
-					Timezone:       "UTC",
-					NotifyKind:     domain.WeatherNotifyAlertHeat,
-					ConditionValue: "35",
-				},
-			},
-		}
-		h := newWeatherHandlerWithSvc(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{}, svc)
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities", http.NoBody)
-		rr := httptest.NewRecorder()
-		h.ListMeWeatherCities(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusOK, rr.Code)
-		var resp dto.WeatherCitiesResponse
-		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
-		require.Len(t, resp.Items, 1)
-		assert.Equal(t, "alert_heat", resp.Items[0].NotifyKind)
-		assert.Equal(t, "35", resp.Items[0].ConditionValue)
+		require.Contains(t, rr.Body.String(), "internal error")
+		assert.NotContains(t, rr.Body.String(), "db down")
 	})
 }
 
@@ -767,222 +364,130 @@ func TestHandler_DeleteMeWeatherCity(t *testing.T) {
 	t.Parallel()
 
 	const callerUserID = int64(33)
-	const callerIDStr = "33"
-	const otherIDStr = "44"
 
-	callerCity := &domain.WeatherUserCity{
-		ID: "city-1", UserType: domain.UserTypeTelegram, UserID: callerIDStr,
-		LocationID: "1234", DisplayName: "Almaty",
-	}
-	otherCity := &domain.WeatherUserCity{
-		ID: "city-2", UserType: domain.UserTypeTelegram, UserID: otherIDStr,
-		LocationID: "5678", DisplayName: "Moscow",
-	}
-
-	t.Run("missing id path param returns 400", func(t *testing.T) {
-		t.Parallel()
-		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/", http.NoBody)
+	del := func(t *testing.T, svc meWeatherService, id string) *httptest.ResponseRecorder {
+		t.Helper()
+		h := newWeatherHandler(t, svc, &mockWeatherGeocoder{})
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/"+id, http.NoBody)
+		req.SetPathValue("id", id)
 		rr := httptest.NewRecorder()
 		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
+		return rr
+	}
+
+	t.Run("204 on success, forwarding the caller and the id", func(t *testing.T) {
+		t.Parallel()
+
+		svc := &mockMeWeatherSvc{}
+		require.Equal(t, http.StatusNoContent, del(t, svc, "city-1").Code)
+		assert.Equal(t, "33", svc.gotUserID)
+		assert.Equal(t, "city-1", svc.gotID)
+	})
+
+	t.Run("400 on a missing id, before the service is reached", func(t *testing.T) {
+		t.Parallel()
+
+		svc := &mockMeWeatherSvc{}
+		rr := del(t, svc, "")
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
+		require.Contains(t, rr.Body.String(), "missing city id")
+		assert.Empty(t, svc.gotID)
 	})
 
-	t.Run("city not found returns 404", func(t *testing.T) {
+	t.Run("404 on a missing city and on another user's", func(t *testing.T) {
 		t.Parallel()
-		h := newWeatherHandler(t, &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{}}, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/nonexistent", http.NoBody)
-		req.SetPathValue("id", "nonexistent")
-		rr := httptest.NewRecorder()
-		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
 
-		require.Equal(t, http.StatusNotFound, rr.Code)
+		rr := del(t, &mockMeWeatherSvc{deleteErr: internal.ErrNotFound}, "city-other")
+
+		require.Equal(t, http.StatusNotFound, rr.Code,
+			"another user's city is 404, never 403 — a 403 confirms it exists")
 		require.Contains(t, rr.Body.String(), "city not found")
 	})
 
-	t.Run("cross-user access returns 404 not 403", func(t *testing.T) {
+	t.Run("409 with the explanation when the row is forced", func(t *testing.T) {
 		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{"city-2": otherCity}}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-2", http.NoBody)
-		req.SetPathValue("id", "city-2")
-		rr := httptest.NewRecorder()
-		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
 
-		require.Equal(t, http.StatusNotFound, rr.Code, "cross-user access must return 404, not 403")
-		require.Contains(t, rr.Body.String(), "city not found")
+		notice := "Thaw alerts stay on for every tracked city; remove the city to turn it off."
+		svc := &mockMeWeatherSvc{deleteErr: errors.Join(appweather.ErrForcedSubscription, internal.NewPublicError(notice))}
+		rr := del(t, svc, "city-thaw")
+
+		require.Equal(t, http.StatusConflict, rr.Code,
+			"a forced row is a conflict with how the resource works, not a malformed request")
+		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
+		var body map[string]string
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+		assert.Equal(t, notice, body["error"])
 	})
 
-	t.Run("repo lookup error returns 500", func(t *testing.T) {
+	t.Run("500 on any other service failure", func(t *testing.T) {
 		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{getErr: errors.New("db down")}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-1", http.NoBody)
-		req.SetPathValue("id", "city-1")
-		rr := httptest.NewRecorder()
-		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
+
+		rr := del(t, &mockMeWeatherSvc{deleteErr: errors.New("db down")}, "city-1")
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
-		const errFallbackMessage = `{"error":"internal error"}`
-		assert.Contains(t, rr.Body.String(), errFallbackMessage)
-	})
-
-	t.Run("remove repo error returns 500", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{
-			cities:    map[string]*domain.WeatherUserCity{"city-1": callerCity},
-			removeErr: errors.New("db down"),
-		}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-1", http.NoBody)
-		req.SetPathValue("id", "city-1")
-		rr := httptest.NewRecorder()
-		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusInternalServerError, rr.Code)
-		const errFallbackMessage = `{"error":"internal error"}`
-		assert.Contains(t, rr.Body.String(), errFallbackMessage)
-	})
-
-	t.Run("happy path returns 204 and removes the city", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{"city-1": callerCity}}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-1", http.NoBody)
-		req.SetPathValue("id", "city-1")
-		rr := httptest.NewRecorder()
-		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusNoContent, rr.Code)
-		require.Len(t, cityRepo.removed, 1)
-		assert.Equal(t, "city-1", cityRepo.removed[0].ID)
-	})
-
-	t.Run("deleting the last non-thaw row leaves the thaw row intact (no cascade)", func(t *testing.T) {
-		t.Parallel()
-		thawCity := &domain.WeatherUserCity{
-			ID: "city-thaw", UserType: domain.UserTypeTelegram, UserID: callerIDStr,
-			LocationID: "1234", DisplayName: "Almaty", NotifyKind: domain.WeatherNotifyAlertThaw,
-		}
-		cityRepo := &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{
-			"city-1":    callerCity,
-			"city-thaw": thawCity,
-		}}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-1", http.NoBody)
-		req.SetPathValue("id", "city-1")
-		rr := httptest.NewRecorder()
-		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusNoContent, rr.Code)
-		require.Len(t, cityRepo.removed, 1)
-		assert.Equal(t, "city-1", cityRepo.removed[0].ID)
-		assert.Empty(t, cityRepo.removedByLocation, "no cascade — the location-delete path must not be invoked")
-	})
-
-	t.Run("deleting an owned thaw row returns 409 and does not remove it", func(t *testing.T) {
-		t.Parallel()
-		thawCity := &domain.WeatherUserCity{
-			ID: "city-thaw", UserType: domain.UserTypeTelegram, UserID: callerIDStr,
-			LocationID: "1234", DisplayName: "Almaty", NotifyKind: domain.WeatherNotifyAlertThaw,
-		}
-		cityRepo := &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{"city-thaw": thawCity}}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-thaw", http.NoBody)
-		req.SetPathValue("id", "city-thaw")
-		rr := httptest.NewRecorder()
-		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusConflict, rr.Code)
-		pub := internal.NewPublicError("Thaw alerts stay on for every tracked city; remove the city to turn it off.")
-		assert.Contains(t, rr.Body.String(), pub.Details())
-		assert.Empty(t, cityRepo.removed, "the thaw row must not be removed")
-	})
-
-	t.Run("cross-user access to a thaw row returns 404 not 409 (no existence/kind disclosure)", func(t *testing.T) {
-		t.Parallel()
-		// Ownership must be checked before the thaw-kind 409 guard: otherwise a 409 vs
-		// 404 response would leak both that the row exists AND that it is alert_thaw to
-		// a caller who does not own it.
-		otherThawCity := &domain.WeatherUserCity{
-			ID: "city-3", UserType: domain.UserTypeTelegram, UserID: otherIDStr,
-			LocationID: "9012", DisplayName: "Tokyo", NotifyKind: domain.WeatherNotifyAlertThaw,
-		}
-		cityRepo := &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{"city-3": otherThawCity}}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-3", http.NoBody)
-		req.SetPathValue("id", "city-3")
-		rr := httptest.NewRecorder()
-		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusNotFound, rr.Code, "ownership must be checked before the thaw-kind 409 guard")
-		require.Contains(t, rr.Body.String(), "city not found")
-		assert.Empty(t, cityRepo.removed, "no removal call for a cross-user row")
+		require.Contains(t, rr.Body.String(), "internal error")
 	})
 }
 
 func TestHandler_DeleteMeWeatherLocation(t *testing.T) {
 	t.Parallel()
 
-	const callerUserID = int64(33)
-	const callerIDStr = "33"
+	const callerUserID = int64(55)
 
-	newReq := func(locationID string) *http.Request {
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/locations/"+locationID, http.NoBody)
+	del := func(t *testing.T, svc meWeatherService, locationID string) *httptest.ResponseRecorder {
+		t.Helper()
+		h := newWeatherHandler(t, svc, &mockWeatherGeocoder{})
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/locations/x", http.NoBody)
 		req.SetPathValue("location_id", locationID)
-		return req
-	}
-
-	t.Run("missing location_id path segment returns 400", func(t *testing.T) {
-		t.Parallel()
-		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/locations/", http.NoBody)
 		rr := httptest.NewRecorder()
 		h.DeleteMeWeatherLocation(rr, withCaller(req, callerUserID))
+		return rr
+	}
 
-		require.Equal(t, http.StatusBadRequest, rr.Code)
+	t.Run("204 on success, forwarding the caller and the location", func(t *testing.T) {
+		t.Parallel()
+
+		svc := &mockMeWeatherSvc{}
+		require.Equal(t, http.StatusNoContent, del(t, svc, "1234").Code)
+		assert.Equal(t, "55", svc.gotUserID)
+		assert.Equal(t, "1234", svc.gotLocationID)
 	})
 
-	t.Run("caller has no rows at the location returns 404", func(t *testing.T) {
+	t.Run("400 on a missing or blank location id, before the service is reached", func(t *testing.T) {
 		t.Parallel()
-		// The handler no longer pre-scans; the repository's atomic delete reports
-		// zero rows affected as internal.ErrNotFound for both a missing location and
-		// one owned entirely by another user.
-		cityRepo := &mockWeatherCityRepo{removeByLocationErr: internal.ErrNotFound}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		rr := httptest.NewRecorder()
-		h.DeleteMeWeatherLocation(rr, withCaller(newReq("loc-1"), callerUserID))
+
+		blank := map[string]string{"empty": "", "whitespace only": "   "}
+		for name, locationID := range blank {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				svc := &mockMeWeatherSvc{}
+				rr := del(t, svc, locationID)
+
+				require.Equal(t, http.StatusBadRequest, rr.Code)
+				require.Contains(t, rr.Body.String(), "missing location id")
+				assert.Empty(t, svc.gotLocationID)
+			})
+		}
+	})
+
+	t.Run("404 when the caller holds nothing there", func(t *testing.T) {
+		t.Parallel()
+
+		rr := del(t, &mockMeWeatherSvc{locErr: internal.ErrNotFound}, "1234")
 
 		require.Equal(t, http.StatusNotFound, rr.Code)
 		require.Contains(t, rr.Body.String(), "city not found")
-		assert.Empty(t, cityRepo.removedByLocation)
 	})
 
-	t.Run("caller owns rows at the location returns 204 and removes them", func(t *testing.T) {
+	t.Run("500 on any other service failure", func(t *testing.T) {
 		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		rr := httptest.NewRecorder()
-		h.DeleteMeWeatherLocation(rr, withCaller(newReq("loc-1"), callerUserID))
 
-		require.Equal(t, http.StatusNoContent, rr.Code)
-		require.Len(t, cityRepo.removedByLocation, 1)
-		assert.Equal(t, domain.UserTypeTelegram, cityRepo.removedByLocation[0].userType)
-		assert.Equal(t, callerIDStr, cityRepo.removedByLocation[0].userID)
-		assert.Equal(t, "loc-1", cityRepo.removedByLocation[0].locationID)
-	})
-
-	t.Run("remove repo error returns 500", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{removeByLocationErr: errors.New("db down")}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		rr := httptest.NewRecorder()
-		h.DeleteMeWeatherLocation(rr, withCaller(newReq("loc-1"), callerUserID))
+		rr := del(t, &mockMeWeatherSvc{locErr: errors.New("db down")}, "1234")
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
-		const errFallbackMessage = `{"error":"internal error"}`
-		assert.Contains(t, rr.Body.String(), errFallbackMessage)
+		require.Contains(t, rr.Body.String(), "internal error")
 	})
 }
 
@@ -1028,7 +533,7 @@ func TestHandler_GetMeWeatherCurrent(t *testing.T) {
 
 	get := func(t *testing.T, svc meWeatherService) *httptest.ResponseRecorder {
 		t.Helper()
-		h := newWeatherHandlerWithSvc(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{}, svc)
+		h := newWeatherHandler(t, svc, &mockWeatherGeocoder{})
 		rr := httptest.NewRecorder()
 		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/current", http.NoBody), callerUserID))
 		return rr
@@ -1128,131 +633,5 @@ func TestHandler_GetMeWeatherCurrent(t *testing.T) {
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 		require.NotNil(t, resp.Items)
 		require.Empty(t, resp.Items)
-	})
-}
-
-// TestHandler_MeWeatherForcedRainAlert covers the half of issue #3 that no amount of
-// evaluator work would have fixed on its own: production held zero rain_alert rows, so
-// the alert was structurally incapable of firing. rain_alert is now forced and
-// system-managed per tracked city, exactly like alert_thaw.
-func TestHandler_MeWeatherForcedRainAlert(t *testing.T) {
-	t.Parallel()
-
-	const callerUserID int64 = 555001
-	const callerIDStr = "555001"
-	const otherIDStr = "555002"
-
-	bodyJSON := func(r dto.WeatherCityCreateRequest) io.Reader {
-		b, _ := json.Marshal(r)
-		return strings.NewReader(string(b))
-	}
-
-	validBody := dto.WeatherCityCreateRequest{
-		LocationID:  "7777",
-		DisplayName: "Astana",
-		Latitude:    51.16,
-		Longitude:   71.43,
-		Timezone:    "Asia/Almaty",
-		Country:     "Kazakhstan",
-		Admin1:      "Astana",
-	}
-
-	t.Run("an existing rain row is not re-ensured, so a tuned threshold survives", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{byUser: []domain.WeatherUserCity{{
-			ID: "existing-rain", UserType: domain.UserTypeTelegram, UserID: callerIDStr,
-			LocationID: "7777", NotifyKind: domain.WeatherNotifyAlertRain, ConditionValue: "85",
-		}}}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		b := validBody
-		b.NotifyKind = "alert_heat"
-		b.ConditionValue = "35"
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 2, "the requested heat row plus thaw; rain already exists")
-		for _, r := range cityRepo.retained {
-			assert.NotEqual(t, domain.WeatherNotifyAlertRain, r.NotifyKind,
-				"re-ensuring rain would rewrite condition_value and silently reset the user's threshold")
-		}
-	})
-
-	t.Run("a rain row at a different location does not block the ensure", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{byUser: []domain.WeatherUserCity{{
-			ID: "rain-elsewhere", UserType: domain.UserTypeTelegram, UserID: callerIDStr,
-			LocationID: "0000", NotifyKind: domain.WeatherNotifyAlertRain, ConditionValue: "85",
-		}}}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusCreated, rr.Code)
-		require.Len(t, cityRepo.retained, 3, "the new location gets its own forced rain row")
-		assert.Equal(t, domain.WeatherNotifyAlertRain, cityRepo.retained[2].NotifyKind)
-		assert.Equal(t, "7777", cityRepo.retained[2].LocationID)
-	})
-
-	t.Run("a lookup failure while ensuring rain returns 500", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{listErr: errors.New("db down")}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
-		rr := httptest.NewRecorder()
-		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusInternalServerError, rr.Code)
-		assert.Contains(t, rr.Body.String(), `{"error":"internal error"}`)
-	})
-
-	t.Run("deleting an owned rain row returns 409 and does not remove it", func(t *testing.T) {
-		t.Parallel()
-		rainCity := &domain.WeatherUserCity{
-			ID: "city-rain", UserType: domain.UserTypeTelegram, UserID: callerIDStr,
-			LocationID: "7777", DisplayName: "Astana", NotifyKind: domain.WeatherNotifyAlertRain,
-			ConditionValue: "60",
-		}
-		cityRepo := &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{"city-rain": rainCity}}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-rain", http.NoBody)
-		req.SetPathValue("id", "city-rain")
-		rr := httptest.NewRecorder()
-		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusConflict, rr.Code)
-		pub := internal.NewPublicError("Rain alerts stay on for every tracked city; remove the city to turn it off.")
-		assert.Contains(t, rr.Body.String(), pub.Details())
-		assert.Empty(t, cityRepo.removed, "the rain row must not be removed")
-	})
-
-	t.Run("cross-user access to a rain row returns 404 not 409", func(t *testing.T) {
-		t.Parallel()
-		// Ownership is checked before the forced-kind guard: a 409 here would disclose
-		// both that the row exists and that it is rain_alert to a caller who does not own it.
-		otherRain := &domain.WeatherUserCity{
-			ID: "city-rain-other", UserType: domain.UserTypeTelegram, UserID: otherIDStr,
-			LocationID: "9012", DisplayName: "Tokyo", NotifyKind: domain.WeatherNotifyAlertRain,
-		}
-		cityRepo := &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{"city-rain-other": otherRain}}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-rain-other", http.NoBody)
-		req.SetPathValue("id", "city-rain-other")
-		rr := httptest.NewRecorder()
-		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusNotFound, rr.Code)
-		assert.Empty(t, cityRepo.removed)
-	})
-
-	t.Run("the seeded default threshold passes domain validation", func(t *testing.T) {
-		t.Parallel()
-		seeded := domain.WeatherUserCity{
-			NotifyKind:     domain.WeatherNotifyAlertRain,
-			ConditionValue: weatherDefaultRainThreshold,
-		}
-		require.NoError(t, seeded.Validate())
 	})
 }

@@ -115,7 +115,6 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tgUserID := strconv.FormatInt(userID, 10)
 
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10) // 4 KiB
 	var body dto.WeatherCityCreateRequest
@@ -124,61 +123,7 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Server-side validation — never trust client-supplied geocoding fields.
-	if strings.TrimSpace(body.LocationID) == "" {
-		pub := internal.NewPublicError("location_id is required")
-		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
-		return
-	}
-	if strings.TrimSpace(body.DisplayName) == "" {
-		pub := internal.NewPublicError("display_name is required")
-		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
-		return
-	}
-	if _, err := time.LoadLocation(body.Timezone); err != nil {
-		pub := internal.NewPublicError("invalid timezone: must be a valid IANA timezone name")
-		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
-		return
-	}
-	if body.Latitude < -90 || body.Latitude > 90 {
-		pub := internal.NewPublicError("latitude must be between -90 and 90")
-		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
-		return
-	}
-	if body.Longitude < -180 || body.Longitude > 180 {
-		pub := internal.NewPublicError("longitude must be between -180 and 180")
-		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
-		return
-	}
-
-	notifyHour := weatherDefaultNotifyHour
-	if body.NotifyHour != nil {
-		notifyHour = *body.NotifyHour
-	}
-	if notifyHour < 0 || notifyHour > 23 {
-		pub := internal.NewPublicError("notify_hour must be between 0 and 23")
-		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Determine notify_kind: default to morning_summary when omitted.
-	notifyKind := domain.WeatherNotifyMorningSummary
-	if body.NotifyKind != "" {
-		notifyKind = domain.WeatherNotifyKind(body.NotifyKind)
-	}
-
-	// morning_summary and alert_thaw ignore condition_value; normalize to empty
-	// so arbitrary free text is never stored for a kind that does not use it.
-	// (alert_thunderstorm is not blanked here — pre-existing asymmetry, out of
-	// scope for this change.)
-	conditionValue := body.ConditionValue
-	if notifyKind == domain.WeatherNotifyMorningSummary || notifyKind == domain.WeatherNotifyAlertThaw {
-		conditionValue = ""
-	}
-
-	record := &domain.WeatherUserCity{
-		UserType:       domain.UserTypeTelegram,
-		UserID:         tgUserID,
+	id, err := h.meWeatherSvc.CreateMeCity(r.Context(), strconv.FormatInt(userID, 10), appweather.NewCity{
 		LocationID:     body.LocationID,
 		DisplayName:    body.DisplayName,
 		Latitude:       body.Latitude,
@@ -186,97 +131,18 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 		Timezone:       body.Timezone,
 		Country:        body.Country,
 		Admin1:         body.Admin1,
-		NotifyKind:     notifyKind,
-		NotifyHour:     notifyHour,
-		ConditionValue: conditionValue,
-	}
-
-	// Validate the (kind, condition_value) pair. Validate() returns a plain error
-	// whose message is safe to surface directly to the user. json.NewEncoder is used
-	// here instead of string concatenation so a condition_value containing a quote
-	// cannot corrupt the JSON.
-	if valErr := record.Validate(); valErr != nil {
-		pub := internal.NewPublicError(valErr.Error())
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		if encErr := json.NewEncoder(w).Encode(map[string]string{"error": pub.Details()}); encErr != nil {
-			h.logger.Print(errors.Join(fmt.Errorf("encode validation error response: %w", encErr), loginjector.NewTraceError()))
-		}
+		NotifyKind:     domain.WeatherNotifyKind(body.NotifyKind),
+		NotifyHour:     body.NotifyHour,
+		ConditionValue: body.ConditionValue,
+	})
+	if err != nil {
+		h.meWeatherWriteError(w, err, "CreateMeWeatherCity")
 		return
-	}
-
-	if err := h.meWeatherCityRepo.RetainWeatherUserCity(r.Context(), record); err != nil {
-		h.internalError(w, fmt.Errorf("CreateMeWeatherCity retain: %w", err))
-		return
-	}
-
-	// alert_thaw and rain_alert are forced and system-managed: every tracked city carries
-	// exactly one of each, so any add ensures the ones this request did not itself create.
-	// Built from the already-validated body.* fields, not from record —
-	// RetainWeatherUserCity mutates record's ID/timestamps in place.
-	//
-	// The AlertLatched seed differs per kind, and the asymmetry is deliberate:
-	//
-	//   - thaw starts pre-latched (true), matching migration 202607.021: it fires on
-	//     TempMax > 0 alone, the default warm-season state, so an armed row would risk
-	//     firing on the very first check tick for a city already past freezing. A
-	//     genuinely still-frozen city re-arms to false on the next tick with no
-	//     notification either way.
-	//   - rain starts armed (false), matching migration 202608.026: it notifies on BOTH
-	//     latch edges, so a pre-latched row would emit a spurious "rain cleared" on the
-	//     first tick, "no rain" being the normal state. Armed, the only first-tick message
-	//     it can produce is a truthful "rain expected".
-	//
-	// keepExisting rows are ensured only when absent, so re-adding any other alert kind for
-	// the same city cannot stomp a rain threshold the user retuned (the upsert does rewrite
-	// condition_value).
-	forced := []struct {
-		kind           domain.WeatherNotifyKind
-		conditionValue string
-		alertLatched   bool
-		keepExisting   bool
-	}{
-		{domain.WeatherNotifyAlertThaw, "", true, false},
-		{domain.WeatherNotifyAlertRain, weatherDefaultRainThreshold, false, true},
-	}
-	for _, f := range forced {
-		if notifyKind == f.kind {
-			continue // the request itself created this row
-		}
-		if f.keepExisting {
-			exists, existsErr := h.weatherKindExists(r.Context(), tgUserID, body.LocationID, f.kind)
-			if existsErr != nil {
-				h.internalError(w, fmt.Errorf("CreateMeWeatherCity ensure %s: %w", f.kind, existsErr))
-				return
-			}
-			if exists {
-				continue
-			}
-		}
-		row := &domain.WeatherUserCity{
-			UserType:       domain.UserTypeTelegram,
-			UserID:         tgUserID,
-			LocationID:     body.LocationID,
-			DisplayName:    body.DisplayName,
-			Latitude:       body.Latitude,
-			Longitude:      body.Longitude,
-			Timezone:       body.Timezone,
-			Country:        body.Country,
-			Admin1:         body.Admin1,
-			NotifyKind:     f.kind,
-			NotifyHour:     weatherDefaultNotifyHour,
-			ConditionValue: f.conditionValue,
-			AlertLatched:   f.alertLatched,
-		}
-		if err := h.meWeatherCityRepo.RetainWeatherUserCity(r.Context(), row); err != nil {
-			h.internalError(w, fmt.Errorf("CreateMeWeatherCity ensure %s: %w", f.kind, err))
-			return
-		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(dto.WeatherCityCreateResponse{ID: record.ID}); err != nil {
+	if err := json.NewEncoder(w).Encode(dto.WeatherCityCreateResponse{ID: id}); err != nil {
 		h.logger.Print(errors.Join(
 			fmt.Errorf("encode CreateMeWeatherCity response: %w", err),
 			loginjector.NewTraceError(),
@@ -292,13 +158,14 @@ func (h *Handler) CreateMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 // 204 No Content on success.
 // 401 on auth failure.
 // 404 on missing city or cross-user access (same response — no existence disclosure).
+// 409 when the row is one of the forced, system-managed kinds; the ownership check
+// runs first, so cross-user stays 404 and never reveals that a forced row is there.
 // 500 on persistence failure.
 func (h *Handler) DeleteMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.callerID(w, r)
 	if !ok {
 		return
 	}
-	tgUserID := strconv.FormatInt(userID, 10)
 
 	id := r.PathValue("id")
 	if id == "" {
@@ -306,26 +173,8 @@ func (h *Handler) DeleteMeWeatherCity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	city := h.meWeatherCityOwnershipCheck(w, r, id, tgUserID)
-	if city == nil {
-		return
-	}
-
-	if notice, forced := forcedWeatherKindNotice(city.NotifyKind); forced {
-		// Forced, system-managed row: it can only be removed by removing the whole
-		// city (DELETE /api/v1/me/weather/locations/{location_id}). Reached only via
-		// the API — the UI renders no delete control for these kinds.
-		pub := internal.NewPublicError(notice)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		if encErr := json.NewEncoder(w).Encode(map[string]string{"error": pub.Details()}); encErr != nil {
-			h.logger.Print(errors.Join(fmt.Errorf("encode DeleteMeWeatherCity forced-kind-conflict response: %w", encErr), loginjector.NewTraceError()))
-		}
-		return
-	}
-
-	if err := h.meWeatherCityRepo.RemoveWeatherUserCity(r.Context(), city); err != nil {
-		h.internalError(w, fmt.Errorf("DeleteMeWeatherCity remove: %w", err))
+	if err := h.meWeatherSvc.DeleteMeCity(r.Context(), strconv.FormatInt(userID, 10), id); err != nil {
+		h.meWeatherWriteError(w, err, "DeleteMeWeatherCity")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -348,7 +197,6 @@ func (h *Handler) DeleteMeWeatherLocation(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	tgUserID := strconv.FormatInt(userID, 10)
 
 	locationID := r.PathValue("location_id")
 	if strings.TrimSpace(locationID) == "" {
@@ -356,21 +204,8 @@ func (h *Handler) DeleteMeWeatherLocation(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// The repository's atomic check-and-delete is the sole ownership check: 404 (not
-	// 403) on internal.ErrNotFound covers both "no such location for anyone" and "owned
-	// by another user" — no existence disclosure, consistent with
-	// meWeatherCityOwnershipCheck. No pre-scan needed.
-	if err := h.meWeatherCityRepo.RemoveWeatherUserCitiesByLocation(r.Context(), domain.UserTypeTelegram, tgUserID, locationID); err != nil {
-		if errors.Is(err, internal.ErrNotFound) {
-			pub := internal.NewPublicError("city not found")
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			if encErr := json.NewEncoder(w).Encode(map[string]string{"error": pub.Details()}); encErr != nil {
-				h.logger.Print(errors.Join(fmt.Errorf("encode DeleteMeWeatherLocation not-found response: %w", encErr), loginjector.NewTraceError()))
-			}
-			return
-		}
-		h.internalError(w, fmt.Errorf("DeleteMeWeatherLocation remove: %w", err))
+	if err := h.meWeatherSvc.DeleteMeLocation(r.Context(), strconv.FormatInt(userID, 10), locationID); err != nil {
+		h.meWeatherWriteError(w, err, "DeleteMeWeatherLocation")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -464,84 +299,35 @@ func weatherCurrentItem(c appweather.CurrentCity) dto.WeatherCurrentItem {
 	return item
 }
 
-// weatherKindExists reports whether the caller already owns a subscription of the given
-// kind at the given location. Ensuring a forced kind that carries a user-tunable threshold
-// has to be skipped when the row is already there, because RetainWeatherUserCity's upsert
-// rewrites condition_value — without this check, adding any second alert to a city would
-// silently reset a rain threshold the user had retuned.
-func (h *Handler) weatherKindExists(ctx context.Context, userID, locationID string, kind domain.WeatherNotifyKind) (bool, error) {
-	rows, err := h.meWeatherCityRepo.ObtainWeatherUserCitiesByUserID(ctx, domain.UserTypeTelegram, userID)
-	if err != nil {
-		return false, err
-	}
-	for i := range rows {
-		if rows[i].LocationID == locationID && rows[i].NotifyKind == kind {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// meWeatherCityOwnershipCheck loads the city by id, verifies the caller owns it,
-// and returns it. On not-found or ownership mismatch it writes 404 and returns nil.
-// On repo error it writes 500 and returns nil. Callers must return when nil is returned.
-//
-// The 404 response for a cross-user access is intentionally indistinguishable
-// from a genuine miss to avoid existence disclosure.
-func (h *Handler) meWeatherCityOwnershipCheck(w http.ResponseWriter, r *http.Request, id, tgUserID string) *domain.WeatherUserCity {
-	city, err := h.meWeatherCityRepo.ObtainWeatherUserCityByID(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, internal.ErrNotFound) {
-			pub := internal.NewPublicError("city not found")
-			http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusNotFound)
-			return nil
-		}
-		h.internalError(w, fmt.Errorf("weather city lookup: %w", err))
-		return nil
-	}
-	if city.UserID != tgUserID {
-		// 404 not 403 to avoid disclosing another user's city.
-		pub := internal.NewPublicError("city not found")
-		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusNotFound)
-		return nil
-	}
-	return city
-}
-
 const (
 	// weatherGeoTimeout is the per-request deadline for outbound geocoding calls.
 	// A slow Open-Meteo response must not stall the HTTP worker.
 	weatherGeoTimeout = 5 * time.Second
 	// weatherSearchMaxResults is the number of geocoding matches requested.
 	weatherSearchMaxResults = 5
-	// weatherDefaultNotifyHour is the local hour used when the client omits notify_hour.
-	weatherDefaultNotifyHour = 7
-	// weatherDefaultRainThreshold is the precipitation probability percent seeded into the
-	// forced rain_alert row of a newly tracked city. It matches the value the backfill
-	// migration (202608.026) writes for pre-existing cities. Users retune it by re-adding
-	// a rain alert with a different threshold, which upserts condition_value in place.
-	weatherDefaultRainThreshold = "60"
 )
 
-// meWeatherCityRepository is the storage contract for the caller's city subscriptions.
-type meWeatherCityRepository interface {
-	RetainWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
-	ObtainWeatherUserCitiesByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.WeatherUserCity, error)
-	ObtainWeatherUserCityByID(ctx context.Context, id string) (*domain.WeatherUserCity, error)
-	RemoveWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
-	// RemoveWeatherUserCitiesByLocation deletes every subscription row (all notify
-	// kinds, including the forced alert_thaw row) for one (userType, userID, locationID).
-	// Returns internal.ErrNotFound when no row matches.
-	RemoveWeatherUserCitiesByLocation(ctx context.Context, userType domain.UserType, userID, locationID string) error
-}
+// meWeatherCityNotFound is the answer for a city subscription that does not
+// exist and for one owned by somebody else. One message under one status:
+// telling the two apart would confirm another user's city exists.
+const meWeatherCityNotFound = "city not found"
 
-// meWeatherService is the application service behind the caller's own weather
-// reads, satisfied by *appweather.Service. Deduplicating a city tracked under
-// several notify kinds, and treating "not collected yet" as a state rather than
-// an error, both live there; this package renders what it returns.
+// meWeatherForced is the fallback explanation for a forced, system-managed row
+// that cannot be deleted on its own. The service normally supplies the message
+// naming the kind; this stands in if it ever does not.
+const meWeatherForced = "This alert stays on for every tracked city; remove the city to turn it off."
+
+// meWeatherService is the application service behind the whole
+// /api/v1/me/weather family bar the geocoding search, satisfied by
+// *appweather.Service. Location dedup, "not collected yet" as a state rather
+// than an error, field validation, ownership and the forced alert rows all live
+// there; this package parses the request and renders the answer.
 type meWeatherService interface {
 	ObtainMeCities(ctx context.Context, userID string) ([]domain.WeatherUserCity, error)
 	ObtainMeCurrent(ctx context.Context, userID string) ([]appweather.CurrentCity, error)
+	CreateMeCity(ctx context.Context, userID string, req appweather.NewCity) (string, error)
+	DeleteMeCity(ctx context.Context, userID, id string) error
+	DeleteMeLocation(ctx context.Context, userID, locationID string) error
 }
 
 // weatherGeocoder is the geocoding contract used by SearchWeatherCities. It
@@ -552,16 +338,39 @@ type weatherGeocoder interface {
 	Geocode(ctx context.Context, name string, count int) ([]dto.WeatherCitySearchItem, error)
 }
 
-// forcedWeatherKindNotice returns the user-facing explanation for a forced,
-// system-managed subscription kind that cannot be deleted on its own, and ok=false for
-// every kind the user may delete freely.
-func forcedWeatherKindNotice(kind domain.WeatherNotifyKind) (notice string, ok bool) {
-	switch kind {
-	case domain.WeatherNotifyAlertThaw:
-		return "Thaw alerts stay on for every tracked city; remove the city to turn it off.", true
-	case domain.WeatherNotifyAlertRain:
-		return "Rain alerts stay on for every tracked city; remove the city to turn it off.", true
+// meWeatherWriteError renders a failure returned by the weather application
+// service.
+//
+// The three answers are ordered by what they disclose. ErrForcedSubscription is
+// only ever reached after ownership has been settled, so a 409 says nothing
+// about a row the caller does not own. internal.ErrNotFound covers a missing row
+// and somebody else's alike. A *internal.PublicError is the caller's own
+// mistake, and anything left is the store's.
+//
+// The body is encoded rather than concatenated: these messages can carry a value
+// the caller sent, and a quote in one would otherwise break the document.
+func (h *Handler) meWeatherWriteError(w http.ResponseWriter, err error, logContext string) {
+	switch {
+	case errors.Is(err, appweather.ErrForcedSubscription):
+		h.publicErrorJSON(w, publicErrorMessage(err, meWeatherForced), http.StatusConflict, logContext)
+	case errors.Is(err, internal.ErrNotFound):
+		h.publicErrorJSON(w, meWeatherCityNotFound, http.StatusNotFound, logContext)
 	default:
-		return "", false
+		var pub *internal.PublicError
+		if errors.As(err, &pub) {
+			h.publicErrorJSON(w, pub.Details(), http.StatusBadRequest, logContext)
+			return
+		}
+		h.internalError(w, fmt.Errorf("%s: %w", logContext, err))
 	}
+}
+
+// publicErrorMessage returns the user-facing text err carries, or fallback when
+// it carries none.
+func publicErrorMessage(err error, fallback string) string {
+	var pub *internal.PublicError
+	if errors.As(err, &pub) {
+		return pub.Details()
+	}
+	return fallback
 }
