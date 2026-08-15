@@ -197,7 +197,7 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 // ListSources returns every configured rate source decorated with its latest execution status.
 //
-// GET /api/v1/sources
+// GET /api/v1/sources.
 func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
 	sources, err := h.rateService.ObtainAllRateSources(r.Context())
 	if err != nil {
@@ -245,7 +245,7 @@ func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
 // ListRates returns the most recent rate values for a named source.
 // Optional query param ?limit=N (1–1000, default 100).
 //
-// GET /api/v1/sources/{name}/rates
+// GET /api/v1/sources/{name}/rates.
 func (h *Handler) ListRates(w http.ResponseWriter, r *http.Request) {
 	name, err := extractName(r)
 	if err != nil {
@@ -279,7 +279,7 @@ func (h *Handler) ListRates(w http.ResponseWriter, r *http.Request) {
 
 // ListHistory returns the 50 most recent execution history records for a named source.
 //
-// GET /api/v1/sources/{name}/history
+// GET /api/v1/sources/{name}/history.
 func (h *Handler) ListHistory(w http.ResponseWriter, r *http.Request) {
 	limit, err := extractLimit(r.URL)
 	if err != nil {
@@ -313,7 +313,7 @@ func (h *Handler) ListHistory(w http.ResponseWriter, r *http.Request) {
 // ListNotifications returns the last N notification pool records.
 // Optional query param ?limit=N (1–100, default 10).
 //
-// GET /api/v1/notifications
+// GET /api/v1/notifications.
 func (h *Handler) ListNotifications(w http.ResponseWriter, r *http.Request) {
 	limit, err := extractLimit(r.URL)
 	if err != nil {
@@ -344,7 +344,7 @@ func (h *Handler) ListNotifications(w http.ResponseWriter, r *http.Request) {
 
 // ListFailedNotifications returns all failed notification pool records.
 //
-// GET /api/v1/notifications/failed
+// GET /api/v1/notifications/failed.
 func (h *Handler) ListFailedNotifications(w http.ResponseWriter, r *http.Request) {
 	limit, err := extractLimit(r.URL)
 	if err != nil {
@@ -380,7 +380,7 @@ func (h *Handler) ListFailedNotifications(w http.ResponseWriter, r *http.Request
 
 // ListPendingEvents returns all currently pending notification events.
 //
-// GET /api/v1/events/pending
+// GET /api/v1/events/pending.
 func (h *Handler) ListPendingEvents(w http.ResponseWriter, r *http.Request) {
 	events, err := h.rateService.ObtainPendingRateUserEvents(r.Context())
 	if err != nil {
@@ -401,7 +401,7 @@ func (h *Handler) ListPendingEvents(w http.ResponseWriter, r *http.Request) {
 
 // ListSourceFailedEvents returns paginated failed events for a named source.
 //
-// GET /api/v1/sources/{name}/events/failed?page=N
+// GET /api/v1/sources/{name}/events/failed?page=N.
 func (h *Handler) ListSourceFailedEvents(w http.ResponseWriter, r *http.Request) {
 	name, err := extractName(r)
 	if err != nil {
@@ -431,7 +431,7 @@ func (h *Handler) ListSourceFailedEvents(w http.ResponseWriter, r *http.Request)
 
 // ListSourceSubscriptions returns grouped subscription + event statistics for a source.
 //
-// GET /api/v1/sources/{name}/subscriptions
+// GET /api/v1/sources/{name}/subscriptions.
 func (h *Handler) ListSourceSubscriptions(w http.ResponseWriter, r *http.Request) {
 	name, err := extractName(r)
 	if err != nil {
@@ -462,7 +462,7 @@ func (h *Handler) ListSourceSubscriptions(w http.ResponseWriter, r *http.Request
 
 // ToggleSourceActive enables or disables a named source.
 //
-// PATCH /api/v1/sources/{name}/active
+// PATCH /api/v1/sources/{name}/active.
 func (h *Handler) ToggleSourceActive(w http.ResponseWriter, r *http.Request) {
 	name, err := extractName(r)
 	if err != nil {
@@ -489,7 +489,7 @@ func (h *Handler) ToggleSourceActive(w http.ResponseWriter, r *http.Request) {
 
 // ListStats returns global statistics: total/active source counts and total error count.
 //
-// GET /api/v1/stats
+// GET /api/v1/stats.
 func (h *Handler) ListStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.rateService.ObtainStats(r.Context())
 	if err != nil {
@@ -505,7 +505,7 @@ func (h *Handler) ListStats(w http.ResponseWriter, r *http.Request) {
 
 // ListSourceSubscriptionDetails returns paginated subscription details for a named source.
 //
-// GET /api/v1/sources/{name}/subscriptions/list?page=N
+// GET /api/v1/sources/{name}/subscriptions/list?page=N.
 func (h *Handler) ListSourceSubscriptionDetails(w http.ResponseWriter, r *http.Request) {
 	name, err := extractName(r)
 	if err != nil {
@@ -539,7 +539,7 @@ func (h *Handler) ListSourceSubscriptionDetails(w http.ResponseWriter, r *http.R
 
 // ListSourceDailyEvents returns paginated daily event summaries for a named source.
 //
-// GET /api/v1/sources/{name}/events/daily?page=N
+// GET /api/v1/sources/{name}/events/daily?page=N.
 func (h *Handler) ListSourceDailyEvents(w http.ResponseWriter, r *http.Request) {
 	name, err := extractName(r)
 	if err != nil {
@@ -569,7 +569,7 @@ func (h *Handler) ListSourceDailyEvents(w http.ResponseWriter, r *http.Request) 
 
 // ListExecutionErrors returns paginated failed execution history records from all sources.
 //
-// GET /api/v1/errors/execution?page=N
+// GET /api/v1/errors/execution?page=N.
 func (h *Handler) ListExecutionErrors(w http.ResponseWriter, r *http.Request) {
 	page := parsePage(r.URL.Query().Get("page"))
 	const pageSize int64 = 50

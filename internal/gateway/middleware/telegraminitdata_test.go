@@ -53,7 +53,7 @@ func TestTelegramInitData(t *testing.T) {
 		var ran bool
 		h := TelegramInitData(baseConfig(accept))(served(&seen, &ran))
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/me/subscriptions", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions", http.NoBody)
 		req.Header.Set(InitDataHeader, "signed")
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, req)
@@ -80,7 +80,7 @@ func TestTelegramInitData(t *testing.T) {
 				var ran bool
 				h := TelegramInitData(baseConfig(reject))(served(&seen, &ran))
 
-				req := httptest.NewRequest(http.MethodGet, "/api/v1/me/subscriptions", nil)
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions", http.NoBody)
 				for k, v := range header {
 					req.Header.Set(k, v)
 				}
@@ -105,7 +105,7 @@ func TestTelegramInitData(t *testing.T) {
 		}
 		h := TelegramInitData(baseConfig(detailed))(served(&seen, &ran))
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/me/subscriptions", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions", http.NoBody)
 		req.Header.Set(InitDataHeader, "forged")
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, req)
@@ -132,7 +132,7 @@ func TestTelegramInitData(t *testing.T) {
 		// A signed payload in the URL would land in access logs and Referer headers
 		// for the whole validity window, so the query string must be ignored even
 		// when the header is absent.
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/me/subscriptions?initData=from-query", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions?initData=from-query", http.NoBody)
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, req)
 
@@ -159,7 +159,7 @@ func TestTelegramInitData(t *testing.T) {
 		var ran bool
 		h := TelegramInitData(cfg)(served(&seen, &ran))
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/me/subscriptions", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions", http.NoBody)
 		req.Header.Set(InitDataHeader, "signed")
 		h.ServeHTTP(httptest.NewRecorder(), req)
 
@@ -180,7 +180,7 @@ func TestTelegramInitData(t *testing.T) {
 				cfg.MaxAge = maxAge
 				h := TelegramInitData(cfg)(served(&seen, &ran))
 
-				req := httptest.NewRequest(http.MethodGet, "/api/v1/me/subscriptions", nil)
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions", http.NoBody)
 				req.Header.Set(InitDataHeader, "signed")
 				rr := httptest.NewRecorder()
 				h.ServeHTTP(rr, req)

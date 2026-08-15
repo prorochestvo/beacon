@@ -168,7 +168,7 @@ func TestHandler_SearchWeatherCities(t *testing.T) {
 		t.Parallel()
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
 		rr := httptest.NewRecorder()
-		h.SearchWeatherCities(rr, withCaller(httptest.NewRequest(http.MethodGet, "/api/v1/me/weather/cities/search", nil), callerUserID))
+		h.SearchWeatherCities(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities/search", http.NoBody), callerUserID))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Contains(t, rr.Body.String(), "q is required")
@@ -178,7 +178,7 @@ func TestHandler_SearchWeatherCities(t *testing.T) {
 		t.Parallel()
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
 		// Raw spaces in URLs are invalid for httptest.NewRequest; encode them.
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/me/weather/cities/search?q=%20%20%20", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities/search?q=%20%20%20", http.NoBody)
 		rr := httptest.NewRecorder()
 		h.SearchWeatherCities(rr, withCaller(req, callerUserID))
 
@@ -190,7 +190,7 @@ func TestHandler_SearchWeatherCities(t *testing.T) {
 		geo := &mockWeatherGeocoder{err: errors.New("upstream down")}
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, geo)
 		rr := httptest.NewRecorder()
-		h.SearchWeatherCities(rr, withCaller(httptest.NewRequest(http.MethodGet, "/api/v1/me/weather/cities/search?q=Almaty", nil), callerUserID))
+		h.SearchWeatherCities(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities/search?q=Almaty", http.NoBody), callerUserID))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		const errFallbackMessage = `{"error":"internal error"}`
@@ -205,7 +205,7 @@ func TestHandler_SearchWeatherCities(t *testing.T) {
 		}}
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, geo)
 		rr := httptest.NewRecorder()
-		h.SearchWeatherCities(rr, withCaller(httptest.NewRequest(http.MethodGet, "/api/v1/me/weather/cities/search?q=Almaty", nil), callerUserID))
+		h.SearchWeatherCities(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities/search?q=Almaty", http.NoBody), callerUserID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -221,7 +221,7 @@ func TestHandler_SearchWeatherCities(t *testing.T) {
 		t.Parallel()
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
 		rr := httptest.NewRecorder()
-		h.SearchWeatherCities(rr, withCaller(httptest.NewRequest(http.MethodGet, "/api/v1/me/weather/cities/search?q=xyzzy", nil), callerUserID))
+		h.SearchWeatherCities(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities/search?q=xyzzy", http.NoBody), callerUserID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp dto.WeatherCitySearchResponse
@@ -243,7 +243,7 @@ func TestHandler_ListMeWeatherCities(t *testing.T) {
 		cityRepo := &mockWeatherCityRepo{listErr: errors.New("db down")}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
 		rr := httptest.NewRecorder()
-		h.ListMeWeatherCities(rr, withCaller(httptest.NewRequest(http.MethodGet, "/api/v1/me/weather/cities", nil), callerUserID))
+		h.ListMeWeatherCities(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities", http.NoBody), callerUserID))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		const errFallbackMessage = `{"error":"internal error"}`
@@ -254,7 +254,7 @@ func TestHandler_ListMeWeatherCities(t *testing.T) {
 		t.Parallel()
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
 		rr := httptest.NewRecorder()
-		h.ListMeWeatherCities(rr, withCaller(httptest.NewRequest(http.MethodGet, "/api/v1/me/weather/cities", nil), callerUserID))
+		h.ListMeWeatherCities(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities", http.NoBody), callerUserID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp dto.WeatherCitiesResponse
@@ -275,7 +275,7 @@ func TestHandler_ListMeWeatherCities(t *testing.T) {
 		}}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
 		rr := httptest.NewRecorder()
-		h.ListMeWeatherCities(rr, withCaller(httptest.NewRequest(http.MethodGet, "/api/v1/me/weather/cities", nil), callerUserID))
+		h.ListMeWeatherCities(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities", http.NoBody), callerUserID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -313,7 +313,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 	t.Run("malformed JSON body returns 400", func(t *testing.T) {
 		t.Parallel()
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", strings.NewReader("{invalid json"))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", strings.NewReader("{invalid json"))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -325,7 +325,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
 		b := validBody
 		b.LocationID = ""
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -338,7 +338,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
 		b := validBody
 		b.DisplayName = ""
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -351,7 +351,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
 		b := validBody
 		b.Timezone = "Not/A/Timezone"
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -364,7 +364,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
 		b := validBody
 		b.Latitude = 91.0
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -377,7 +377,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
 		b := validBody
 		b.Longitude = -181.0
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -391,7 +391,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		hour := 24
 		b := validBody
 		b.NotifyHour = &hour
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -403,7 +403,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		t.Parallel()
 		cityRepo := &mockWeatherCityRepo{retainErr: errors.New("db down")}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -416,7 +416,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		t.Parallel()
 		cityRepo := &mockWeatherCityRepo{}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -431,7 +431,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		t.Parallel()
 		cityRepo := &mockWeatherCityRepo{}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -451,7 +451,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
 		b := validBody
 		b.NotifyHour = nil // explicitly omit
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -467,7 +467,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		hour := 0
 		b := validBody
 		b.NotifyHour = &hour
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -483,7 +483,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		b := validBody
 		b.NotifyKind = "alert_heat"
 		b.ConditionValue = "35"
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -500,7 +500,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		b := validBody
 		b.NotifyKind = "alert_frost"
 		b.ConditionValue = "-5"
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -517,7 +517,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		b := validBody
 		b.NotifyKind = "alert_thunderstorm"
 		// ConditionValue intentionally omitted (empty)
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -534,7 +534,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		b := validBody
 		b.NotifyKind = "rain_alert"
 		b.ConditionValue = "70"
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -551,7 +551,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		b := validBody
 		b.NotifyKind = "rain_alert"
 		b.ConditionValue = "101"
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -567,7 +567,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		b := validBody
 		b.NotifyKind = "rain_alert"
 		b.ConditionValue = "0"
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -583,7 +583,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		b := validBody
 		b.NotifyKind = "alert_thaw"
 		b.ConditionValue = "ignored free text"
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -600,7 +600,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		b := validBody
 		b.NotifyKind = "alert_rainbow"
 		b.ConditionValue = "42"
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -617,7 +617,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		b := validBody
 		b.NotifyKind = "alert_heat"
 		b.ConditionValue = "hot"
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -632,7 +632,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		b := validBody
 		b.NotifyKind = "alert_heat"
 		b.ConditionValue = ""
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -643,7 +643,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		t.Parallel()
 		cityRepo := &mockWeatherCityRepo{}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -675,7 +675,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		b := validBody
 		b.NotifyKind = "alert_heat"
 		b.ConditionValue = "35"
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -694,7 +694,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
 		b := validBody
 		b.NotifyKind = "alert_thaw"
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -710,7 +710,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 			retainErrForKind: errors.New("db down"),
 		}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -737,7 +737,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 			},
 		}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/me/weather/cities", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities", http.NoBody)
 		rr := httptest.NewRecorder()
 		h.ListMeWeatherCities(rr, withCaller(req, callerUserID))
 
@@ -769,7 +769,7 @@ func TestHandler_DeleteMeWeatherCity(t *testing.T) {
 	t.Run("missing id path param returns 400", func(t *testing.T) {
 		t.Parallel()
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/weather/cities/", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/", http.NoBody)
 		rr := httptest.NewRecorder()
 		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -779,7 +779,7 @@ func TestHandler_DeleteMeWeatherCity(t *testing.T) {
 	t.Run("city not found returns 404", func(t *testing.T) {
 		t.Parallel()
 		h := newWeatherHandler(t, &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{}}, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/weather/cities/nonexistent", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/nonexistent", http.NoBody)
 		req.SetPathValue("id", "nonexistent")
 		rr := httptest.NewRecorder()
 		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
@@ -792,7 +792,7 @@ func TestHandler_DeleteMeWeatherCity(t *testing.T) {
 		t.Parallel()
 		cityRepo := &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{"city-2": otherCity}}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/weather/cities/city-2", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-2", http.NoBody)
 		req.SetPathValue("id", "city-2")
 		rr := httptest.NewRecorder()
 		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
@@ -805,7 +805,7 @@ func TestHandler_DeleteMeWeatherCity(t *testing.T) {
 		t.Parallel()
 		cityRepo := &mockWeatherCityRepo{getErr: errors.New("db down")}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/weather/cities/city-1", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-1", http.NoBody)
 		req.SetPathValue("id", "city-1")
 		rr := httptest.NewRecorder()
 		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
@@ -822,7 +822,7 @@ func TestHandler_DeleteMeWeatherCity(t *testing.T) {
 			removeErr: errors.New("db down"),
 		}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/weather/cities/city-1", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-1", http.NoBody)
 		req.SetPathValue("id", "city-1")
 		rr := httptest.NewRecorder()
 		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
@@ -836,7 +836,7 @@ func TestHandler_DeleteMeWeatherCity(t *testing.T) {
 		t.Parallel()
 		cityRepo := &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{"city-1": callerCity}}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/weather/cities/city-1", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-1", http.NoBody)
 		req.SetPathValue("id", "city-1")
 		rr := httptest.NewRecorder()
 		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
@@ -857,7 +857,7 @@ func TestHandler_DeleteMeWeatherCity(t *testing.T) {
 			"city-thaw": thawCity,
 		}}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/weather/cities/city-1", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-1", http.NoBody)
 		req.SetPathValue("id", "city-1")
 		rr := httptest.NewRecorder()
 		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
@@ -876,7 +876,7 @@ func TestHandler_DeleteMeWeatherCity(t *testing.T) {
 		}
 		cityRepo := &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{"city-thaw": thawCity}}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/weather/cities/city-thaw", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-thaw", http.NoBody)
 		req.SetPathValue("id", "city-thaw")
 		rr := httptest.NewRecorder()
 		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
@@ -898,7 +898,7 @@ func TestHandler_DeleteMeWeatherCity(t *testing.T) {
 		}
 		cityRepo := &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{"city-3": otherThawCity}}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/weather/cities/city-3", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-3", http.NoBody)
 		req.SetPathValue("id", "city-3")
 		rr := httptest.NewRecorder()
 		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
@@ -916,7 +916,7 @@ func TestHandler_DeleteMeWeatherLocation(t *testing.T) {
 	const callerIDStr = "33"
 
 	newReq := func(locationID string) *http.Request {
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/weather/locations/"+locationID, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/locations/"+locationID, http.NoBody)
 		req.SetPathValue("location_id", locationID)
 		return req
 	}
@@ -924,7 +924,7 @@ func TestHandler_DeleteMeWeatherLocation(t *testing.T) {
 	t.Run("missing location_id path segment returns 400", func(t *testing.T) {
 		t.Parallel()
 		h := newWeatherHandler(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/weather/locations/", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/locations/", http.NoBody)
 		rr := httptest.NewRecorder()
 		h.DeleteMeWeatherLocation(rr, withCaller(req, callerUserID))
 
@@ -1008,7 +1008,7 @@ func TestHandler_GetMeWeatherCurrent(t *testing.T) {
 		cityRepo := &mockWeatherCityRepo{listErr: errors.New("db down")}
 		h := newWeatherHandlerWithObs(t, cityRepo, &mockWeatherGeocoder{}, &mockWeatherObsRepo{})
 		rr := httptest.NewRecorder()
-		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequest(http.MethodGet, "/api/v1/me/weather/current", nil), callerUserID))
+		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/current", http.NoBody), callerUserID))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		const errFallbackMessage = `{"error":"internal error"}`
@@ -1022,7 +1022,7 @@ func TestHandler_GetMeWeatherCurrent(t *testing.T) {
 		obsRepo := &mockWeatherObsRepo{obsErr: errors.New("obs db down")}
 		h := newWeatherHandlerWithObs(t, cityRepo, &mockWeatherGeocoder{}, obsRepo)
 		rr := httptest.NewRecorder()
-		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequest(http.MethodGet, "/api/v1/me/weather/current", nil), callerUserID))
+		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/current", http.NoBody), callerUserID))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		const errFallbackMessage = `{"error":"internal error"}`
@@ -1036,7 +1036,7 @@ func TestHandler_GetMeWeatherCurrent(t *testing.T) {
 		obsRepo := &mockWeatherObsRepo{obsMap: map[string]*domain.WeatherObservation{}} // empty map → ErrNotFound
 		h := newWeatherHandlerWithObs(t, cityRepo, &mockWeatherGeocoder{}, obsRepo)
 		rr := httptest.NewRecorder()
-		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequest(http.MethodGet, "/api/v1/me/weather/current", nil), callerUserID))
+		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/current", http.NoBody), callerUserID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp struct {
@@ -1059,7 +1059,7 @@ func TestHandler_GetMeWeatherCurrent(t *testing.T) {
 		obsRepo := &mockWeatherObsRepo{obsMap: map[string]*domain.WeatherObservation{"1234": obs}}
 		h := newWeatherHandlerWithObs(t, cityRepo, &mockWeatherGeocoder{}, obsRepo)
 		rr := httptest.NewRecorder()
-		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequest(http.MethodGet, "/api/v1/me/weather/current", nil), callerUserID))
+		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/current", http.NoBody), callerUserID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -1097,7 +1097,7 @@ func TestHandler_GetMeWeatherCurrent(t *testing.T) {
 		obsRepo := &mockWeatherObsRepo{obsMap: map[string]*domain.WeatherObservation{"1234": obs}}
 		h := newWeatherHandlerWithObs(t, cityRepo, &mockWeatherGeocoder{}, obsRepo)
 		rr := httptest.NewRecorder()
-		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequest(http.MethodGet, "/api/v1/me/weather/current", nil), callerUserID))
+		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/current", http.NoBody), callerUserID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp struct {
@@ -1116,7 +1116,7 @@ func TestHandler_GetMeWeatherCurrent(t *testing.T) {
 		obsRepo := &mockWeatherObsRepo{}
 		h := newWeatherHandlerWithObs(t, cityRepo, &mockWeatherGeocoder{}, obsRepo)
 		rr := httptest.NewRecorder()
-		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequest(http.MethodGet, "/api/v1/me/weather/current", nil), callerUserID))
+		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/current", http.NoBody), callerUserID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp struct {
@@ -1164,7 +1164,7 @@ func TestHandler_MeWeatherForcedRainAlert(t *testing.T) {
 		b := validBody
 		b.NotifyKind = "alert_heat"
 		b.ConditionValue = "35"
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(b))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -1183,7 +1183,7 @@ func TestHandler_MeWeatherForcedRainAlert(t *testing.T) {
 			LocationID: "0000", NotifyKind: domain.WeatherNotifyAlertRain, ConditionValue: "85",
 		}}}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -1197,7 +1197,7 @@ func TestHandler_MeWeatherForcedRainAlert(t *testing.T) {
 		t.Parallel()
 		cityRepo := &mockWeatherCityRepo{listErr: errors.New("db down")}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/weather/cities", bodyJSON(validBody))
 		rr := httptest.NewRecorder()
 		h.CreateMeWeatherCity(rr, withCaller(req, callerUserID))
 
@@ -1214,7 +1214,7 @@ func TestHandler_MeWeatherForcedRainAlert(t *testing.T) {
 		}
 		cityRepo := &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{"city-rain": rainCity}}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/weather/cities/city-rain", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-rain", http.NoBody)
 		req.SetPathValue("id", "city-rain")
 		rr := httptest.NewRecorder()
 		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
@@ -1235,7 +1235,7 @@ func TestHandler_MeWeatherForcedRainAlert(t *testing.T) {
 		}
 		cityRepo := &mockWeatherCityRepo{cities: map[string]*domain.WeatherUserCity{"city-rain-other": otherRain}}
 		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/weather/cities/city-rain-other", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/weather/cities/city-rain-other", http.NoBody)
 		req.SetPathValue("id", "city-rain-other")
 		rr := httptest.NewRecorder()
 		h.DeleteMeWeatherCity(rr, withCaller(req, callerUserID))
