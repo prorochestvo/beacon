@@ -2,12 +2,19 @@
 #
 # Report which host configuration files no longer match the repository.
 #
-# Everything under configs/ reaches the server only through `make init`, which is a
-# one-time provisioning command run by hand. The release pipeline uploads binaries and
-# flips a symlink; it never touches these files. So a change to any of them ships in the
-# repository, passes CI, appears in a release, and silently does not take effect — which
-# is exactly what happened to snapshot compression, live in git for three weeks while the
-# host kept writing uncompressed backups.
+# The release pipeline uploads binaries and flips a symlink; it never touches these
+# files. So a change to any of them ships in the repository, passes CI, appears in a
+# release, and silently does not take effect — which is exactly what happened to
+# snapshot compression, live in git for three weeks while the host kept writing
+# uncompressed backups.
+#
+# `make deploy-configs` now delivers most of them without a password, and ends by
+# running this check as its own proof. Three still reach the host only through
+# `make init`: the two sudoers grants and the installer script `deploy-configs`
+# drives. Those are the privilege boundary — an installer that could rewrite its own
+# destination table, or the grant that reaches it, would be passwordless root — so
+# they are deliberately outside what a passwordless deploy can touch, and this check
+# is what reports them as behind.
 #
 # This turns that silence into a line of output. It changes nothing on the host and needs
 # no privileges beyond reading.
@@ -47,7 +54,12 @@ EXCLUDED_HOST_PATHS=(
 
 # A recipe that stops matching would otherwise report a clean bill of health for zero
 # files, which is worse than not checking at all: it would look like proof.
-MIN_EXPECTED_FILES=6
+#
+# This is the count the install table currently yields, not a loose floor: adding a
+# file leaves the guard passing, while dropping one forces whoever dropped it to say
+# so here. `make deploy-configs` runs this check as its final gate, so a partial parse
+# would otherwise let a deploy claim success over files it never compared.
+MIN_EXPECTED_FILES=9
 
 if [ ! -f "${MAKEFILE}" ]; then
     echo "config-drift: ${MAKEFILE} not found" >&2
@@ -92,6 +104,10 @@ fi
 # The three failure states are kept apart deliberately. MISSING means the file was never
 # provisioned; DIFFERS means it was and has since fallen behind; UNREADABLE means the check
 # has no opinion, which is not the same as a clean result and must not be reported as one.
+#
+# The single quotes are the point: $p is the remote shell's loop variable, and expanding
+# it here would send a script with the paths already substituted away.
+# shellcheck disable=SC2016
 remote_output="$(printf '%s\n' "${HOST_FILES[@]}" | ${SSH_CMD} 'while IFS= read -r p; do
     if [ ! -e "$p" ]; then
         printf "%s\tMISSING\t-\n" "$p"
@@ -151,12 +167,17 @@ if [ "${drift}" -ne 0 ]; then
     cat <<'FIX'
 config-drift: the host is running configuration older than this repository.
 
-Nothing deploys these files — `make init` is the only thing that installs them, and it
-needs root on the host. To bring one file across without re-running the whole provisioning:
+    make deploy-configs
 
-    scp configs/<file> be-happy.kz:/tmp/
-    # then, as root on the host:
-    install -m <mode> -o root -g root /tmp/<file> <host path>
+ships every file above except these three, which are the privilege boundary and reach
+the host only through the one privileged bootstrap:
+
+    /etc/sudoers.d/beacon-deploy
+    /etc/sudoers.d/beacon-configs
+    /usr/local/sbin/beacon-install-configs
+
+If one of those is what drifted, run `make init` — it asks for a password, and that is
+the point.
 
 FIX
     exit 1

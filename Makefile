@@ -22,40 +22,108 @@ GOLANGCI_VERSION := v2.12.2
 # against alpha.
 LINT_BASE ?= origin/alpha
 
-.PHONY: all run build build-collector build-notifier build-web build-wasm build-migrator migrate test lint lint-new format audit audit-help doctor-help swagger clean init backups db-inspect config-drift
+.PHONY: all run build build-collector build-notifier build-web build-wasm build-migrator migrate test lint lint-new format audit audit-help doctor-help swagger clean init backups db-inspect config-drift deploy-configs verify-edge
+
+# Host-side paths of the passwordless config-deploy mechanism. The operator account
+# owns the staging directory; the installer it feeds is root-owned and unwritable by
+# that account, which is what keeps its NOPASSWD grant narrow. Staging is under
+# /opt/beacon rather than /tmp so no other local user can swap a file between the
+# upload and the install — the installer runs as root.
+OPERATOR_ACCOUNT := pi5_aide
+CONFIG_STAGING_DIR := /opt/beacon/config-staging
+CONFIG_INSTALLER := /usr/local/sbin/beacon-install-configs
+
+# Configs `deploy-configs` ships. The installer on the host carries the matching
+# destination table, and `make config-drift` fails the deploy if the two disagree.
+DEPLOYABLE_CONFIGS := \
+	./configs/beacon.service \
+	./configs/beacon-migrate.service \
+	./configs/nginx.beacon.conf \
+	./configs/nginx.beacon_common_settings.conf \
+	./configs/nginx.beacon_gzip.conf \
+	./configs/sqlite_dump.sh
+
+# Configs only `init` may place. The two sudoers grants and the installer itself are
+# the privilege boundary: if the installer could write them, the operator account
+# could rewrite the grant, or the installer's own destination table, without a
+# password and then run it as root. sqlite_dump.env.example is a template the
+# operator edits in place, so it is copied only when absent.
+BOOTSTRAP_ONLY_CONFIGS := \
+	./configs/beacon-deploy.sudoers \
+	./configs/beacon-configs.sudoers \
+	./configs/beacon-install-configs.sh \
+	./configs/sqlite_dump.env.example
+
+INIT_CONFIGS := $(DEPLOYABLE_CONFIGS) $(BOOTSTRAP_ONLY_CONFIGS)
+
+# The one definition of what goes where. `configs/config_drift.sh` parses these
+# `install -m MODE /tmp/NAME PATH` lines out of the Makefile *text* to decide what
+# to compare, scanning the whole file rather than this recipe — so the table must
+# appear exactly once and its paths must stay literal. A second copy in another
+# target would double every entry and turn the script's file-count guard into noise;
+# a $(VARIABLE) in a destination would be compared against the host as that literal
+# string.
+#
+# $(strip) collapses the block onto one shell line so it can sit inside init's single
+# ssh invocation. Without it make splits the expansion across recipe lines and hands
+# each one its own shell, which would end the ssh command mid-quote.
+define beacon_config_installs
+sudo install -m 0755 /tmp/sqlite_dump.sh /opt/beacon/backups/sqlite_dump.sh;
+[ -f /opt/beacon/backups/.env ] && echo "skip: backups/.env exists" || { sudo install -m 0600 /tmp/sqlite_dump.env.example /opt/beacon/backups/.env; echo "installed backups/.env (edit GDRIVE_REMOTE)"; };
+sudo install -m 0644 /tmp/beacon.service /etc/systemd/system/beacon.service;
+sudo install -m 0644 /tmp/beacon-migrate.service /etc/systemd/system/beacon-migrate.service;
+sudo install -m 0440 /tmp/beacon-deploy.sudoers /etc/sudoers.d/beacon-deploy && sudo visudo -c;
+sudo install -m 0440 /tmp/beacon-configs.sudoers /etc/sudoers.d/beacon-configs && sudo visudo -c;
+sudo install -m 0755 /tmp/beacon-install-configs.sh /usr/local/sbin/beacon-install-configs;
+sudo install -m 0644 /tmp/nginx.beacon_common_settings.conf /etc/nginx/snippets/beacon.common_settings.conf;
+sudo install -m 0644 /tmp/nginx.beacon_gzip.conf /etc/nginx/snippets/beacon.gzip.conf;
+sudo install -m 0644 /tmp/nginx.beacon.conf /etc/nginx/sites-available/dev.seilbekskindirov.beacon;
+endef
 
 
 
-## init: provision the host once — release-layout sandbox (artifacts/+bin/ owned by CI), systemd units, narrow sudoers, backup script, and the Cloudflare nginx vhost
+## init: provision the host once — release-layout sandbox (artifacts/+bin/ owned by CI), systemd units, narrow sudoers, config installer, backup script, and the Cloudflare nginx vhost
 init:
-	scp ./configs/beacon.service ./configs/beacon-migrate.service ./configs/beacon-deploy.sudoers ./configs/sqlite_dump.sh ./configs/sqlite_dump.env.example ./configs/nginx.beacon.conf ./configs/nginx.beacon_common_settings.conf ./configs/nginx.beacon_gzip.conf be-happy.kz:/tmp/
+	scp $(INIT_CONFIGS) be-happy.kz:/tmp/
 	ssh -t be-happy.kz 'set -e; \
 		CI=github_aide; \
+		OP=$(OPERATOR_ACCOUNT); \
 		sudo install -d -o $$CI -g $$CI -m 0755 /opt/beacon/artifacts /opt/beacon/bin; \
 		sudo install -d -m 0755 /opt/beacon/logs /opt/beacon/backups; \
+		sudo install -d -o $$OP -g $$OP -m 0700 $(CONFIG_STAGING_DIR); \
 		sudo chown root:root /opt/beacon && sudo chmod 0755 /opt/beacon; \
 		[ -f /opt/beacon/.env ] && sudo chown root:root /opt/beacon/.env && sudo chmod 0600 /opt/beacon/.env || true; \
 		[ -f /opt/beacon/beacon.sqlite ] && sudo chown root:root /opt/beacon/beacon.sqlite && sudo chmod 0600 /opt/beacon/beacon.sqlite || true; \
 		for w in collector.sh notifier.sh; do [ -f /opt/beacon/$$w ] && sudo chown root:root /opt/beacon/$$w && sudo chmod 0750 /opt/beacon/$$w || true; done; \
-		sudo install -m 0755 /tmp/sqlite_dump.sh /opt/beacon/backups/sqlite_dump.sh; \
-		[ -f /opt/beacon/backups/.env ] && echo "skip: backups/.env exists" || { sudo install -m 0600 /tmp/sqlite_dump.env.example /opt/beacon/backups/.env; echo "installed backups/.env (edit GDRIVE_REMOTE)"; }; \
-		sudo install -m 0644 /tmp/beacon.service /etc/systemd/system/beacon.service; \
-		sudo install -m 0644 /tmp/beacon-migrate.service /etc/systemd/system/beacon-migrate.service; \
-		sudo systemctl daemon-reload; \
-		sudo install -m 0440 /tmp/beacon-deploy.sudoers /etc/sudoers.d/beacon-deploy && sudo visudo -c; \
 		sudo mkdir -p /etc/nginx/certificates/cloudflare /etc/nginx/snippets /etc/nginx/sites-available /etc/nginx/sites-enabled; \
 		sudo curl -fsSL https://developers.cloudflare.com/ssl/static/authenticated_origin_pull_ca.pem -o /etc/nginx/certificates/cloudflare/origin-pull-ca.pem; \
-		sudo install -m 0644 /tmp/nginx.beacon_common_settings.conf /etc/nginx/snippets/beacon.common_settings.conf; \
-		sudo install -m 0644 /tmp/nginx.beacon_gzip.conf /etc/nginx/snippets/beacon.gzip.conf; \
-		sudo install -m 0644 /tmp/nginx.beacon.conf /etc/nginx/sites-available/dev.seilbekskindirov.beacon; \
+		$(strip $(beacon_config_installs)) \
+		sudo systemctl daemon-reload; \
 		sudo ln -sfn /etc/nginx/sites-available/dev.seilbekskindirov.beacon /etc/nginx/sites-enabled/dev.seilbekskindirov.beacon.conf; \
-		sudo rm -f /tmp/beacon.service /tmp/beacon-migrate.service /tmp/beacon-deploy.sudoers /tmp/sqlite_dump.sh /tmp/sqlite_dump.env.example /tmp/nginx.beacon.conf /tmp/nginx.beacon_common_settings.conf /tmp/nginx.beacon_gzip.conf; \
+		sudo rm -f $(addprefix /tmp/,$(notdir $(INIT_CONFIGS))); \
 		if sudo test -s /etc/nginx/certificates/cloudflare/seilbekskindirov.dev.pem && sudo test -s /etc/nginx/certificates/cloudflare/seilbekskindirov.dev.key; then \
 			sudo nginx -t && sudo systemctl reload nginx && echo "nginx: beacon edge vhost live"; \
 		else \
 			echo "WARNING: /etc/nginx/certificates/cloudflare/seilbekskindirov.dev.{pem,key} missing — place the Cloudflare Origin cert, then rerun"; \
 		fi'
 	echo "init done"
+
+## deploy-configs: ship configs/ to a provisioned host and reload — no password, no re-provisioning
+deploy-configs:
+	@ssh be-happy.kz 'test -d $(CONFIG_STAGING_DIR) && test -x $(CONFIG_INSTALLER)' || { \
+		echo "deploy-configs: $(CONFIG_INSTALLER) or $(CONFIG_STAGING_DIR) is not on the host."; \
+		echo "deploy-configs: this host is not bootstrapped for config deploys — run 'make init' once; it needs a password."; \
+		exit 1; \
+	}
+	scp $(DEPLOYABLE_CONFIGS) be-happy.kz:$(CONFIG_STAGING_DIR)/
+	@ssh be-happy.kz 'sudo -n $(CONFIG_INSTALLER)' || { \
+		status=$$?; \
+		echo "deploy-configs: the installer exited $$status."; \
+		echo "deploy-configs: if sudo asked for a password, /etc/sudoers.d/beacon-configs is absent or stale — run 'make init'."; \
+		exit $$status; \
+	}
+	@$(MAKE) --no-print-directory config-drift
+	@$(MAKE) --no-print-directory verify-edge
 
 
 
@@ -197,6 +265,10 @@ backups:
 ## config-drift: report which host config files no longer match configs/ (read-only, no changes)
 config-drift:
 	@SSH_CMD="ssh be-happy.kz" ./configs/config_drift.sh Makefile
+
+## verify-edge: assert the hashed-asset cache-header invariants against the live edge (read-only)
+verify-edge:
+	@./configs/verify_edge.sh
 
 ## db-inspect: pull the newest host snapshot and open it READ-ONLY; one-shot query with ARGS="SELECT ..."
 db-inspect:
