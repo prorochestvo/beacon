@@ -35,11 +35,28 @@ jobs:
       # Pinned to the version the Makefile names, so a release and a local run cannot
       # disagree about what a finding is.
       - run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
-      # This job builds a tag, not a branch, so LINT_BASE is fetched explicitly rather
-      # than assumed to be present. An unresolvable base fails the run rather than
-      # degrading, so leaving it to checkout's defaults would trade one release failure
-      # for another.
-      - run: git fetch --no-tags origin +refs/heads/alpha:refs/remotes/origin/alpha
+      # A release is linted against the previous release, not against a branch.
+      #
+      # LINT_BASE defaults to origin/alpha, which is right for a PR and wrong here the
+      # moment a tag is cut anywhere but alpha's tip: golangci-lint then diffs the tag's
+      # tree against a *newer* branch and reports everything the branch has and the tag
+      # does not, so the gate lints history backwards and fails on code that is not in
+      # the release. That is exactly what happened cutting alpha.17 at the commit before
+      # the /v1 cutover.
+      #
+      # The previous r_* tag is the honest base: it answers "what does this release add".
+      # On the first ever release there is none, and the step leaves LINT_BASE alone.
+      - name: Resolve the lint base
+        run: |
+          git fetch --no-tags --force origin 'refs/tags/r_*:refs/tags/r_*'
+          prev=$(git describe --tags --abbrev=0 --match 'r_*' "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          if [ -n "$prev" ]; then
+            echo "LINT_BASE=$prev" >> "$GITHUB_ENV"
+            echo "linting against the previous release: $prev"
+          else
+            git fetch --no-tags origin +refs/heads/alpha:refs/remotes/origin/alpha
+            echo "no previous release tag; falling back to origin/alpha"
+          fi
       # lint-new, not lint: the tree carries standing findings being worked off under #68,
       # so the full run is a worklist and is expected to be red. This job was left on
       # `make lint` when ci.main.yml moved, and the first tag after the linter landed
