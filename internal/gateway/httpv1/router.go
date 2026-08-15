@@ -42,21 +42,6 @@ type healthCheckAgent interface {
 	CheckUp(ctx context.Context) (healthy bool, report map[string]string)
 }
 
-// meSubscriptionRepo threads the subscription repository through the router
-// without depending on the concrete repository package.
-type meSubscriptionRepo interface {
-	ObtainRateUserSubscriptionsByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.RateUserSubscription, error)
-	ObtainRateUserSubscriptionByID(ctx context.Context, id string) (*domain.RateUserSubscription, error)
-	RetainRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
-	RemoveRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
-}
-
-// meSourceRepo is a thin interface for source look-ups in the Mini App handler.
-type meSourceRepo interface {
-	ObtainRateSourceByName(ctx context.Context, name string) (*domain.RateSource, error)
-	ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error)
-}
-
 // meProfileRepo is a thin interface for user-profile upserts (timezone).
 type meProfileRepo interface {
 	UpsertRateUserProfile(ctx context.Context, record *domain.RateUserProfile) error
@@ -84,8 +69,6 @@ func NewRouter(
 	srvRateRestApi *service.RateRestApi,
 	botToken string,
 	subSvc *appsub.Service,
-	subRepo meSubscriptionRepo,
-	sourceRepo meSourceRepo,
 	profileRepo meProfileRepo,
 	chartSvc *appchart.Service,
 	healthAgent healthCheckAgent,
@@ -96,8 +79,6 @@ func NewRouter(
 	h, err := v1.NewHandler(v1.Config{
 		RateService:     srvRateRestApi,
 		MeSubSvc:        subSvc,
-		MeSubRepo:       subRepo,
-		MeSourceRepo:    sourceRepo,
 		MeProfileRepo:   profileRepo,
 		MeWeatherSvc:    weather.Service,
 		WeatherCityRepo: weather.CityRepo,
