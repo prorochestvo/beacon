@@ -412,12 +412,14 @@ func applyRulesAndStore(ctx context.Context, source *domain.RateSource, payload 
 		return errors.Join(err, loginjector.NewTraceError())
 	}
 
+	// No Timestamp: the repository owns that clock and overwrites whatever arrives
+	// here. Setting it read as though the extractor knew when the rate was quoted; it
+	// does not — nothing is parsed out of the page but the number.
 	rateValue := &domain.RateValue{
 		SourceName:    source.Name,
 		BaseCurrency:  source.BaseCurrency,
 		QuoteCurrency: source.QuoteCurrency,
 		Price:         value,
-		Timestamp:     time.Now().UTC(),
 	}
 
 	err = repo.RetainRateValue(ctx, rateValue)

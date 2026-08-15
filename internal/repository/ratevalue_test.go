@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/seilbekskindirov/beacon/internal/domain"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
@@ -335,12 +336,52 @@ func TestRateValueRepository_ObtainLatestRateValuesBySourceNames(t *testing.T) {
 	})
 }
 
+// TestRetainRateValueOwnsTheTimestamp pins the contract decided in #61: the column
+// records when this project stored the rate, so a caller's value is ignored rather than
+// honoured. Without this, honouring it looks like a harmless convenience — and it would
+// put a third party's clock into the ordering the latest-rate query depends on.
+func TestRetainRateValueOwnsTheTimestamp(t *testing.T) {
+	t.Parallel()
+
+	db := stubSQLiteDB(t, "ts-owner")
+	r, err := NewRateValueRepository(db)
+	require.NoError(t, err)
+
+	lastYear := time.Now().UTC().Add(-365 * 24 * time.Hour)
+	before := time.Now().UTC().Add(-time.Second)
+
+	record := &domain.RateValue{
+		SourceName:    "ts-owner",
+		BaseCurrency:  "USD",
+		QuoteCurrency: "KZT",
+		Price:         500,
+		Timestamp:     lastYear,
+	}
+	require.NoError(t, r.RetainRateValue(t.Context(), record))
+
+	assert.False(t, record.Timestamp.Equal(lastYear),
+		"a caller-supplied timestamp must not survive the write")
+	assert.False(t, record.Timestamp.Before(before),
+		"the stored timestamp must be the write time")
+
+	stored, err := r.ObtainLastNRateValuesBySourceName(t.Context(), "ts-owner", 1)
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.False(t, stored[0].Timestamp.Before(before),
+		"what the database holds must be the write time too, not the caller's")
+}
+
 func TestRateValueRepository_ObtainValuesForPairsSince(t *testing.T) {
 	t.Parallel()
 
-	// seedWithTimestamp inserts a RateValue then overwrites its timestamp via a
-	// direct SQL UPDATE so tests can control it precisely. RetainRateValue always
-	// sets Timestamp = now, hence the override.
+	// seedWithTimestamp inserts a RateValue and then rewrites its timestamp with a
+	// direct UPDATE, because the repository owns that clock and no API affords setting
+	// it — see domain.RateValue.Timestamp.
+	//
+	// That is a fixture technique, not a workaround for a defect: a query with a since
+	// boundary cannot be tested without rows on both sides of it, and waiting out real
+	// time is not an option. It writes behind the repository deliberately, which is why
+	// it lives here and why no production path may do the same.
 	seedWithTimestamp := func(t *testing.T, r *RateValueRepository, rv domain.RateValue, ts time.Time) domain.RateValue {
 		t.Helper()
 		rv.ID = "" // let repo generate the ID
