@@ -764,6 +764,8 @@ func TestHTMLCacheETagSurvivesRestart(t *testing.T) {
 	before.serve(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
 	etag := w.Result().Header.Get("Etag")
 	require.NotEmpty(t, etag, "the 200 must carry a validator to revalidate against")
+	require.True(t, strings.HasPrefix(etag, `W/"`),
+		"the validator must be weak, or a proxy that re-encodes the body strips it and #83 does nothing")
 
 	// The restart: same bytes, a modTime an hour later. Under Last-Modified alone this is
 	// exactly the case that produced a 200.
