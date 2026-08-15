@@ -115,7 +115,7 @@ func TestMeWeatherCitiesPage_LoadCities(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{city1}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{city1}),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -134,7 +134,7 @@ func TestMeWeatherCitiesPage_LoadCities(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse(nil),
+				"/api/v1/me/weather/cities": citiesResponse(nil),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -150,7 +150,7 @@ func TestMeWeatherCitiesPage_LoadCities(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlErr: map[string]error{
-				"/api/me/weather/cities": errors.New("http 401"),
+				"/api/v1/me/weather/cities": errors.New("http 401"),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -167,7 +167,7 @@ func TestMeWeatherCitiesPage_LoadCities(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlErr: map[string]error{
-				"/api/me/weather/cities": errors.New("connection refused"),
+				"/api/v1/me/weather/cities": errors.New("connection refused"),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -216,7 +216,7 @@ func TestMeWeatherCitiesPage_SearchCities(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities/search": searchResponse([]dto.WeatherCitySearchItem{item1}),
+				"/api/v1/me/weather/cities/search": searchResponse([]dto.WeatherCitySearchItem{item1}),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -233,7 +233,7 @@ func TestMeWeatherCitiesPage_SearchCities(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities/search": searchResponse(nil),
+				"/api/v1/me/weather/cities/search": searchResponse(nil),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -249,7 +249,7 @@ func TestMeWeatherCitiesPage_SearchCities(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlErr: map[string]error{
-				"/api/me/weather/cities/search": errors.New("http 401"),
+				"/api/v1/me/weather/cities/search": errors.New("http 401"),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -264,7 +264,7 @@ func TestMeWeatherCitiesPage_SearchCities(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlErr: map[string]error{
-				"/api/me/weather/cities/search": errors.New("upstream timeout"),
+				"/api/v1/me/weather/cities/search": errors.New("upstream timeout"),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -287,7 +287,7 @@ func TestMeWeatherCitiesPage_SelectSearchResult(t *testing.T) {
 		t.Helper()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities/search": searchResponse(items),
+				"/api/v1/me/weather/cities/search": searchResponse(items),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -331,7 +331,7 @@ func TestMeWeatherCitiesPage_SaveSelected(t *testing.T) {
 	// call can carry different error maps without prefix overlap.
 	makePageWithSelection := func(t *testing.T, f *weatherFakeFetcher) *application.MeWeatherCitiesPage {
 		t.Helper()
-		f.getJSON["/api/me/weather/cities/search"] = searchResponse([]dto.WeatherCitySearchItem{item})
+		f.getJSON["/api/v1/me/weather/cities/search"] = searchResponse([]dto.WeatherCitySearchItem{item})
 		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
 		require.NoError(t, page.SearchCities(t.Context(), "Almaty"))
 		page.SelectSearchResult(0)
@@ -349,7 +349,7 @@ func TestMeWeatherCitiesPage_SaveSelected(t *testing.T) {
 		t.Parallel()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{{
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{{
 					ID: "c-new", LocationID: "1234", DisplayName: "Almaty", NotifyHour: 7,
 				}}),
 			},
@@ -371,7 +371,7 @@ func TestMeWeatherCitiesPage_SaveSelected(t *testing.T) {
 		// postErr only affects the POST create call; GET search uses getJSON.
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{},
-			postErr: map[string]error{"/api/me/weather/cities": errors.New("server error")},
+			postErr: map[string]error{"/api/v1/me/weather/cities": errors.New("server error")},
 		}
 		page := makePageWithSelection(t, f)
 
@@ -384,7 +384,7 @@ func TestMeWeatherCitiesPage_SaveSelected(t *testing.T) {
 		t.Parallel()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{},
-			postErr: map[string]error{"/api/me/weather/cities": errors.New("http 401")},
+			postErr: map[string]error{"/api/v1/me/weather/cities": errors.New("http 401")},
 		}
 		page := makePageWithSelection(t, f)
 
@@ -401,7 +401,7 @@ func TestMeWeatherCitiesPage_DeleteCity(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse(nil),
+				"/api/v1/me/weather/cities": citiesResponse(nil),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -416,7 +416,7 @@ func TestMeWeatherCitiesPage_DeleteCity(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlNoContentErr: map[string]error{
-				"/api/me/weather/cities/": errors.New("server error"),
+				"/api/v1/me/weather/cities/": errors.New("server error"),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -430,7 +430,7 @@ func TestMeWeatherCitiesPage_DeleteCity(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlNoContentErr: map[string]error{
-				"/api/me/weather/cities/": errors.New("http 401"),
+				"/api/v1/me/weather/cities/": errors.New("http 401"),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -448,7 +448,7 @@ func TestMeWeatherCitiesPage_RemoveCity(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse(nil),
+				"/api/v1/me/weather/cities": citiesResponse(nil),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -463,7 +463,7 @@ func TestMeWeatherCitiesPage_RemoveCity(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlNoContentErr: map[string]error{
-				"/api/me/weather/locations/": errors.New("server error"),
+				"/api/v1/me/weather/locations/": errors.New("server error"),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -477,7 +477,7 @@ func TestMeWeatherCitiesPage_RemoveCity(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlNoContentErr: map[string]error{
-				"/api/me/weather/locations/": errors.New("http 401"),
+				"/api/v1/me/weather/locations/": errors.New("http 401"),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -500,7 +500,7 @@ func TestMeWeatherCitiesPage_OpenAlertForm(t *testing.T) {
 		t.Helper()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{city1}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{city1}),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -565,14 +565,14 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 		t.Helper()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
 			},
 		}
 		if citiesAfterSave != nil {
-			f.getJSON["/api/me/weather/cities"] = citiesResponse(citiesAfterSave)
+			f.getJSON["/api/v1/me/weather/cities"] = citiesResponse(citiesAfterSave)
 		}
 		if postErr != nil {
-			f.postErr = map[string]error{"/api/me/weather/cities": postErr}
+			f.postErr = map[string]error{"/api/v1/me/weather/cities": postErr}
 		}
 		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
 		require.NoError(t, page.LoadCities(t.Context()))
@@ -590,7 +590,7 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 		t.Parallel()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{}),
 			},
 		}
 		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
@@ -610,20 +610,20 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 		}
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow, savedRow}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow, savedRow}),
 			},
 		}
 		// First GET loads initial list; POST succeeds (no postErr); second GET after save.
 		initialFetcher := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
 			},
 		}
 		_ = f // reassigned below for the reload
 		page := application.NewMeWeatherCitiesPage(apiclient.New(initialFetcher), "init-token")
 		require.NoError(t, page.LoadCities(t.Context()))
 		// Swap fetcher so that post-save reload returns two rows.
-		initialFetcher.getJSON["/api/me/weather/cities"] = citiesResponse([]dto.WeatherCityRow{cityRow, savedRow})
+		initialFetcher.getJSON["/api/v1/me/weather/cities"] = citiesResponse([]dto.WeatherCityRow{cityRow, savedRow})
 
 		page.OpenAlertForm("loc1")
 		page.SetAlertFormKind("alert_heat")
@@ -641,9 +641,9 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 		t.Parallel()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
 			},
-			postErr: map[string]error{"/api/me/weather/cities": errors.New("validation: bad kind")},
+			postErr: map[string]error{"/api/v1/me/weather/cities": errors.New("validation: bad kind")},
 		}
 		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
 		require.NoError(t, page.LoadCities(t.Context()))
@@ -664,9 +664,9 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 		t.Parallel()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
 			},
-			postErr: map[string]error{"/api/me/weather/cities": errors.New("http 401")},
+			postErr: map[string]error{"/api/v1/me/weather/cities": errors.New("http 401")},
 		}
 		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
 		require.NoError(t, page.LoadCities(t.Context()))
@@ -681,7 +681,7 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 		t.Parallel()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
 			},
 		}
 		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
@@ -702,7 +702,7 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 		t.Parallel()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
 			},
 		}
 		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
@@ -724,7 +724,7 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 		t.Parallel()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
 			},
 		}
 		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
@@ -744,7 +744,7 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 		t.Parallel()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
 			},
 		}
 		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
@@ -770,7 +770,7 @@ func TestMeWeatherCitiesPage_ClearSearch(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities/search": searchResponse([]dto.WeatherCitySearchItem{
+				"/api/v1/me/weather/cities/search": searchResponse([]dto.WeatherCitySearchItem{
 					{LocationID: "1", DisplayName: "Alpha"},
 				}),
 			},

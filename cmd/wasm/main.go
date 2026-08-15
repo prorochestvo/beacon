@@ -2,7 +2,7 @@
 
 // Command wasm is the single-page WASM frontend for Beacon.
 // It runs inside the browser via the Go WASM runtime, drives the DOM through
-// window.fetch and innerHTML, and communicates with the server via /api/... routes.
+// window.fetch and innerHTML, and communicates with the server via /api/v1/... routes.
 package main
 
 import (
@@ -469,7 +469,7 @@ func bindErrorsSections(doc js.Value, page *application.ErrorsPage, scr *screen)
 }
 
 // uploadUserProfile reads the browser's resolved IANA timezone and BCP-47 locale
-// from Intl.DateTimeFormat() and POSTs both to /api/me/profile. Fire-and-forget:
+// from Intl.DateTimeFormat() and POSTs both to /api/v1/me/profile. Fire-and-forget:
 // the caller wraps it in `go` and discards the result. The notifier falls back
 // to UTC when no profile is configured, so a failed upload is a soft regression.
 //
@@ -676,7 +676,7 @@ func runRenderMeSubscriptions(client *apiclient.Client) {
 		chartDiv.Set("innerHTML", ui.RenderSparklineSlot(page.State()))
 	}
 
-	// loadSparklineChart fetches /api/me/rates/chart in one goroutine. Its
+	// loadSparklineChart fetches /api/v1/me/rates/chart in one goroutine. Its
 	// timeout derives from screenCtx so navigation cancels the fetch instead of
 	// letting it run until the 15s deadline.
 	loadSparklineChart := func() {

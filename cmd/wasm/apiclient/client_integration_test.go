@@ -62,7 +62,7 @@ func TestClient_Integration_ListSources(t *testing.T) {
 		Active:        true,
 		LastSuccess:   true,
 	}}
-	mux.HandleFunc("/api/sources", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/sources", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "10", r.URL.Query().Get("limit"))
 		writeJSON(t, w, want)
@@ -88,10 +88,10 @@ func TestClient_Integration_ListRates(t *testing.T) {
 		Price:         1.08,
 		Timestamp:     "2026-01-01T00:00:00Z",
 	}}
-	// /api/sources/{name}/rates uses a subtree match; the handler inspects the path.
-	mux.HandleFunc("/api/sources/", func(w http.ResponseWriter, r *http.Request) {
+	// /api/v1/sources/{name}/rates uses a subtree match; the handler inspects the path.
+	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/api/sources/usd-eur/rates", r.URL.Path)
+		assert.Equal(t, "/api/v1/sources/usd-eur/rates", r.URL.Path)
 		assert.Equal(t, "50", r.URL.Query().Get("limit"))
 		writeJSON(t, w, want)
 	})
@@ -114,9 +114,9 @@ func TestClient_Integration_ListSubscriptions(t *testing.T) {
 		SourceName: "usd-eur",
 		Condition:  ">1.05",
 	}}
-	mux.HandleFunc("/api/sources/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/api/sources/usd-eur/subscriptions/list", r.URL.Path)
+		assert.Equal(t, "/api/v1/sources/usd-eur/subscriptions/list", r.URL.Path)
 		assert.Equal(t, "1", r.URL.Query().Get("page"))
 		writeJSON(t, w, want)
 	})
@@ -139,9 +139,9 @@ func TestClient_Integration_ListDailyEvents(t *testing.T) {
 		SuccessCount: 5,
 		FailedCount:  1,
 	}}
-	mux.HandleFunc("/api/sources/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/api/sources/usd-eur/events/daily", r.URL.Path)
+		assert.Equal(t, "/api/v1/sources/usd-eur/events/daily", r.URL.Path)
 		assert.Equal(t, "2", r.URL.Query().Get("page"))
 		writeJSON(t, w, want)
 	})
@@ -164,7 +164,7 @@ func TestClient_Integration_ListExecutionErrors(t *testing.T) {
 		Error:      "timeout",
 		Timestamp:  "2026-01-01T00:00:00Z",
 	}}
-	mux.HandleFunc("/api/errors/execution", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/errors/execution", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "1", r.URL.Query().Get("page"))
 		writeJSON(t, w, want)
@@ -190,7 +190,7 @@ func TestClient_Integration_ListFailedNotifications(t *testing.T) {
 		CreatedAt: ts,
 		SentAt:    ts,
 	}}
-	mux.HandleFunc("/api/notifications/failed", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/notifications/failed", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "0", r.URL.Query().Get("offset"))
 		assert.Equal(t, "50", r.URL.Query().Get("limit"))
@@ -214,7 +214,7 @@ func TestClient_Integration_Stats(t *testing.T) {
 		SourcesActive: 8,
 		ErrorsTotal:   3,
 	}
-	mux.HandleFunc("/api/stats", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
 		writeJSON(t, w, want)
 	})
@@ -234,9 +234,9 @@ func TestClient_Integration_SetSourceActive(t *testing.T) {
 		client, mux, cleanup := newIntegrationClient(t)
 		defer cleanup()
 
-		mux.HandleFunc("/api/sources/", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "PATCH", r.Method)
-			assert.Equal(t, "/api/sources/usd-eur/active", r.URL.Path)
+			assert.Equal(t, "/api/v1/sources/usd-eur/active", r.URL.Path)
 			assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
 			raw, err := io.ReadAll(r.Body)
@@ -257,7 +257,7 @@ func TestClient_Integration_SetSourceActive(t *testing.T) {
 		client, mux, cleanup := newIntegrationClient(t)
 		defer cleanup()
 
-		mux.HandleFunc("/api/sources/", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
 			raw, err := io.ReadAll(r.Body)
 			require.NoError(t, err)
 			var body dto.SourceActiveRequest
@@ -275,7 +275,7 @@ func TestClient_Integration_SetSourceActive(t *testing.T) {
 		client, mux, cleanup := newIntegrationClient(t)
 		defer cleanup()
 
-		mux.HandleFunc("/api/sources/", func(w http.ResponseWriter, _ *http.Request) {
+		mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 		})
 
@@ -307,7 +307,7 @@ func TestClient_Integration_MeSubscriptions(t *testing.T) {
 			PageSize: 10,
 			Total:    1,
 		}
-		mux.HandleFunc("/api/me/subscriptions", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("/api/v1/me/subscriptions", func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "GET", r.Method)
 			assert.Equal(t, "1", r.URL.Query().Get("page"))
 			assert.Equal(t, "10", r.URL.Query().Get("page_size"))
@@ -329,7 +329,7 @@ func TestClient_Integration_MeSubscriptions(t *testing.T) {
 		client, mux, cleanup := newIntegrationClient(t)
 		defer cleanup()
 
-		mux.HandleFunc("/api/me/subscriptions", func(w http.ResponseWriter, _ *http.Request) {
+		mux.HandleFunc("/api/v1/me/subscriptions", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusUnauthorized)
 		})
 
@@ -343,7 +343,7 @@ func TestClient_Integration_MeSubscriptions(t *testing.T) {
 		client, mux, cleanup := newIntegrationClient(t)
 		defer cleanup()
 
-		mux.HandleFunc("/api/me/subscriptions", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("/api/v1/me/subscriptions", func(w http.ResponseWriter, r *http.Request) {
 			// Use direct map presence check — Query().Get("q") returns "" for both
 			// absent and q= cases, so it cannot distinguish them.
 			_, present := r.URL.Query()["q"]
@@ -364,9 +364,9 @@ func TestClient_Integration_ListRates_PathEscape(t *testing.T) {
 		client, mux, cleanup := newIntegrationClient(t)
 		defer cleanup()
 
-		mux.HandleFunc("/api/sources/", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
 			// EscapedPath preserves the raw percent-encoded form sent on the wire.
-			assert.Equal(t, "/api/sources/a%2Fb/rates", r.URL.EscapedPath())
+			assert.Equal(t, "/api/v1/sources/a%2Fb/rates", r.URL.EscapedPath())
 			writeJSON(t, w, []dto.RateResponse{})
 		})
 

@@ -578,7 +578,7 @@ func TestClient_MeSubscriptionsRaw(t *testing.T) {
 		assert.Equal(t, "sub-1", got.Items[0].ID)
 		assert.Equal(t, "src_a", got.Items[0].SourceName)
 		assert.Equal(t, "initdata-token", f.lastHeaders["X-Telegram-Init-Data"])
-		assert.Equal(t, "/api/me/subscriptions/raw", f.lastURL)
+		assert.Equal(t, "/api/v1/me/subscriptions/raw", f.lastURL)
 	})
 
 	t.Run("401 propagates as error", func(t *testing.T) {
@@ -619,7 +619,7 @@ func TestClient_MeSubscriptionCreate(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "generated-123", got.ID)
 		assert.Equal(t, "tok", f.lastHeaders["X-Telegram-Init-Data"])
-		assert.Equal(t, "/api/me/subscriptions", f.lastURL)
+		assert.Equal(t, "/api/v1/me/subscriptions", f.lastURL)
 		assert.Equal(t, "POST", f.lastMethod)
 	})
 
@@ -790,7 +790,7 @@ func TestClient_MeWeatherLocationDelete(t *testing.T) {
 		err := c.MeWeatherLocationDelete(t.Context(), "tok", "loc-abc")
 		require.NoError(t, err)
 		assert.Equal(t, "tok", f.lastHeaders["X-Telegram-Init-Data"])
-		assert.Equal(t, "/api/me/weather/locations/loc-abc", f.lastURL)
+		assert.Equal(t, "/api/v1/me/weather/locations/loc-abc", f.lastURL)
 		assert.Equal(t, "DELETE", f.lastMethod)
 	})
 
@@ -800,7 +800,7 @@ func TestClient_MeWeatherLocationDelete(t *testing.T) {
 		c := apiclient.New(f)
 		err := c.MeWeatherLocationDelete(t.Context(), "tok", "loc/with slash")
 		require.NoError(t, err)
-		assert.Equal(t, "/api/me/weather/locations/loc%2Fwith%20slash", f.lastURL)
+		assert.Equal(t, "/api/v1/me/weather/locations/loc%2Fwith%20slash", f.lastURL)
 	})
 
 	t.Run("fetcher error propagates", func(t *testing.T) {

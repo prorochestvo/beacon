@@ -79,7 +79,7 @@ func TestNewHTTPFetcher_FetchJSON(t *testing.T) {
 		defer srv.Close()
 
 		f := apiclient.NewHTTPFetcher(srv.URL, srv.Client())
-		_, err := f.FetchJSON(t.Context(), "GET", "/api/me/subscriptions", nil, map[string]string{
+		_, err := f.FetchJSON(t.Context(), "GET", "/api/v1/me/subscriptions", nil, map[string]string{
 			"X-Telegram-Init-Data": wantHeader,
 		})
 		require.NoError(t, err)
@@ -136,7 +136,7 @@ func TestNewHTTPFetcher_FetchNoContent(t *testing.T) {
 		defer srv.Close()
 
 		f := apiclient.NewHTTPFetcher(srv.URL, srv.Client())
-		err := f.FetchNoContent(t.Context(), "PATCH", "/api/sources/x/active", nil, nil)
+		err := f.FetchNoContent(t.Context(), "PATCH", "/api/v1/sources/x/active", nil, nil)
 		require.NoError(t, err)
 	})
 
@@ -148,7 +148,7 @@ func TestNewHTTPFetcher_FetchNoContent(t *testing.T) {
 		defer srv.Close()
 
 		f := apiclient.NewHTTPFetcher(srv.URL, srv.Client())
-		err := f.FetchNoContent(t.Context(), "PATCH", "/api/sources/x/active", nil, nil)
+		err := f.FetchNoContent(t.Context(), "PATCH", "/api/v1/sources/x/active", nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "http 404")
 	})
@@ -159,7 +159,7 @@ func TestNewHTTPFetcher_FetchNoContent(t *testing.T) {
 		srv.Close()
 
 		f := apiclient.NewHTTPFetcher(srv.URL, srv.Client())
-		err := f.FetchNoContent(t.Context(), "PATCH", "/api/sources/x/active", nil, nil)
+		err := f.FetchNoContent(t.Context(), "PATCH", "/api/v1/sources/x/active", nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "fetch:")
 	})
@@ -181,7 +181,7 @@ func TestNewHTTPFetcher_FetchNoContent(t *testing.T) {
 		defer srv.Close()
 
 		f := apiclient.NewHTTPFetcher(srv.URL, srv.Client())
-		err := f.FetchNoContent(t.Context(), "PATCH", "/api/sources/x/active", payload{Active: true}, nil)
+		err := f.FetchNoContent(t.Context(), "PATCH", "/api/v1/sources/x/active", payload{Active: true}, nil)
 		require.NoError(t, err)
 	})
 }

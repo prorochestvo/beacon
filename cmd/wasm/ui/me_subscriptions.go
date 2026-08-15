@@ -56,7 +56,7 @@ func renderManageGearButton(ariaLabel string) string {
 //
 // The screen is wrapped in RenderSectionShell so the vertical section rail sits to
 // its left, and carries the manage gear. Neither is rendered on the guest screen or
-// when AuthFailure is set (every /api/me/* screen sits behind auth); AuthFailure
+// when AuthFailure is set (every /api/v1/me/* screen sits behind auth); AuthFailure
 // short-circuits the whole screen to the auth-failure message, with no rail — a
 // screen with no content has nothing to navigate between.
 //

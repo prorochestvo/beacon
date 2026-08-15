@@ -37,13 +37,13 @@ type Config struct {
 	// RateService backs every public and admin rate endpoint.
 	RateService rateService
 	// MeSubRepo, MeSourceRepo, MeRateValueRepo and MeProfileRepo back the
-	// /api/me subscription, source, rate-value and profile endpoints.
+	// /api/v1/me subscription, source, rate-value and profile endpoints.
 	MeSubRepo       meSubscriptionRepository
 	MeSourceRepo    meSourceRepository
 	MeRateValueRepo meRateValueRepository
 	MeProfileRepo   meProfileRepository
 
-	// WeatherCityRepo, WeatherGeocoder and WeatherObsRepo back /api/me/weather.
+	// WeatherCityRepo, WeatherGeocoder and WeatherObsRepo back /api/v1/me/weather.
 	WeatherCityRepo meWeatherCityRepository
 	WeatherGeocoder weatherGeocoder
 	WeatherObsRepo  meWeatherObsRepository
@@ -197,7 +197,7 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 // ListSources returns every configured rate source decorated with its latest execution status.
 //
-// GET /api/sources
+// GET /api/v1/sources
 func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
 	sources, err := h.rateService.ObtainAllRateSources(r.Context())
 	if err != nil {
@@ -245,7 +245,7 @@ func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
 // ListRates returns the most recent rate values for a named source.
 // Optional query param ?limit=N (1–1000, default 100).
 //
-// GET /api/sources/{name}/rates
+// GET /api/v1/sources/{name}/rates
 func (h *Handler) ListRates(w http.ResponseWriter, r *http.Request) {
 	name, err := extractName(r)
 	if err != nil {
@@ -279,7 +279,7 @@ func (h *Handler) ListRates(w http.ResponseWriter, r *http.Request) {
 
 // ListHistory returns the 50 most recent execution history records for a named source.
 //
-// GET /api/sources/{name}/history
+// GET /api/v1/sources/{name}/history
 func (h *Handler) ListHistory(w http.ResponseWriter, r *http.Request) {
 	limit, err := extractLimit(r.URL)
 	if err != nil {
@@ -313,7 +313,7 @@ func (h *Handler) ListHistory(w http.ResponseWriter, r *http.Request) {
 // ListNotifications returns the last N notification pool records.
 // Optional query param ?limit=N (1–100, default 10).
 //
-// GET /api/notifications
+// GET /api/v1/notifications
 func (h *Handler) ListNotifications(w http.ResponseWriter, r *http.Request) {
 	limit, err := extractLimit(r.URL)
 	if err != nil {
@@ -344,7 +344,7 @@ func (h *Handler) ListNotifications(w http.ResponseWriter, r *http.Request) {
 
 // ListFailedNotifications returns all failed notification pool records.
 //
-// GET /api/notifications/failed
+// GET /api/v1/notifications/failed
 func (h *Handler) ListFailedNotifications(w http.ResponseWriter, r *http.Request) {
 	limit, err := extractLimit(r.URL)
 	if err != nil {
@@ -380,7 +380,7 @@ func (h *Handler) ListFailedNotifications(w http.ResponseWriter, r *http.Request
 
 // ListPendingEvents returns all currently pending notification events.
 //
-// GET /api/events/pending
+// GET /api/v1/events/pending
 func (h *Handler) ListPendingEvents(w http.ResponseWriter, r *http.Request) {
 	events, err := h.rateService.ObtainPendingRateUserEvents(r.Context())
 	if err != nil {
@@ -401,7 +401,7 @@ func (h *Handler) ListPendingEvents(w http.ResponseWriter, r *http.Request) {
 
 // ListSourceFailedEvents returns paginated failed events for a named source.
 //
-// GET /api/sources/{name}/events/failed?page=N
+// GET /api/v1/sources/{name}/events/failed?page=N
 func (h *Handler) ListSourceFailedEvents(w http.ResponseWriter, r *http.Request) {
 	name, err := extractName(r)
 	if err != nil {
@@ -431,7 +431,7 @@ func (h *Handler) ListSourceFailedEvents(w http.ResponseWriter, r *http.Request)
 
 // ListSourceSubscriptions returns grouped subscription + event statistics for a source.
 //
-// GET /api/sources/{name}/subscriptions
+// GET /api/v1/sources/{name}/subscriptions
 func (h *Handler) ListSourceSubscriptions(w http.ResponseWriter, r *http.Request) {
 	name, err := extractName(r)
 	if err != nil {
@@ -462,7 +462,7 @@ func (h *Handler) ListSourceSubscriptions(w http.ResponseWriter, r *http.Request
 
 // ToggleSourceActive enables or disables a named source.
 //
-// PATCH /api/sources/{name}/active
+// PATCH /api/v1/sources/{name}/active
 func (h *Handler) ToggleSourceActive(w http.ResponseWriter, r *http.Request) {
 	name, err := extractName(r)
 	if err != nil {
@@ -489,7 +489,7 @@ func (h *Handler) ToggleSourceActive(w http.ResponseWriter, r *http.Request) {
 
 // ListStats returns global statistics: total/active source counts and total error count.
 //
-// GET /api/stats
+// GET /api/v1/stats
 func (h *Handler) ListStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.rateService.ObtainStats(r.Context())
 	if err != nil {
@@ -505,7 +505,7 @@ func (h *Handler) ListStats(w http.ResponseWriter, r *http.Request) {
 
 // ListSourceSubscriptionDetails returns paginated subscription details for a named source.
 //
-// GET /api/sources/{name}/subscriptions/list?page=N
+// GET /api/v1/sources/{name}/subscriptions/list?page=N
 func (h *Handler) ListSourceSubscriptionDetails(w http.ResponseWriter, r *http.Request) {
 	name, err := extractName(r)
 	if err != nil {
@@ -539,7 +539,7 @@ func (h *Handler) ListSourceSubscriptionDetails(w http.ResponseWriter, r *http.R
 
 // ListSourceDailyEvents returns paginated daily event summaries for a named source.
 //
-// GET /api/sources/{name}/events/daily?page=N
+// GET /api/v1/sources/{name}/events/daily?page=N
 func (h *Handler) ListSourceDailyEvents(w http.ResponseWriter, r *http.Request) {
 	name, err := extractName(r)
 	if err != nil {
@@ -569,7 +569,7 @@ func (h *Handler) ListSourceDailyEvents(w http.ResponseWriter, r *http.Request) 
 
 // ListExecutionErrors returns paginated failed execution history records from all sources.
 //
-// GET /api/errors/execution?page=N
+// GET /api/v1/errors/execution?page=N
 func (h *Handler) ListExecutionErrors(w http.ResponseWriter, r *http.Request) {
 	page := parsePage(r.URL.Query().Get("page"))
 	const pageSize int64 = 50
@@ -595,7 +595,7 @@ func (h *Handler) ListExecutionErrors(w http.ResponseWriter, r *http.Request) {
 // ListMeSubscriptions returns the caller's own subscriptions enriched with the
 // latest rate value and timestamp per source.
 //
-// GET /api/me/subscriptions
+// GET /api/v1/me/subscriptions
 // Auth: X-Telegram-Init-Data header. The previous ?initData= query-string
 // fallback was removed because the HMAC-signed initData would otherwise land in
 // access logs and Referer headers for up to its 24h validity window.
@@ -732,7 +732,7 @@ func (h *Handler) ListMeSubscriptions(w http.ResponseWriter, r *http.Request) {
 // source_name ASC, updated_at DESC so the editor groups rows by source
 // without additional client-side work.
 //
-// GET /api/me/subscriptions/raw
+// GET /api/v1/me/subscriptions/raw
 // Auth: X-Telegram-Init-Data header (same HMAC scheme as ListMeSubscriptions).
 func (h *Handler) ListMeSubscriptionsRaw(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.callerID(w, r)
@@ -792,7 +792,7 @@ func (h *Handler) ListMeSubscriptionsRaw(w http.ResponseWriter, r *http.Request)
 
 // CreateMeSubscription creates a new subscription owned by the authenticated caller.
 //
-// POST /api/me/subscriptions
+// POST /api/v1/me/subscriptions
 // Auth: X-Telegram-Init-Data header (same HMAC scheme as ListMeSubscriptions).
 // Body: {"source_name":"...", "condition_type":"...", "condition_value":"..."}
 //
@@ -857,7 +857,7 @@ func (h *Handler) CreateMeSubscription(w http.ResponseWriter, r *http.Request) {
 // UpdateMeSubscription updates the condition fields of an existing subscription
 // owned by the authenticated caller.
 //
-// PATCH /api/me/subscriptions/{id}
+// PATCH /api/v1/me/subscriptions/{id}
 // Auth: X-Telegram-Init-Data header.
 // Body: {"condition_type":"...", "condition_value":"..."}
 //
@@ -911,7 +911,7 @@ func (h *Handler) UpdateMeSubscription(w http.ResponseWriter, r *http.Request) {
 
 // DeleteMeSubscription removes a subscription owned by the authenticated caller.
 //
-// DELETE /api/me/subscriptions/{id}
+// DELETE /api/v1/me/subscriptions/{id}
 // Auth: X-Telegram-Init-Data header.
 //
 // 204 No Content on success.
@@ -952,7 +952,7 @@ func (h *Handler) DeleteMeSubscription(w http.ResponseWriter, r *http.Request) {
 // the client sends whatever Intl.DateTimeFormat resolves to; the server
 // validates via time.LoadLocation.
 //
-// POST /api/me/profile
+// POST /api/v1/me/profile
 // Body: {"timezone":"Asia/Almaty"}
 // Auth: X-Telegram-Init-Data header (same HMAC scheme as ListMeSubscriptions).
 //
@@ -1012,7 +1012,7 @@ func (h *Handler) UpsertMeProfile(w http.ResponseWriter, r *http.Request) {
 // (one of 7, 30, 90, 180, 360; default 7). BID and ASK for the same canonical
 // pair appear as a single row with two series entries.
 //
-// GET /api/me/rates/chart?period=N
+// GET /api/v1/me/rates/chart?period=N
 // Auth: X-Telegram-Init-Data header only. The HMAC-signed payload must never be
 // passed via query string (it would appear in access logs and Referer headers).
 //
@@ -1098,7 +1098,7 @@ func (h *Handler) GetMeRatesChart(w http.ResponseWriter, r *http.Request) {
 // GetMeRatesHistory returns paginated rate-collection events for the calling
 // user's subscribed sources matching the given canonical pair label.
 //
-// GET /api/me/rates/history?pair=<canonical>&page=<n>&limit=<n>&source_title=<title>
+// GET /api/v1/me/rates/history?pair=<canonical>&page=<n>&limit=<n>&source_title=<title>
 // Auth: X-Telegram-Init-Data header only.
 //
 // source_title is an optional exact-match filter; when present, Total reflects
@@ -1177,7 +1177,7 @@ func (h *Handler) GetMeRatesHistory(w http.ResponseWriter, r *http.Request) {
 // optional ?period= query parameter (one of 7, 30, 90, 180, 360; default 7).
 // No auth required.
 //
-// GET /api/public/rates/chart?page=N&limit=L&period=P
+// GET /api/v1/public/rates/chart?page=N&limit=L&period=P
 //
 //   - 400 on non-integer limit.
 //   - 400 on period present but not in whitelist {7, 30, 90, 180, 360}.
@@ -1289,7 +1289,7 @@ func (h *Handler) internalError(w http.ResponseWriter, err error) {
 // callerID returns the authenticated caller's Telegram id, or writes 401 and reports
 // false.
 //
-// Every /api/me route is mounted behind the initData middleware, which is what
+// Every /api/v1/me route is mounted behind the initData middleware, which is what
 // authenticates; this only reads the result. A miss therefore means the route was
 // registered outside that mount — a wiring mistake, not a failed login — and the
 // only safe answer is to refuse. 401 rather than 500 because from the caller's side

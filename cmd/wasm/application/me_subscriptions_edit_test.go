@@ -34,7 +34,7 @@ type editFakeFetcher struct {
 var _ apiclient.Fetcher = (*editFakeFetcher)(nil)
 
 func (f *editFakeFetcher) FetchJSON(_ context.Context, _, rawURL string, _ any, _ map[string]string) ([]byte, error) {
-	// Longest-prefix match so /api/me/subscriptions/raw wins over /api/me/subscriptions.
+	// Longest-prefix match so /api/v1/me/subscriptions/raw wins over /api/v1/me/subscriptions.
 	bestErrKey, bestErrLen := "", 0
 	for prefix := range f.urlErr {
 		if strings.HasPrefix(rawURL, prefix) && len(prefix) > bestErrLen {
@@ -108,8 +108,8 @@ func TestMeSubscriptionsEditPage_LoadInitial(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/subscriptions/raw": rawResponse([]dto.MeSubscriptionEditRow{sub1}),
-				"/api/sources":              sourcesResponse([]dto.SourceResponse{activeSrc, inactiveSrc}),
+				"/api/v1/me/subscriptions/raw": rawResponse([]dto.MeSubscriptionEditRow{sub1}),
+				"/api/v1/sources":              sourcesResponse([]dto.SourceResponse{activeSrc, inactiveSrc}),
 			},
 		}
 		page := editPageWithFetcher(f)
@@ -129,8 +129,8 @@ func TestMeSubscriptionsEditPage_LoadInitial(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/subscriptions/raw": rawResponse(nil),
-				"/api/sources":              sourcesResponse(nil),
+				"/api/v1/me/subscriptions/raw": rawResponse(nil),
+				"/api/v1/sources":              sourcesResponse(nil),
 			},
 		}
 		page := editPageWithFetcher(f)
@@ -146,7 +146,7 @@ func TestMeSubscriptionsEditPage_LoadInitial(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlErr: map[string]error{
-				"/api/me/subscriptions/raw": errors.New("http 401"),
+				"/api/v1/me/subscriptions/raw": errors.New("http 401"),
 			},
 		}
 		page := editPageWithFetcher(f)
@@ -163,10 +163,10 @@ func TestMeSubscriptionsEditPage_LoadInitial(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/subscriptions/raw": rawResponse(nil),
+				"/api/v1/me/subscriptions/raw": rawResponse(nil),
 			},
 			urlErr: map[string]error{
-				"/api/sources": errors.New("network error"),
+				"/api/v1/sources": errors.New("network error"),
 			},
 		}
 		page := editPageWithFetcher(f)
@@ -315,8 +315,8 @@ func TestMeSubscriptionsEditPage_ChooseProvider(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/subscriptions/raw": rawResponse(nil),
-				"/api/sources": sourcesResponse([]dto.SourceResponse{
+				"/api/v1/me/subscriptions/raw": rawResponse(nil),
+				"/api/v1/sources": sourcesResponse([]dto.SourceResponse{
 					{Name: "alpha_usd_kzt", Title: "Alpha", BaseCurrency: "USD", QuoteCurrency: "KZT", Active: true},
 				}),
 			},
@@ -367,8 +367,8 @@ func TestMeSubscriptionsEditPage_ChoosePair(t *testing.T) {
 		t.Helper()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/subscriptions/raw": rawResponse(nil),
-				"/api/sources":              sourcesResponse(sources),
+				"/api/v1/me/subscriptions/raw": rawResponse(nil),
+				"/api/v1/sources":              sourcesResponse(sources),
 			},
 		}
 		page := editPageWithFetcher(f)
@@ -458,8 +458,8 @@ func TestMeSubscriptionsEditPage_SetDraftDirection(t *testing.T) {
 		t.Helper()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/subscriptions/raw": rawResponse(nil),
-				"/api/sources": sourcesResponse([]dto.SourceResponse{
+				"/api/v1/me/subscriptions/raw": rawResponse(nil),
+				"/api/v1/sources": sourcesResponse([]dto.SourceResponse{
 					{Name: "KZ_BANK_ASK_USD_KZT", Title: "Bank", BaseCurrency: "USD", QuoteCurrency: "KZT", Active: true},
 					{Name: "KZ_BANK_BID_USD_KZT", Title: "Bank", BaseCurrency: "USD", QuoteCurrency: "KZT", Active: true},
 				}),
@@ -497,8 +497,8 @@ func TestMeSubscriptionsEditPage_ClearDraft(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/subscriptions/raw": rawResponse(nil),
-				"/api/sources": sourcesResponse([]dto.SourceResponse{
+				"/api/v1/me/subscriptions/raw": rawResponse(nil),
+				"/api/v1/sources": sourcesResponse([]dto.SourceResponse{
 					{Name: "src_a", Title: "Alpha", BaseCurrency: "USD", QuoteCurrency: "KZT", Active: true},
 				}),
 			},
@@ -542,14 +542,14 @@ func TestMeSubscriptionsEditPage_SaveDraft(t *testing.T) {
 	makeFullFetcher := func(createErr error) *editFakeFetcher {
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/subscriptions/raw": rawResponse([]dto.MeSubscriptionEditRow{sub1}),
-				"/api/me/subscriptions":     createResponse("new-id"),
-				"/api/sources":              sourcesResponse(nil),
+				"/api/v1/me/subscriptions/raw": rawResponse([]dto.MeSubscriptionEditRow{sub1}),
+				"/api/v1/me/subscriptions":     createResponse("new-id"),
+				"/api/v1/sources":              sourcesResponse(nil),
 			},
 		}
 		if createErr != nil {
 			f.urlErr = map[string]error{
-				"/api/me/subscriptions": createErr,
+				"/api/v1/me/subscriptions": createErr,
 			}
 		}
 		return f
@@ -682,7 +682,7 @@ func TestMeSubscriptionsEditPage_DeleteRow(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/subscriptions/raw": rawResponse([]dto.MeSubscriptionEditRow{}),
+				"/api/v1/me/subscriptions/raw": rawResponse([]dto.MeSubscriptionEditRow{}),
 			},
 		}
 		page := editPageWithFetcher(f)
@@ -703,7 +703,7 @@ func TestMeSubscriptionsEditPage_DeleteRow(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlNoContentErr: map[string]error{
-				"/api/me/subscriptions/": errors.New("http 401"),
+				"/api/v1/me/subscriptions/": errors.New("http 401"),
 			},
 		}
 		page := editPageWithFetcher(f)
@@ -735,7 +735,7 @@ func TestMeSubscriptionsEditPage_UpdateRow(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/subscriptions/raw": rawResponse([]dto.MeSubscriptionEditRow{sub1}),
+				"/api/v1/me/subscriptions/raw": rawResponse([]dto.MeSubscriptionEditRow{sub1}),
 			},
 		}
 		page := editPageWithFetcher(f)

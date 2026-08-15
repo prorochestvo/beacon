@@ -39,7 +39,7 @@ func (l *httpResponseWriter) Write(b []byte) (int, error) {
 //	middleware [STATUS] METHOD PATH
 //
 // The standard logger prefix supplies the timestamp, so a typical line reads
-// "YYYY/MM/DD HH:MM:SS middleware [200] GET /api/sources". The status defaults
+// "YYYY/MM/DD HH:MM:SS middleware [200] GET /api/v1/sources". The status defaults
 // to 200 when the inner handler writes the body without an explicit WriteHeader
 // call, mirroring the net/http default.
 //

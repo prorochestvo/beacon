@@ -1,7 +1,7 @@
 // Package chart provides the application service that builds sparkline-list
 // charts and per-pair rate history from a user's subscriptions and the
-// system-wide public chart endpoint. It is consumed by the /api/me/rates/chart,
-// /api/me/rates/history, and /api/public/rates/chart handlers and is free of
+// system-wide public chart endpoint. It is consumed by the /api/v1/me/rates/chart,
+// /api/v1/me/rates/history, and /api/v1/public/rates/chart handlers and is free of
 // HTTP and Telegram concerns.
 package chart
 

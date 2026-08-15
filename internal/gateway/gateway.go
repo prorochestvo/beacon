@@ -24,7 +24,7 @@ type WeatherGatewayDeps struct {
 	// Geocoder is the geocoding provider for the city-search endpoint.
 	Geocoder meWeatherGeocoder
 	// ObsRepo is the weather observation repository for the on-demand
-	// current-weather endpoint (GET /api/me/weather/current).
+	// current-weather endpoint (GET /api/v1/me/weather/current).
 	ObsRepo meWeatherObsRepo
 }
 
@@ -83,7 +83,7 @@ type meWeatherObsRepo interface {
 }
 
 // NewGateway builds the v1 HTTP mux with all routes registered, ready for
-// http.ListenAndServe. chartSvc is required for GET /api/me/rates/chart.
+// http.ListenAndServe. chartSvc is required for GET /api/v1/me/rates/chart.
 // healthAgent drives GET /health/check; when nil the endpoint returns 503.
 // serverVersion and serverStart populate the "server" block in the health response.
 // weather groups the weather-specific dependencies; each is nil-safe — the

@@ -1,4 +1,4 @@
-// Package apiclient provides a typed Go client for the /api/... HTTP routes.
+// Package apiclient provides a typed Go client for the /api/v1/... HTTP routes.
 // It is used by the WASM frontend; transport is abstracted through the Fetcher
 // interface so tests can inject an in-process fake without real HTTP calls.
 package apiclient
@@ -11,7 +11,7 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/dto"
 )
 
-// Client is a typed HTTP client for the /api/... routes consumed by the WASM frontend.
+// Client is a typed HTTP client for the /api/v1/... routes consumed by the WASM frontend.
 // Construct one per WASM lifetime via New. Free of DOM concerns; transport is delegated to the Fetcher.
 type Client struct {
 	fetcher Fetcher
