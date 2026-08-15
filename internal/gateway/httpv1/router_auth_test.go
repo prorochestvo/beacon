@@ -1,4 +1,4 @@
-package httpv1_test
+package httpv1
 
 import (
 	"context"
@@ -18,9 +18,18 @@ import (
 
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
-	"github.com/seilbekskindirov/beacon/internal/gateway/httpv1"
 	"github.com/seilbekskindirov/beacon/internal/gateway/httpv1/routes"
 	"github.com/stretchr/testify/require"
+)
+
+var (
+	_ meSubscriptionRepo = (*stubMeSubRepo)(nil)
+	_ meSourceRepo       = (*stubMeSourceRepo)(nil)
+	_ meRateValueRepo    = (*stubMeRateValueRepo)(nil)
+	_ meProfileRepo      = (*stubMeProfileRepo)(nil)
+	_ meWeatherCityRepo  = (*stubWeatherCityRepo)(nil)
+	_ weatherGeocoder    = (*stubGeocoder)(nil)
+	_ meWeatherObsRepo   = (*stubWeatherObsRepo)(nil)
 )
 
 // meRoutes is every method+path under /api/me, the project's only authenticated
@@ -59,7 +68,7 @@ const authTestBotToken = "12345:AAH-test-token"
 // and report as the auth failure it is.
 func newAuthTestRouter(t *testing.T) http.Handler {
 	t.Helper()
-	mux, err := httpv1.NewRouter(
+	mux, err := NewRouter(
 		http.NewServeMux(),
 		// A nil *service.RateRestApi: a typed nil, so any method call on it is a nil
 		// dereference — the same trap the stubs set, without needing to restate the
@@ -74,7 +83,7 @@ func newAuthTestRouter(t *testing.T) http.Handler {
 		nil,        // health agent
 		"test",     // server version
 		time.Now(), // server start
-		httpv1.WeatherGatewayDeps{
+		WeatherGatewayDeps{
 			CityRepo: stubWeatherCityRepo{},
 			Geocoder: stubGeocoder{},
 			ObsRepo:  stubWeatherObsRepo{},
