@@ -11,21 +11,22 @@ import (
 	"github.com/prorochestvo/loginjector"
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
 	"github.com/seilbekskindirov/beacon/internal/application/service"
+	appsub "github.com/seilbekskindirov/beacon/internal/application/subscription"
+	appweather "github.com/seilbekskindirov/beacon/internal/application/weather"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
 	"github.com/seilbekskindirov/beacon/internal/gateway/httpv1"
 )
 
 // WeatherGatewayDeps groups the weather-specific dependencies passed to NewGateway.
-// Each field is nil-safe: the corresponding endpoints return 503 when a dep is absent.
 type WeatherGatewayDeps struct {
+	// Service backs the caller's own weather reads: GET /api/v1/me/weather/cities
+	// and GET /api/v1/me/weather/current.
+	Service *appweather.Service
 	// CityRepo is the weather city subscription repository.
 	CityRepo meWeatherCityRepo
 	// Geocoder is the geocoding provider for the city-search endpoint.
 	Geocoder meWeatherGeocoder
-	// ObsRepo is the weather observation repository for the on-demand
-	// current-weather endpoint (GET /api/v1/me/weather/current).
-	ObsRepo meWeatherObsRepo
 }
 
 // meSubscriptionRepo is a pass-through interface from the concrete repository layer.
@@ -40,12 +41,6 @@ type meSubscriptionRepo interface {
 type meSourceRepo interface {
 	ObtainRateSourceByName(ctx context.Context, name string) (*domain.RateSource, error)
 	ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error)
-}
-
-// meRateValueRepo is a pass-through interface for rate value look-ups.
-type meRateValueRepo interface {
-	ObtainLastNRateValuesBySourceName(ctx context.Context, name string, limit int64) ([]domain.RateValue, error)
-	ObtainLatestRateValuesBySourceNames(ctx context.Context, names []string) (map[string]domain.RateValue, error)
 }
 
 // meProfileRepo is a pass-through interface for user-profile upserts.
@@ -76,24 +71,18 @@ type meWeatherGeocoder interface {
 	Geocode(ctx context.Context, name string, count int) ([]dto.WeatherCitySearchItem, error)
 }
 
-// meWeatherObsRepo is a pass-through interface for the weather observation
-// repository used by the on-demand current-weather endpoint.
-type meWeatherObsRepo interface {
-	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
-}
-
 // NewGateway builds the v1 HTTP mux with all routes registered, ready for
-// http.ListenAndServe. chartSvc is required for GET /api/v1/me/rates/chart.
+// http.ListenAndServe. subSvc backs the two /api/v1/me/subscriptions read
+// endpoints and chartSvc is required for GET /api/v1/me/rates/chart.
 // healthAgent drives GET /health/check; when nil the endpoint returns 503.
 // serverVersion and serverStart populate the "server" block in the health response.
-// weather groups the weather-specific dependencies; each is nil-safe — the
-// corresponding endpoints return 503 when a dep is not wired.
+// weather groups the weather-specific dependencies.
 func NewGateway(
 	srvRateRestApi *service.RateRestApi,
 	botToken string,
+	subSvc *appsub.Service,
 	subRepo meSubscriptionRepo,
 	sourceRepo meSourceRepo,
-	rateValueRepo meRateValueRepo,
 	profileRepo meProfileRepo,
 	chartSvc *appchart.Service,
 	healthAgent healthCheckAgent,
@@ -103,12 +92,12 @@ func NewGateway(
 ) (*http.ServeMux, error) {
 	mux := http.NewServeMux()
 	mux, err := httpv1.NewRouter(
-		mux, srvRateRestApi, botToken, subRepo, sourceRepo, rateValueRepo, profileRepo,
+		mux, srvRateRestApi, botToken, subSvc, subRepo, sourceRepo, profileRepo,
 		chartSvc, healthAgent, serverVersion, serverStart,
 		httpv1.WeatherGatewayDeps{
+			Service:  weather.Service,
 			CityRepo: weather.CityRepo,
 			Geocoder: weather.Geocoder,
-			ObsRepo:  weather.ObsRepo,
 		},
 	)
 	if err != nil {
