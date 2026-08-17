@@ -99,7 +99,7 @@ inspector in `cmd/web` has always probed direct, so the two agree; a false "down
 still cannot fail the deploy gate, because the inspector is advisory.
 
 **Transient failures are retried inside the client.** `OpenMeteo.get` — the single seam
-both `Forecast` and `Geocode` pass through — re-sends up to `openMeteoMaxAttempts` (3) on
+both `Forecast` and `Geocode` pass through — re-sends up to `openMeteoMaxAttempts` (5) on
 5xx and connection-level faults, with a jittered backoff that honours `ctx` so a cancelled
 tick stops instead of sleeping. Without it each intermittent 5xx dropped that location for
 the whole run (167 of them in one production log). **429 is deliberately not retried**: the
@@ -109,6 +109,16 @@ One log line per retry and per recovery, silent on a clean first attempt, so a d
 provider stays distinguishable from a healthy one. The `/health/check` inspector has its
 own client and deliberately does **not** retry — a retry there would hide the flakiness it
 exists to surface.
+
+**The budget was sized on production, and its two halves answer different questions**
+(issue #27). *Attempts* recover requests: measured 21% at attempt 2 and 25% at attempt 3,
+flat, so each further attempt buys about what the last one did. *Waiting* does not — the
+503s arrive in episodes lasting about three hours on one location, and an hour between
+hourly ticks does not clear one, which is why `openMeteoRetryBackoffCap` stops the doubling
+at 500 ms. Five attempts is not a round number: it is the largest budget whose scheduled
+waiting still fits inside `weatherGeoTimeout`, the 5 s deadline the Mini App city search
+puts on the *same* client. Raising the budget means moving that deadline in the same change,
+and `TestRetryScheduleFitsTheTightestCaller` is what says so out loud.
 
 ## Weather alert edge semantics
 

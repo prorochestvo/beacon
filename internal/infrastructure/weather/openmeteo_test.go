@@ -2,6 +2,7 @@ package weather
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -410,7 +411,7 @@ func TestOpenMeteo_Retry(t *testing.T) {
 
 		// The run recovered, but the upstream was flaky and the log has to say so —
 		// otherwise a degrading provider looks exactly like a healthy one.
-		assert.Contains(t, log.String(), "attempt 1 of 3 failed")
+		assert.Contains(t, log.String(), fmt.Sprintf("attempt 1 of %d failed", openMeteoMaxAttempts))
 		assert.Contains(t, log.String(), "recovered on attempt 2")
 
 		// The recovery time is the point of the line: it bounds how long the fault
@@ -419,7 +420,7 @@ func TestOpenMeteo_Retry(t *testing.T) {
 		// printing "0s" would satisfy any regexp for "a number followed by a unit"
 		// while reporting nothing. One backoff has elapsed by here, jittered down to
 		// 200ms at worst.
-		elapsed := loggedDuration(t, log.String(), `recovered on attempt 2 of 3 after (\S+)`)
+		elapsed := loggedDuration(t, log.String(), `recovered on attempt 2 of \d+ after (\S+)`)
 		assert.Greater(t, elapsed, 150*time.Millisecond,
 			"the recovery time must be real; a zero means the clock is not being read")
 	})
@@ -432,14 +433,16 @@ func TestOpenMeteo_Retry(t *testing.T) {
 		om := newTestOpenMeteoWithLogger(t, srv.URL, srv.URL, &log)
 		_, err := om.Forecast(t.Context(), 43.25249, 76.9115)
 		require.Error(t, err)
-		assert.Equal(t, int64(3), hits.Load(), "three attempts, not four and not one")
+		assert.Equal(t, int64(openMeteoMaxAttempts), hits.Load(),
+			"the whole budget is spent on a persistent fault, and not one attempt more")
 		assert.Contains(t, err.Error(), "503")
-		assert.Contains(t, err.Error(), "giving up after 3 attempt(s)",
+		assert.Contains(t, err.Error(), fmt.Sprintf("giving up after %d attempt(s)", openMeteoMaxAttempts),
 			"an outright failure must say how hard it tried, or it reads like one unlucky request")
-		// Two backoffs have elapsed by the time this gives up — 600ms at worst after
-		// jitter — so anything smaller means the elapsed is not being measured.
-		spent := loggedDuration(t, err.Error(), `giving up after 3 attempt\(s\) in (\S+):`)
-		assert.Greater(t, spent, 500*time.Millisecond,
+		// Every backoff bar the last has elapsed by the time this gives up. Compared
+		// against the minimum the schedule can produce after jitter, so the assertion
+		// fails on a clock that is not being read rather than on an unlucky draw.
+		spent := loggedDuration(t, err.Error(), `giving up after \d+ attempt\(s\) in (\S+):`)
+		assert.Greater(t, spent, minRetrySchedule(),
 			"the budget actually spent must be real, or the log cannot say how narrow it was")
 		assert.NotContains(t, log.String(), "recovered")
 	})
@@ -574,8 +577,8 @@ func TestRetryBackoff(t *testing.T) {
 
 	t.Run("grows with each attempt and stays inside the jitter band", func(t *testing.T) {
 		t.Parallel()
-		for attempt := 1; attempt <= 3; attempt++ {
-			base := openMeteoRetryBackoff << (attempt - 1)
+		for attempt := 1; attempt <= openMeteoMaxAttempts; attempt++ {
+			base := min(openMeteoRetryBackoff<<(attempt-1), openMeteoRetryBackoffCap)
 			lo := time.Duration(float64(base) * (1 - openMeteoRetryJitter))
 			hi := time.Duration(float64(base) * (1 + openMeteoRetryJitter))
 			for i := 0; i < 50; i++ {
@@ -583,6 +586,19 @@ func TestRetryBackoff(t *testing.T) {
 				assert.GreaterOrEqual(t, got, lo, "attempt %d", attempt)
 				assert.LessOrEqual(t, got, hi, "attempt %d", attempt)
 			}
+		}
+	})
+
+	t.Run("stops doubling at the cap", func(t *testing.T) {
+		t.Parallel()
+		// Uncapped, the wait doubles out of the budget: the 250ms base reaches 4s by
+		// attempt 5. The production window says a longer wait recovers no more
+		// requests than a short one, so the cap is what keeps extra attempts cheap.
+		ceiling := time.Duration(float64(openMeteoRetryBackoffCap) * (1 + openMeteoRetryJitter))
+		for attempt := 1; attempt <= 64; attempt++ {
+			got := retryBackoff(attempt)
+			assert.Positive(t, got, "attempt %d: a shift past the width of a Duration must not fire the timer immediately", attempt)
+			assert.LessOrEqual(t, got, ceiling, "attempt %d", attempt)
 		}
 	})
 
@@ -594,6 +610,42 @@ func TestRetryBackoff(t *testing.T) {
 		}
 		assert.Greater(t, len(seen), 1, "jitter must actually vary the wait")
 	})
+}
+
+// TestRetryScheduleFitsTheTightestCaller guards a coupling nothing else reports.
+//
+// The Mini App city search bounds its geocode at 5s (weatherGeoTimeout in the handlers
+// package), and geocode goes through the same get() as the collector. sleepWithContext
+// honours that deadline, so a budget whose waiting alone approaches it stops being a
+// retry for that caller and becomes a slower way to fail a search — with no failing test
+// and no log line to say why. Widening the budget is fine; widening it past this means
+// moving weatherGeoTimeout in the same change.
+func TestRetryScheduleFitsTheTightestCaller(t *testing.T) {
+	t.Parallel()
+
+	// The waits the schedule can produce at their most unlucky, across the whole
+	// budget: one fewer than the attempts, since nothing waits after the last.
+	var scheduled time.Duration
+	for attempt := 1; attempt < openMeteoMaxAttempts; attempt++ {
+		base := min(openMeteoRetryBackoff<<(attempt-1), openMeteoRetryBackoffCap)
+		scheduled += time.Duration(float64(base) * (1 + openMeteoRetryJitter))
+	}
+
+	assert.Less(t, scheduled, openMeteoTightestCallerDeadline/2,
+		"the waits alone claim half the search deadline, leaving nothing for the requests themselves")
+}
+
+// minRetrySchedule is the least time a request that spends the whole budget can
+// have been waiting: every backoff bar the one after the final attempt, each
+// jittered to the bottom of its band. Derived rather than written down so a
+// change to the budget moves the assertion with it.
+func minRetrySchedule() time.Duration {
+	var total time.Duration
+	for attempt := 1; attempt < openMeteoMaxAttempts; attempt++ {
+		base := min(openMeteoRetryBackoff<<(attempt-1), openMeteoRetryBackoffCap)
+		total += time.Duration(float64(base) * (1 - openMeteoRetryJitter))
+	}
+	return total
 }
 
 // loggedDuration pulls the duration captured by pattern out of text and parses it,
