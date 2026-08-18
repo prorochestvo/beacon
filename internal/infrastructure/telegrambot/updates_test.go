@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -96,12 +97,15 @@ func TestTelegramBotClient_Updates(t *testing.T) {
 		}
 	})
 
+	// Not parallel: the marker it reads is written through the standard logger, and
+	// capturing that means swapping a process-wide writer.
+	//
+	//nolint:paralleltest // captureStandardLog swaps the global log writer
 	t.Run("a consumer that stops reading does not pin the poller", func(t *testing.T) {
-		t.Parallel()
 
 		bot, polls := newFakeBotAPI(t)
-		logged := &syncBuffer{}
-		tbot := &TelegramBotClient{bot: bot, logger: logged}
+		logged := captureStandardLog(t)
+		tbot := &TelegramBotClient{bot: bot, logger: io.Discard}
 
 		ctx, cancel := context.WithCancel(t.Context())
 		_ = tbot.Updates(ctx)
@@ -120,6 +124,21 @@ func TestTelegramBotClient_Updates(t *testing.T) {
 			5*time.Second, 10*time.Millisecond,
 			"the poller outlived its context with a consumer that walked away")
 	})
+}
+
+// captureStandardLog redirects the standard logger into a buffer for the duration
+// of the test. The poller writes its lifecycle markers there because that is the
+// sink an operator greps; reading them back is the only way to see the loop exit
+// without receiving from the channel, and receiving is what would let a leaking
+// loop off the hook.
+func captureStandardLog(t *testing.T) *syncBuffer {
+	t.Helper()
+	buf := &syncBuffer{}
+	orig := log.Writer()
+	flags := log.Flags()
+	log.SetOutput(buf)
+	t.Cleanup(func() { log.SetOutput(orig); log.SetFlags(flags) })
+	return buf
 }
 
 // syncBuffer is a writer safe to read while the loop under test is still writing

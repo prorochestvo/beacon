@@ -263,19 +263,17 @@ func (tbot *TelegramBotClient) EditHTMLMessageWithKeyboard(
 func (tbot *TelegramBotClient) Updates(ctx context.Context) <-chan tgbotapi.Update {
 	out := make(chan tgbotapi.Update)
 
-	// The client is handed a logger and, until now, never used it: these two lines
-	// went to the global one instead. Routing them through the field is what lets a
-	// caller — and the test below — see the loop start and stop.
-	logger := tbot.logger
-	if logger == nil {
-		logger = io.Discard
-	}
-
 	go func() {
 		defer close(out)
 
-		fmt.Fprintln(logger, "telegram: bot started listening for updates")
-		defer fmt.Fprintln(logger, "telegram: bot stopped listening for updates")
+		// The standard logger, not tbot.logger, and deliberately so: internal.NewLogger
+		// gives the file handler a base level of Warning and points the standard logger
+		// at it, while every WriterAs(LogLevelInfo) a component is handed reaches the
+		// file only if stdout happens to be redirected there. Under systemd it is not,
+		// so a lifecycle marker written at Info is written nowhere — and these two are
+		// the only evidence that the poller is alive.
+		log.Println("telegram: bot started listening for updates")
+		defer log.Println("telegram: bot stopped listening for updates")
 
 		cfg := tgbotapi.NewUpdate(0)
 		cfg.Timeout = updatePollTimeoutSeconds
