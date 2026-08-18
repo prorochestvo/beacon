@@ -26,6 +26,7 @@ import (
 	"github.com/prorochestvo/dsninjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
+	appdigest "github.com/seilbekskindirov/beacon/internal/application/digest"
 	"github.com/seilbekskindirov/beacon/internal/application/inspector"
 	appprofile "github.com/seilbekskindirov/beacon/internal/application/profile"
 	"github.com/seilbekskindirov/beacon/internal/application/service"
@@ -34,6 +35,7 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/dto"
 	"github.com/seilbekskindirov/beacon/internal/gateway"
 	"github.com/seilbekskindirov/beacon/internal/gateway/middleware"
+	telegramgw "github.com/seilbekskindirov/beacon/internal/gateway/telegram"
 	"github.com/seilbekskindirov/beacon/internal/infrastructure/sqlitedb"
 	integration "github.com/seilbekskindirov/beacon/internal/infrastructure/telegrambot"
 	weatherinfra "github.com/seilbekskindirov/beacon/internal/infrastructure/weather"
@@ -253,9 +255,14 @@ func main() {
 	// other static content. The mux's API routes shadow this catch-all.
 	fileHandler := http.FileServer(httpFsys)
 	mux.Handle("/", hashedassets.Handler(fileHandler, fsSub, indexCache, adminCache, registry))
-	tbotAPI, err := service.NewTelegramApi(tbot, subscriptionRepo, rateValueRepo, sourceRepo, profileRepo, webAppURL)
+	digestSvc := appdigest.NewService(subscriptionRepo, sourceRepo, rateValueRepo, profileRepo, time.Now, l.WriterAs(internal.LogLevelInfo))
+	tbotRouter, err := telegramgw.NewRouter(telegramgw.Config{
+		Bot:       tbot,
+		Digest:    digestSvc,
+		WebAppURL: webAppURL,
+	})
 	if err != nil {
-		log.Fatalf("services: telegram api is failed, %s", err.Error())
+		log.Fatalf("services: telegram router is failed, %s", err.Error())
 		return
 	}
 	log.Println("services: initiated")
@@ -266,8 +273,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// run telegram server (bound to ctx so SIGTERM cancels the bot poll loop)
-	tbotAPI.Run(ctx)
+	// run telegram server (bound to ctx so SIGTERM cancels the bot poll loop).
+	// Run blocks on the update channel, so the goroutine is the caller's here
+	// rather than hidden inside it.
+	go tbotRouter.Run(ctx)
 
 	// run http server. Bind the listener before logging "listening" so the
 	// readiness marker fires only after the kernel has bound the port; otherwise
