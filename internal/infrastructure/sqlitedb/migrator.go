@@ -14,6 +14,14 @@ import (
 	"github.com/prorochestvo/loginjector"
 )
 
+// Migrator runs migrations from one or more migrationSource implementations
+// using a committer (e.g. *SQLiteClient) to execute each statement in a transaction.
+type Migrator struct {
+	db      committer
+	items   []migration
+	applied int
+}
+
 // NewMigrator creates a Migrator that will apply all .sql files from fsys
 // (read via fs.ReadDir(fsys, ".")) followed by any migrations returned by the
 // optional sources. Call Run to execute pending migrations.
@@ -73,14 +81,6 @@ func NewMigrator(db committer, fsys fs.FS, sources ...source) (*Migrator, error)
 	})
 
 	return &Migrator{db: db, items: items}, nil
-}
-
-// Migrator runs migrations from one or more migrationSource implementations
-// using a committer (e.g. *SQLiteClient) to execute each statement in a transaction.
-type Migrator struct {
-	db      committer
-	items   []migration
-	applied int
 }
 
 // Run executes all pending migration statements from every source in order.

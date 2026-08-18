@@ -15,6 +15,21 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/tools/rateextractor"
 )
 
+// RateAgent fetches rates for all active sources that are due, persisting results
+// and execution history. It is designed to run to completion on each invocation.
+//
+// The chromedp slot uses a separate interface so a tick with multiple
+// chromedp-kind sources can share one Chromium subprocess (RunBatch), while
+// plain HTTP sources keep their per-source Run path.
+type RateAgent struct {
+	rateValueRepository        rateValueRepository
+	rateSourceRepository       rateSourceRepository
+	executionHistoryRepository executionHistoryRepository
+	plainExtractor             rateExtractor
+	chromedpExtractor          chromedpBatchExtractor
+	logger                     io.Writer
+}
+
 // NewRateAgent constructs a RateAgent. proxyURL says a proxy is available; it does not
 // route anything on its own — the plain extractor builds a proxied client alongside the
 // direct one and a source reaches it only via options.use_proxy.
@@ -55,21 +70,6 @@ func NewRateAgent(
 	}
 
 	return a, nil
-}
-
-// RateAgent fetches rates for all active sources that are due, persisting results
-// and execution history. It is designed to run to completion on each invocation.
-//
-// The chromedp slot uses a separate interface so a tick with multiple
-// chromedp-kind sources can share one Chromium subprocess (RunBatch), while
-// plain HTTP sources keep their per-source Run path.
-type RateAgent struct {
-	rateValueRepository        rateValueRepository
-	rateSourceRepository       rateSourceRepository
-	executionHistoryRepository executionHistoryRepository
-	plainExtractor             rateExtractor
-	chromedpExtractor          chromedpBatchExtractor
-	logger                     io.Writer
 }
 
 // Run fetches all active, due rate sources and stores the results.

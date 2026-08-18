@@ -141,6 +141,21 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
+// TestBotHTTPTimeoutOutlastsThePoll guards a coupling that fails silently in one
+// direction only.
+//
+// The bot's HTTP client serves every Bot API call, getUpdates included, and that
+// one holds a connection open for updatePollTimeoutSeconds on purpose. A client
+// deadline at or below the hold turns every long poll into a timeout: the bot
+// stops receiving anything, retries, times out again, and the log shows only
+// transport errors.
+func TestBotHTTPTimeoutOutlastsThePoll(t *testing.T) {
+	t.Parallel()
+
+	assert.Greater(t, botHTTPTimeout, time.Duration(updatePollTimeoutSeconds)*time.Second,
+		"the client deadline must outlast the poll hold, or getUpdates can never return normally")
+}
+
 // TestTelegramBotClient_UpdatePollTimeout keeps the long-poll hold time honest:
 // it is the one number that decides how often an idle bot talks to Telegram.
 func TestTelegramBotClient_UpdatePollTimeout(t *testing.T) {

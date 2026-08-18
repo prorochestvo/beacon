@@ -12,15 +12,15 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
-// NewRateUserProfileRepository returns a repository for the rate_user_profiles table.
-func NewRateUserProfileRepository(db db) (*RateUserProfileRepository, error) {
-	return &RateUserProfileRepository{db: db}, nil
-}
-
 // RateUserProfileRepository persists and retrieves domain.RateUserProfile records.
 // Identity is composite (user_type, user_id); there is no surrogate ID.
 type RateUserProfileRepository struct {
 	db db
+}
+
+// NewRateUserProfileRepository returns a repository for the rate_user_profiles table.
+func NewRateUserProfileRepository(db db) (*RateUserProfileRepository, error) {
+	return &RateUserProfileRepository{db: db}, nil
 }
 
 // Name returns the name of the underlying database table.

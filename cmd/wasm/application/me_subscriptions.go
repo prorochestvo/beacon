@@ -86,6 +86,20 @@ type MeSubscriptionsState struct {
 	KnownSources map[string]struct{}
 }
 
+// MeSubscriptionsPage is the page controller for the Telegram Mini App
+// subscriptions screen. Pure Go, no syscall/js dependencies, testable under
+// the host toolchain via make test.
+//
+// Concurrency note: Go-WASM runs on a single OS thread, so state mutations
+// within a single goroutine are safe without a mutex. If the project ever
+// moves to multi-threaded WASM, add a sync.Mutex around state reads/writes.
+type MeSubscriptionsPage struct {
+	client   *apiclient.Client
+	initData string
+	pageSize int
+	state    MeSubscriptionsState
+}
+
 // NewMeSubscriptionsPage constructs a controller. initData is the Telegram
 // WebApp initData string read once at WASM boot from window.Telegram.WebApp;
 // it is forwarded unchanged on every MeSubscriptions call.
@@ -102,20 +116,6 @@ func NewMeSubscriptionsPage(client *apiclient.Client, initData string, pageSize 
 			Period: PublicChartDefaultPeriod,
 		},
 	}
-}
-
-// MeSubscriptionsPage is the page controller for the Telegram Mini App
-// subscriptions screen. Pure Go, no syscall/js dependencies, testable under
-// the host toolchain via make test.
-//
-// Concurrency note: Go-WASM runs on a single OS thread, so state mutations
-// within a single goroutine are safe without a mutex. If the project ever
-// moves to multi-threaded WASM, add a sync.Mutex around state reads/writes.
-type MeSubscriptionsPage struct {
-	client   *apiclient.Client
-	initData string
-	pageSize int
-	state    MeSubscriptionsState
 }
 
 // State returns a snapshot of the current controller state. The caller must

@@ -9,11 +9,6 @@ import (
 	"github.com/prorochestvo/loginjector"
 )
 
-// NewRateSourceHealthRepository returns a repository for the rate_source_health table.
-func NewRateSourceHealthRepository(db db) (*RateSourceHealthRepository, error) {
-	return &RateSourceHealthRepository{db: db}, nil
-}
-
 // RateSourceHealthRepository stores which sources have already been alerted about.
 //
 // It holds a latch, not a measurement: whether a source is healthy is derived from
@@ -21,6 +16,11 @@ func NewRateSourceHealthRepository(db db) (*RateSourceHealthRepository, error) {
 // outage has already been announced.
 type RateSourceHealthRepository struct {
 	db db
+}
+
+// NewRateSourceHealthRepository returns a repository for the rate_source_health table.
+func NewRateSourceHealthRepository(db db) (*RateSourceHealthRepository, error) {
+	return &RateSourceHealthRepository{db: db}, nil
 }
 
 // Name returns the name of the underlying database table.

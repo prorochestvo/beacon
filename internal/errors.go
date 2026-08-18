@@ -32,17 +32,17 @@ var ErrNotFound = errors.New("not found")
 // Wrap the return of a load that precedes the work, not an error from inside the loop.
 var ErrAgentAborted = errors.New("agent aborted before doing any work")
 
+// PublicError represents an error with user-facing details.
+// It is intended for errors that can be safely shown to end users.
+type PublicError struct {
+	details string
+}
+
 // NewPublicError creates a new PublicError with the given details.
 // Multiple detail strings are joined with spaces to form the error message.
 func NewPublicError(details ...string) *PublicError {
 	d := strings.Join(details, " ")
 	return &PublicError{details: d}
-}
-
-// PublicError represents an error with user-facing details.
-// It is intended for errors that can be safely shown to end users.
-type PublicError struct {
-	details string
 }
 
 // Details returns the user-facing error details.

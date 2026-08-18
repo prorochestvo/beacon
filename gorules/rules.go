@@ -55,10 +55,16 @@ func stringConcatInLoop(m dsl.Matcher) {
 
 // httpClientWithoutTimeout catches the client that waits forever.
 func httpClientWithoutTimeout(m dsl.Matcher) {
+	// Only the shapes that provably carry no Timeout. The list used to end with
+	// `http.Client{Transport: $_, $*_}`, which matches any client whose first
+	// field is Transport — Timeout set or not — so it reported correct code, and
+	// a rule that reports correct code teaches the reader to reach for nolint.
+	// Ruleguard cannot express "this field is absent", so the price of never
+	// crying wolf is staying quiet on a client that sets Transport plus some
+	// third field and no Timeout.
 	m.Match(
 		`http.Client{}`,
 		`http.Client{Transport: $_}`,
-		`http.Client{Transport: $_, $*_}`,
 	).
 		Where(!m.File().Name.Matches(`_test\.go$`)).
 		Report(`http.Client without Timeout blocks forever on a stalled peer: set Timeout explicitly`)

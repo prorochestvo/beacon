@@ -16,14 +16,14 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain/identity"
 )
 
-// NewRateUserEventRepository returns a repository for the rate_user_events table.
-func NewRateUserEventRepository(db db) (*RateUserEventRepository, error) {
-	return &RateUserEventRepository{db: db}, nil
-}
-
 // RateUserEventRepository persists and retrieves domain.RateUserEvent notification records.
 type RateUserEventRepository struct {
 	db db
+}
+
+// NewRateUserEventRepository returns a repository for the rate_user_events table.
+func NewRateUserEventRepository(db db) (*RateUserEventRepository, error) {
+	return &RateUserEventRepository{db: db}, nil
 }
 
 // Name returns the name of the underlying database table.

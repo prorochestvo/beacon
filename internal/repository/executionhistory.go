@@ -14,14 +14,14 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain/identity"
 )
 
-// NewExecutionHistoryRepository returns a repository for the execution_history table.
-func NewExecutionHistoryRepository(db db) (*ExecutionHistoryRepository, error) {
-	return &ExecutionHistoryRepository{db: db}, nil
-}
-
 // ExecutionHistoryRepository persists and retrieves domain.ExecutionHistory records.
 type ExecutionHistoryRepository struct {
 	db db
+}
+
+// NewExecutionHistoryRepository returns a repository for the execution_history table.
+func NewExecutionHistoryRepository(db db) (*ExecutionHistoryRepository, error) {
+	return &ExecutionHistoryRepository{db: db}, nil
 }
 
 // Name returns the name of the underlying database table.

@@ -51,6 +51,14 @@ type WeatherCitiesState struct {
 	AlertSaveError error
 }
 
+// MeWeatherCitiesPage is the page controller for the city weather subscription
+// screen. Pure Go, no syscall/js dependencies, testable under the host toolchain.
+type MeWeatherCitiesPage struct {
+	client   *apiclient.Client
+	initData string
+	state    WeatherCitiesState
+}
+
 // NewMeWeatherCitiesPage constructs a controller. initData is forwarded
 // unchanged on every authenticated API call.
 func NewMeWeatherCitiesPage(client *apiclient.Client, initData string) *MeWeatherCitiesPage {
@@ -58,14 +66,6 @@ func NewMeWeatherCitiesPage(client *apiclient.Client, initData string) *MeWeathe
 		client:   client,
 		initData: initData,
 	}
-}
-
-// MeWeatherCitiesPage is the page controller for the city weather subscription
-// screen. Pure Go, no syscall/js dependencies, testable under the host toolchain.
-type MeWeatherCitiesPage struct {
-	client   *apiclient.Client
-	initData string
-	state    WeatherCitiesState
 }
 
 // State returns a snapshot of the current controller state.

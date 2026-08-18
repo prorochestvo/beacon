@@ -34,6 +34,37 @@ const (
 	DefaultSourceStaleFloor = 3 * time.Hour
 )
 
+// SourceHealthAgent tells the operator when a rate source has stopped producing data, and
+// when it starts again.
+//
+// A source could previously fail on every run for weeks in complete silence: the per-run
+// tombstone that stops one dead source from burning the whole collection run also stopped
+// anyone from hearing about it, and the only way to find out was to grep the collector log
+// by hand. For a service whose entire purpose is monitoring, silently losing an input is
+// the worst available failure mode.
+//
+// Health is measured as **silence**, not as a failure count. A source that runs and fails
+// writes failure rows, and a counter would catch it — but a source that stops being
+// attempted at all writes nothing, so its counter stays at zero while it is exactly as
+// dead. Time since the last success catches both. The failure count still rides in the
+// message, where it is what separates "failing loudly" from "no longer running".
+//
+// Alerts are edge-triggered through rate_source_health, the same shape the weather
+// subscriptions use: one message when a source goes bad, one when it comes back, nothing
+// in between. Repeating the alert every run would replace an unnoticed silence with an
+// ignored alarm, which is not an improvement.
+type SourceHealthAgent struct {
+	sourceRepo  sourceHealthSourceRepository
+	historyRepo sourceHealthHistoryRepository
+	healthRepo  sourceHealthStateRepository
+	eventRepo   rateCheckEventRepository
+	adminChatID int64
+	staleFactor int
+	staleFloor  time.Duration
+	now         func() time.Time
+	logger      io.Writer
+}
+
 // NewSourceHealthAgent constructs a SourceHealthAgent. All repositories are required;
 // staleFactor and staleFloor fall back to the defaults when not positive.
 func NewSourceHealthAgent(
@@ -74,37 +105,6 @@ func NewSourceHealthAgent(
 		now:         time.Now,
 		logger:      logger,
 	}, nil
-}
-
-// SourceHealthAgent tells the operator when a rate source has stopped producing data, and
-// when it starts again.
-//
-// A source could previously fail on every run for weeks in complete silence: the per-run
-// tombstone that stops one dead source from burning the whole collection run also stopped
-// anyone from hearing about it, and the only way to find out was to grep the collector log
-// by hand. For a service whose entire purpose is monitoring, silently losing an input is
-// the worst available failure mode.
-//
-// Health is measured as **silence**, not as a failure count. A source that runs and fails
-// writes failure rows, and a counter would catch it — but a source that stops being
-// attempted at all writes nothing, so its counter stays at zero while it is exactly as
-// dead. Time since the last success catches both. The failure count still rides in the
-// message, where it is what separates "failing loudly" from "no longer running".
-//
-// Alerts are edge-triggered through rate_source_health, the same shape the weather
-// subscriptions use: one message when a source goes bad, one when it comes back, nothing
-// in between. Repeating the alert every run would replace an unnoticed silence with an
-// ignored alarm, which is not an improvement.
-type SourceHealthAgent struct {
-	sourceRepo  sourceHealthSourceRepository
-	historyRepo sourceHealthHistoryRepository
-	healthRepo  sourceHealthStateRepository
-	eventRepo   rateCheckEventRepository
-	adminChatID int64
-	staleFactor int
-	staleFloor  time.Duration
-	now         func() time.Time
-	logger      io.Writer
 }
 
 // Run evaluates every active source and queues a message for each transition.

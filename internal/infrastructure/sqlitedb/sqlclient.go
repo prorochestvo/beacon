@@ -16,37 +16,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// NewSQLiteClient opens a SQLite database at the path encoded in sqlDSN,
-// applies WAL mode and foreign-key PRAGMAs, sets the connection pool to seven
-// connections, and sets a one-minute query timeout.
-// Close must be called on the returned client when it is no longer needed.
-//
-// PRAGMA foreign_keys and busy_timeout are appended to the DSN as
-// ?_pragma= query parameters so the modernc.org/sqlite driver re-applies
-// them on every new connection the pool opens. PRAGMA journal_mode=WAL is
-// persisted in the database file header and is set via db.Exec inside
-// NewSQLiteClientEx.
-func NewSQLiteClient(sqlDSN dsninjector.DataSource, logger io.Writer) (*SQLiteClient, error) {
-	db, err := sql.Open("sqlite", connectionOptions(sqlDSN.Database()))
-	if err != nil {
-		err = fmt.Errorf("open sqlite: %w", err)
-		err = errors.Join(err, loginjector.NewTraceError())
-		return nil, err
-	}
-
-	db.SetMaxOpenConns(7)
-
-	c, err := NewSQLiteClientEx(db, logger)
-	if err != nil {
-		err = errors.Join(err, db.Close())
-		err = errors.Join(err, fmt.Errorf("initialize sqlite client: %w", err))
-		err = errors.Join(err, loginjector.NewTraceError())
-		return nil, err
-	}
-
-	c.Timeout = time.Minute
-
-	return c, nil
+// SQLiteClient wraps a *sql.DB and provides a managed SQLite connection.
+type SQLiteClient struct {
+	db      *sql.DB
+	logger  io.Writer
+	Timeout time.Duration
 }
 
 // NewSQLiteClientEx initialises a SQLiteClient from an already-open *sql.DB
@@ -95,11 +69,37 @@ func NewSQLiteClientEx(db *sql.DB, logger io.Writer) (*SQLiteClient, error) {
 	}, nil
 }
 
-// SQLiteClient wraps a *sql.DB and provides a managed SQLite connection.
-type SQLiteClient struct {
-	db      *sql.DB
-	logger  io.Writer
-	Timeout time.Duration
+// NewSQLiteClient opens a SQLite database at the path encoded in sqlDSN,
+// applies WAL mode and foreign-key PRAGMAs, sets the connection pool to seven
+// connections, and sets a one-minute query timeout.
+// Close must be called on the returned client when it is no longer needed.
+//
+// PRAGMA foreign_keys and busy_timeout are appended to the DSN as
+// ?_pragma= query parameters so the modernc.org/sqlite driver re-applies
+// them on every new connection the pool opens. PRAGMA journal_mode=WAL is
+// persisted in the database file header and is set via db.Exec inside
+// NewSQLiteClientEx.
+func NewSQLiteClient(sqlDSN dsninjector.DataSource, logger io.Writer) (*SQLiteClient, error) {
+	db, err := sql.Open("sqlite", connectionOptions(sqlDSN.Database()))
+	if err != nil {
+		err = fmt.Errorf("open sqlite: %w", err)
+		err = errors.Join(err, loginjector.NewTraceError())
+		return nil, err
+	}
+
+	db.SetMaxOpenConns(7)
+
+	c, err := NewSQLiteClientEx(db, logger)
+	if err != nil {
+		err = errors.Join(err, db.Close())
+		err = errors.Join(err, fmt.Errorf("initialize sqlite client: %w", err))
+		err = errors.Join(err, loginjector.NewTraceError())
+		return nil, err
+	}
+
+	c.Timeout = time.Minute
+
+	return c, nil
 }
 
 // Ping verifies the database connection is still alive.

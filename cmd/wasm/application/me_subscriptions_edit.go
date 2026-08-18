@@ -108,20 +108,6 @@ type MeSubscriptionDraft struct {
 	ConditionValue string
 }
 
-// NewMeSubscriptionsEditPage constructs a controller. initData is the Telegram
-// WebApp initData string forwarded unchanged on every authenticated call.
-// The default view is the list (EditViewList).
-func NewMeSubscriptionsEditPage(client *apiclient.Client, initData string) *MeSubscriptionsEditPage {
-	return &MeSubscriptionsEditPage{
-		client:   client,
-		initData: initData,
-		state: MeSubscriptionsEditState{
-			ActiveView: EditViewList,
-			ListPage:   1,
-		},
-	}
-}
-
 // MeSubscriptionsEditPage is the page controller for the subscription editor
 // screen. Pure Go, no syscall/js dependencies, testable under the host
 // toolchain via make test.
@@ -134,6 +120,20 @@ type MeSubscriptionsEditPage struct {
 	client   *apiclient.Client
 	initData string
 	state    MeSubscriptionsEditState
+}
+
+// NewMeSubscriptionsEditPage constructs a controller. initData is the Telegram
+// WebApp initData string forwarded unchanged on every authenticated call.
+// The default view is the list (EditViewList).
+func NewMeSubscriptionsEditPage(client *apiclient.Client, initData string) *MeSubscriptionsEditPage {
+	return &MeSubscriptionsEditPage{
+		client:   client,
+		initData: initData,
+		state: MeSubscriptionsEditState{
+			ActiveView: EditViewList,
+			ListPage:   1,
+		},
+	}
 }
 
 // State returns a snapshot of the current controller state.

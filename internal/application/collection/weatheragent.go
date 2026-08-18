@@ -17,6 +17,18 @@ import (
 // by notification time. Pass this to NewWeatherAgent instead of a bare 0.
 const DefaultWeatherThrottleInterval = time.Hour
 
+// WeatherAgent collects weather observations from Open-Meteo for all distinct
+// subscribed locations and persists them. Each Run invocation is one-shot; it is
+// called once per cron tick from cmd/collector. Per-location throttling ensures
+// frequent cron ticks do not hammer the external API.
+type WeatherAgent struct {
+	provider         weatherForecastProvider
+	cityRepo         weatherCollectionCityRepo
+	obsRepo          weatherCollectionObsRepo
+	throttleInterval time.Duration
+	logger           io.Writer
+}
+
 // NewWeatherAgent constructs a WeatherAgent. provider, cityRepo, and obsRepo are
 // required. throttleInterval controls the minimum elapsed time between Open-Meteo
 // fetches for the same location; pass 0 to use DefaultWeatherThrottleInterval.
@@ -43,18 +55,6 @@ func NewWeatherAgent(
 		throttleInterval: throttleInterval,
 		logger:           logger,
 	}, nil
-}
-
-// WeatherAgent collects weather observations from Open-Meteo for all distinct
-// subscribed locations and persists them. Each Run invocation is one-shot; it is
-// called once per cron tick from cmd/collector. Per-location throttling ensures
-// frequent cron ticks do not hammer the external API.
-type WeatherAgent struct {
-	provider         weatherForecastProvider
-	cityRepo         weatherCollectionCityRepo
-	obsRepo          weatherCollectionObsRepo
-	throttleInterval time.Duration
-	logger           io.Writer
 }
 
 // Run loads all distinct subscribed locations, skips those with a recent Open-Meteo

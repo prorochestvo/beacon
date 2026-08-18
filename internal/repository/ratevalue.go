@@ -14,14 +14,14 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain/identity"
 )
 
-// NewRateValueRepository returns a repository for the rate_values table.
-func NewRateValueRepository(db db) (*RateValueRepository, error) {
-	return &RateValueRepository{db: db}, nil
-}
-
 // RateValueRepository persists and retrieves domain.RateValue records from the rate_values table.
 type RateValueRepository struct {
 	db db
+}
+
+// NewRateValueRepository returns a repository for the rate_values table.
+func NewRateValueRepository(db db) (*RateValueRepository, error) {
+	return &RateValueRepository{db: db}, nil
 }
 
 // Name returns the name of the underlying database table.

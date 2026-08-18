@@ -64,6 +64,26 @@ type Config struct {
 	Logger *log.Logger
 }
 
+// Handler groups all v1 HTTP handlers and their repository dependencies.
+type Handler struct {
+	rateService
+	meSubSvc      meSubscriptionService
+	meProfileSvc  meProfileService
+	meChartSvc    meChartService
+	healthAgent   healthCheckAgent
+	serverVersion string
+	serverStart   time.Time
+
+	// Weather endpoints. NewHandler rejects a Config leaving either of these nil,
+	// so the handlers below may use them without a wiring check.
+	meWeatherSvc    meWeatherService
+	weatherGeocoder weatherGeocoder
+
+	// logger receives the detail behind a 500 (see internalError). Ordinary
+	// wiring from Config.Logger, defaulted to log.Default() by NewHandler.
+	logger *log.Logger
+}
+
 // NewHandler constructs a Handler from cfg, or reports every required
 // dependency cfg left nil. The Handler it returns is finished: nothing has to
 // be attached to it afterwards before it can serve.
@@ -107,26 +127,6 @@ func NewHandler(cfg Config) (*Handler, error) {
 		weatherGeocoder: cfg.WeatherGeocoder,
 		logger:          logger,
 	}, nil
-}
-
-// Handler groups all v1 HTTP handlers and their repository dependencies.
-type Handler struct {
-	rateService
-	meSubSvc      meSubscriptionService
-	meProfileSvc  meProfileService
-	meChartSvc    meChartService
-	healthAgent   healthCheckAgent
-	serverVersion string
-	serverStart   time.Time
-
-	// Weather endpoints. NewHandler rejects a Config leaving either of these nil,
-	// so the handlers below may use them without a wiring check.
-	meWeatherSvc    meWeatherService
-	weatherGeocoder weatherGeocoder
-
-	// logger receives the detail behind a 500 (see internalError). Ordinary
-	// wiring from Config.Logger, defaulted to log.Default() by NewHandler.
-	logger *log.Logger
 }
 
 // Ping is the liveness probe: it always returns 200 and touches no dependency.
