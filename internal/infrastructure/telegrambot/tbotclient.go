@@ -299,6 +299,7 @@ func NewTBotClient(tbotDSN dsninjector.DataSource, logger io.Writer) (*TelegramB
 	// always direct and never flows through any process-wide proxy, even if
 	// HTTPS_PROXY or HTTP_PROXY is set in the environment.
 	noProxyTransport := &http.Transport{
+		//nolint:nilnil // (nil, nil) is http.Transport.Proxy's own contract for "no proxy"
 		Proxy: func(*http.Request) (*url.URL, error) { return nil, nil },
 	}
 	directClient := &http.Client{Transport: noProxyTransport}

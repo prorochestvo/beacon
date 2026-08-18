@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"time"
 
@@ -443,7 +442,7 @@ func rateUserSubscriptionQueryContext(tx *sql.Tx, ctx context.Context, condition
 		err = errors.Join(err, loginjector.NewTraceError())
 		return
 	}
-	defer func(rows io.Closer) { err = errors.Join(err, rows.Close()) }(rows)
+	defer func() { err = errors.Join(err, rows.Close()) }()
 
 	items = make([]domain.RateUserSubscription, 0, count)
 
@@ -507,6 +506,7 @@ func rateUserSubscriptionQueryRowContext(tx *sql.Tx, ctx context.Context, condit
 		&createdAt,
 	)
 	if err != nil && errors.Is(err, sql.ErrNoRows) {
+		//nolint:nilnil // (nil, nil) for "no such row" is this layer's contract, relied on by every caller
 		return nil, nil
 	} else if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))

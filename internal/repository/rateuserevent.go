@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"math"
 	"strings"
@@ -551,7 +550,7 @@ func rateUserEventQueryContext(tx *sql.Tx, ctx context.Context, condition string
 		err = errors.Join(err, loginjector.NewTraceError())
 		return
 	}
-	defer func(rows io.Closer) { err = errors.Join(err, rows.Close()) }(rows)
+	defer func() { err = errors.Join(err, rows.Close()) }()
 
 	items = make([]domain.RateUserEvent, 0, count)
 
@@ -623,6 +622,7 @@ func rateUserEventQueryRowContext(tx *sql.Tx, ctx context.Context, condition str
 		&sentAt,
 	)
 	if err != nil && errors.Is(err, sql.ErrNoRows) {
+		//nolint:nilnil // (nil, nil) for "no such row" is this layer's contract, relied on by every caller
 		return nil, nil
 	} else if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))

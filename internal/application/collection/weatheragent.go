@@ -93,6 +93,7 @@ func (a *WeatherAgent) Run(ctx context.Context) error {
 		// Persist under context.Background() so a SIGTERM does not discard a
 		// successfully fetched observation. The collector is one-shot; dropping the
 		// row here would force the next tick to re-fetch everything that completed.
+		//nolint:contextcheck // the detached context is the point; see the comment above
 		if retainErr := a.obsRepo.RetainWeatherObservation(context.Background(), obs); retainErr != nil {
 			failed++
 			fmt.Fprintf(a.logger, "weather collection: location %s: retain error: %v\n", loc.LocationID, retainErr)

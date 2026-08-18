@@ -417,12 +417,9 @@ func (p *MeSubscriptionsEditPage) SaveDraft(ctx context.Context) error {
 // UpdateRow updates the condition fields of an existing subscription and
 // reloads the list on success. FormError is populated on failure.
 func (p *MeSubscriptionsEditPage) UpdateRow(ctx context.Context, id, conditionType, conditionValue string) error {
-	draft := MeSubscriptionDraft{
-		SourceName:     "",
-		ConditionType:  conditionType,
-		ConditionValue: conditionValue,
-	}
-	if err := validateCondition(draft.ConditionType, draft.ConditionValue); err != nil {
+	// The draft struct this used to build was read for two of its fields and
+	// discarded; the request below already takes the parameters directly.
+	if err := validateCondition(conditionType, conditionValue); err != nil {
 		p.state.FormError = err
 		return err
 	}

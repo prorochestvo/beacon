@@ -104,9 +104,9 @@ func TestRateRepository_RetainRateValue(t *testing.T) {
 	t.Run("nil record returns error", func(t *testing.T) {
 		t.Parallel()
 
-		err := r.RetainRateValue(t.Context(), nil)
-		require.Error(t, err)
-		require.ErrorContains(t, err, "nil")
+		retainErr := r.RetainRateValue(t.Context(), nil)
+		require.Error(t, retainErr)
+		require.ErrorContains(t, retainErr, "nil")
 	})
 	t.Run("insert", func(t *testing.T) {
 		t.Parallel()
@@ -130,7 +130,7 @@ func TestRateRepository_RetainRateValue(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow("SELECT COUNT(*) FROM"+" "+rateValueTableName+" WHERE "+rateValueIdFieldName+" = ?", rate.ID).Scan(&count))
+		require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM"+" "+rateValueTableName+" WHERE "+rateValueIdFieldName+" = ?", rate.ID).Scan(&count))
 		require.Equal(t, 1, count)
 	})
 	t.Run("update", func(t *testing.T) {
@@ -160,12 +160,12 @@ func TestRateRepository_RetainRateValue(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow("SELECT COUNT(*) FROM"+" "+rateValueTableName+" WHERE "+rateValueIdFieldName+" = ?", rate.ID).Scan(&count))
+		require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM"+" "+rateValueTableName+" WHERE "+rateValueIdFieldName+" = ?", rate.ID).Scan(&count))
 		require.NoError(t, err)
 		require.Equal(t, 1, count)
 
 		var value float64
-		require.NoError(t, tx.QueryRow("SELECT "+rateValuePriceFieldName+" FROM"+" "+rateValueTableName+" WHERE "+rateValueIdFieldName+" = ?", rate.ID).Scan(&value))
+		require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT "+rateValuePriceFieldName+" FROM"+" "+rateValueTableName+" WHERE "+rateValueIdFieldName+" = ?", rate.ID).Scan(&value))
 		require.NoError(t, err)
 		require.Equal(t, 9.99, value)
 	})
@@ -181,9 +181,9 @@ func TestRateRepository_RemoveRateValue(t *testing.T) {
 	t.Run("nil record returns error", func(t *testing.T) {
 		t.Parallel()
 
-		err := r.RemoveRateValue(t.Context(), nil)
-		require.Error(t, err)
-		require.ErrorContains(t, err, "nil")
+		removeErr := r.RemoveRateValue(t.Context(), nil)
+		require.Error(t, removeErr)
+		require.ErrorContains(t, removeErr, "nil")
 	})
 	t.Run("delete", func(t *testing.T) {
 		t.Parallel()
@@ -210,7 +210,7 @@ func TestRateRepository_RemoveRateValue(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow("SELECT COUNT(*) FROM"+" "+rateValueTableName+" WHERE "+rateValueIdFieldName+" = ?", rate.ID).Scan(&count))
+		require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM"+" "+rateValueTableName+" WHERE "+rateValueIdFieldName+" = ?", rate.ID).Scan(&count))
 		require.Equal(t, 0, count)
 	})
 }

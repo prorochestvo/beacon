@@ -55,7 +55,7 @@ func TestNewMigrator(t *testing.T) {
 		defer func() { _ = tx.Rollback() }()
 
 		var count int
-		require.NoError(t, tx.QueryRow("SELECT COUNT(*) FROM"+" custom_test;").Scan(&count))
+		require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM"+" custom_test;").Scan(&count))
 		require.Equal(t, 0, count)
 	})
 	t.Run("source returning error propagates", func(t *testing.T) {
@@ -104,7 +104,7 @@ func TestMigrator_Run(t *testing.T) {
 		defer func() { _ = tx.Rollback() }()
 
 		var count int
-		require.NoError(t, tx.QueryRow("SELECT COUNT(*) FROM"+" "+migrationTableName+";").Scan(&count))
+		require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM"+" "+migrationTableName+";").Scan(&count))
 		require.GreaterOrEqual(t, count, 1)
 	})
 	t.Run("idempotent on second run", func(t *testing.T) {
@@ -185,7 +185,7 @@ func TestMigrator_Run(t *testing.T) {
 
 		tx, txErr := c.Transaction(t.Context())
 		require.NoError(t, txErr)
-		_, txErr = tx.Exec("DROP TABLE" + " " + migrationTableName)
+		_, txErr = tx.ExecContext(t.Context(), "DROP TABLE"+" "+migrationTableName)
 		require.NoError(t, txErr)
 		require.NoError(t, tx.Commit())
 
@@ -255,6 +255,7 @@ func (s *stubMigrationSource) Migration() (map[string]string, error) {
 type nilTxCommitter struct{}
 
 func (n *nilTxCommitter) Transaction(_ context.Context) (*sql.Tx, error) {
+	//nolint:nilnil // returning both nil is the defect this double exists to simulate
 	return nil, nil
 }
 
@@ -285,7 +286,7 @@ func TestMigrator_Verify(t *testing.T) {
 		// from an older snapshot, or one a stale DSN pointed the migrator away from.
 		tx, err := c.Transaction(t.Context())
 		require.NoError(t, err)
-		_, err = tx.Exec("DELETE FROM " + migrationTableName + " WHERE filename = 'stub_init.sql';")
+		_, err = tx.ExecContext(t.Context(), "DELETE FROM "+migrationTableName+" WHERE filename = 'stub_init.sql';")
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 
@@ -329,7 +330,7 @@ func TestMigrator_Verify(t *testing.T) {
 
 		tx, err := c.Transaction(t.Context())
 		require.NoError(t, err)
-		_, err = tx.Exec("DELETE FROM " + migrationTableName + " WHERE filename = '001_real.sql';")
+		_, err = tx.ExecContext(t.Context(), "DELETE FROM "+migrationTableName+" WHERE filename = '001_real.sql';")
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 
@@ -363,7 +364,7 @@ func TestMigrator_Verify(t *testing.T) {
 
 		tx, err := c.Transaction(t.Context())
 		require.NoError(t, err)
-		_, err = tx.Exec("DROP TABLE " + migrationTableName + ";")
+		_, err = tx.ExecContext(t.Context(), "DROP TABLE "+migrationTableName+";")
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 

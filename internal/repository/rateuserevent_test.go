@@ -350,14 +350,14 @@ func TestRateUserEventRepository_RetainRateUserEventRepository(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM"+" "+rateUserEventTableName+
 				" WHERE "+rateUserEventUserTypeFieldName+" = ?"+
 				" AND "+rateUserEventUserIdFieldName+" = ?",
 			rue.UserType, rue.UserID,
 		).Scan(&count))
 		require.Equal(t, 1, count)
-		require.NoError(t, tx.QueryRow("SELECT COUNT(*) FROM"+" "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?", rue.ID).Scan(&count))
+		require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM"+" "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?", rue.ID).Scan(&count))
 		require.Equal(t, 1, count)
 	})
 	t.Run("idempotent", func(t *testing.T) {
@@ -382,14 +382,14 @@ func TestRateUserEventRepository_RetainRateUserEventRepository(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM"+" "+rateUserEventTableName+
 				" WHERE "+rateUserEventUserTypeFieldName+" = ?"+
 				" AND "+rateUserEventUserIdFieldName+" = ?",
 			rue.UserType, rue.UserID,
 		).Scan(&count))
 		require.Equal(t, 1, count)
-		require.NoError(t, tx.QueryRow("SELECT COUNT(*) FROM"+" "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?", rue.ID).Scan(&count))
+		require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM"+" "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?", rue.ID).Scan(&count))
 		require.Equal(t, 1, count)
 	})
 	t.Run("send time round-trips", func(t *testing.T) {
@@ -449,14 +449,14 @@ func TestRateUserEventRepository_RemoveRateUserEventRepository(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM"+" "+rateUserEventTableName+
 				" WHERE "+rateUserEventUserTypeFieldName+" = ?"+
 				" AND "+rateUserEventUserIdFieldName+" = ?",
 			rue.UserType, rue.UserID,
 		).Scan(&count))
 		require.Equal(t, 0, count)
-		require.NoError(t, tx.QueryRow("SELECT COUNT(*) FROM"+" "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?", rue.ID).Scan(&count))
+		require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM"+" "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?", rue.ID).Scan(&count))
 		require.Equal(t, 0, count)
 	})
 }
@@ -685,7 +685,7 @@ func TestRateUserEventRepository_RemoveRateUserEventOlderThan(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?",
 			event.ID,
 		).Scan(&count))
@@ -714,7 +714,7 @@ func TestRateUserEventRepository_RemoveRateUserEventOlderThan(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?",
 			event.ID,
 		).Scan(&count))
@@ -742,7 +742,7 @@ func TestRateUserEventRepository_RemoveRateUserEventOlderThan(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?",
 			event.ID,
 		).Scan(&count))
@@ -771,7 +771,7 @@ func TestRateUserEventRepository_RemoveRateUserEventOlderThan(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?",
 			event.ID,
 		).Scan(&count))

@@ -73,7 +73,7 @@ func TestSourceRepository_RetainSource(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM"+" "+rateSourceTableName+
 				" WHERE "+rateSourceNameFieldName+" = ?",
 			src.Name,
@@ -103,7 +103,7 @@ func TestSourceRepository_RetainSource(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var url, interval string
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT "+rateSourceURLFieldName+", "+reteSourceIntervalFieldName+
 				" FROM "+rateSourceTableName+" WHERE "+rateSourceNameFieldName+" = ?",
 			src.Name,
@@ -353,7 +353,7 @@ func TestSourceRepository_RemoveSource(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM"+" "+rateSourceTableName+
 				" WHERE "+rateSourceNameFieldName+" = ?",
 			src.Name,
@@ -473,7 +473,7 @@ func countRowsBySource(t *testing.T, db *sqlitedb.SQLiteClient, table, field, na
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	var n int
-	require.NoError(t, tx.QueryRow(
+	require.NoError(t, tx.QueryRowContext(t.Context(),
 		"SELECT COUNT(*) FROM"+" "+table+" WHERE "+field+" = ?",
 		name,
 	).Scan(&n))

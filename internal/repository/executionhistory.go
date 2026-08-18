@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -489,7 +488,7 @@ func executionHistoryQueryContext(tx *sql.Tx, ctx context.Context, condition str
 		err = errors.Join(err, loginjector.NewTraceError())
 		return
 	}
-	defer func(rows io.Closer) { err = errors.Join(err, rows.Close()) }(rows)
+	defer func() { err = errors.Join(err, rows.Close()) }()
 
 	items = make([]domain.ExecutionHistory, 0, count)
 

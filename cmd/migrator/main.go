@@ -39,11 +39,15 @@ func main() {
 
 	dsnDB, err := dsninjector.Unmarshal(internal.EnvSQLiteDSN)
 	if err != nil {
-		if env := os.Getenv(internal.EnvSQLiteDSN); env == "" {
-			err = errors.Join(errors.New("environment variable is not set"), err)
+		// The value carries a database path and is never logged. Whether it was
+		// set at all is safe to say and is the whole difference between a unit
+		// file that forgot the variable and one that fat-fingered it — the
+		// enrichment that used to be built here said so to nobody, because the
+		// line below does not print err.
+		if os.Getenv(internal.EnvSQLiteDSN) == "" {
+			log.Fatalf("settings: %s: environment variable is not set", internal.EnvSQLiteDSN)
 		}
 		log.Fatalf("settings: %s: unparseable value (contents not logged)", internal.EnvSQLiteDSN)
-		return
 	}
 	log.Println("settings: initiated")
 

@@ -279,6 +279,7 @@ func (a *WeatherCheckAgent) loadCachedObservation(
 	obsNotFound map[string]bool,
 ) (*domain.WeatherObservation, error) {
 	if obsNotFound[locationID] {
+		//nolint:nilnil // "no observation yet" is a state, not a failure; see the doc comment
 		return nil, nil
 	}
 	if obs, ok := obsCache[locationID]; ok {
@@ -288,6 +289,7 @@ func (a *WeatherCheckAgent) loadCachedObservation(
 	if err != nil {
 		if errors.Is(err, internal.ErrNotFound) {
 			obsNotFound[locationID] = true
+			//nolint:nilnil // the caller renders a missing observation, it does not fail on one
 			return nil, nil
 		}
 		return nil, fmt.Errorf("weather alert: location %s: load observation: %w", locationID, err)

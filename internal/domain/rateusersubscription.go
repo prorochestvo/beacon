@@ -57,7 +57,7 @@ func (rus *RateUserSubscription) DeltaThreshold() (float64, error) {
 	if rus.ConditionType != ConditionTypeDelta {
 		return 0, fmt.Errorf("invalid condition type: %s", rus.ConditionType)
 	}
-	d, err := strconv.ParseFloat(rus.ConditionValue, 10)
+	d, err := strconv.ParseFloat(rus.ConditionValue, 64)
 	if err != nil {
 		return 0, err
 	}

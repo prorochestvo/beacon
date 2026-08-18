@@ -149,13 +149,13 @@ func (g *Generator) Generate(ctx context.Context, sourceName string, forceFallba
 		)
 	}
 
-	if err := validateSourceURL(src.URL); err != nil {
-		return nil, fmt.Errorf("rulegen: source %q: %w", sourceName, err)
+	if urlErr := validateSourceURL(src.URL); urlErr != nil {
+		return nil, fmt.Errorf("rulegen: source %q: %w", sourceName, urlErr)
 	}
 
-	rawBody, err := activeFetcher.Fetch(ctx, src.URL, src.Options.Headers)
-	if err != nil {
-		return nil, fmt.Errorf("rulegen: fetch %s: %w", src.URL, err)
+	rawBody, fetchErr := activeFetcher.Fetch(ctx, src.URL, src.Options.Headers)
+	if fetchErr != nil {
+		return nil, fmt.Errorf("rulegen: fetch %s: %w", src.URL, fetchErr)
 	}
 
 	// Locate's co-location guard requires a currency anchor within

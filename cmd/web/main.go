@@ -117,8 +117,8 @@ func main() {
 		log.Fatalf("dependencies: telegram bot connection is failed, %s", err.Error())
 		return
 	}
-	if id, username, err := tbot.Me(context.Background()); err != nil {
-		log.Printf("telegram: identity probe failed: %v", err)
+	if id, username, probeErr := tbot.Me(context.Background()); probeErr != nil {
+		log.Printf("telegram: identity probe failed: %v", probeErr)
 	} else {
 		log.Printf("telegram: authenticated as @%s (id=%d)", username, id)
 	}
@@ -217,9 +217,9 @@ func main() {
 		fsSub = dirFS
 		httpFsys = http.FS(dirFS)
 	} else {
-		sub, err := fs.Sub(staticFS, "static")
-		if err != nil {
-			log.Fatalf("embed sub: %v", err)
+		sub, subErr := fs.Sub(staticFS, "static")
+		if subErr != nil {
+			log.Fatalf("embed sub: %v", subErr)
 		}
 		fsSub = sub
 		httpFsys = http.FS(sub)
@@ -289,7 +289,8 @@ func main() {
 		WriteTimeout: HttpTimeOut,
 		IdleTimeout:  HttpTimeOut >> 1,
 	}
-	listener, err := net.Listen("tcp", srv.Addr)
+	var listenCfg net.ListenConfig
+	listener, err := listenCfg.Listen(ctx, "tcp", srv.Addr)
 	if err != nil {
 		log.Fatalf("http server: bind %s: %s", srv.Addr, err)
 	}

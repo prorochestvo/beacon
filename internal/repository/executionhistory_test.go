@@ -210,9 +210,9 @@ func TestExecutionHistoryRepository_RemoveSourceExecutionHistory(t *testing.T) {
 	t.Run("nil record returns error", func(t *testing.T) {
 		t.Parallel()
 
-		err := r.RemoveSourceExecutionHistory(t.Context(), nil)
-		require.Error(t, err)
-		require.ErrorContains(t, err, "nil")
+		removeErr := r.RemoveSourceExecutionHistory(t.Context(), nil)
+		require.Error(t, removeErr)
+		require.ErrorContains(t, removeErr, "nil")
 	})
 
 	h := &domain.ExecutionHistory{
@@ -230,7 +230,7 @@ func TestExecutionHistoryRepository_RemoveSourceExecutionHistory(t *testing.T) {
 	defer func() { _ = tx.Rollback() }()
 
 	var count int
-	require.NoError(t, tx.QueryRow("SELECT COUNT(*) FROM"+" "+executionHistoryTableName+" WHERE "+executionHistoryIdFieldName+" = ?", h.ID).Scan(&count))
+	require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM"+" "+executionHistoryTableName+" WHERE "+executionHistoryIdFieldName+" = ?", h.ID).Scan(&count))
 	require.Equal(t, 0, count)
 }
 

@@ -12,6 +12,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/prorochestvo/dsninjector"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
@@ -143,7 +144,7 @@ func TestSQLiteClient_Commit(t *testing.T) {
 		t.Helper()
 		tx, err := c.Transaction(t.Context())
 		require.NoError(t, err)
-		_, err = tx.Exec("CREATE TABLE IF NOT EXISTS " + tableName + " (id INTEGER PRIMARY KEY, val TEXT);")
+		_, err = tx.ExecContext(t.Context(), "CREATE TABLE IF NOT EXISTS "+tableName+" (id INTEGER PRIMARY KEY, val TEXT);")
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 	}
@@ -161,7 +162,7 @@ func TestSQLiteClient_Commit(t *testing.T) {
 		defer func() { _ = tx2.Rollback() }()
 
 		var count int
-		require.NoError(t, tx2.QueryRow("SELECT COUNT(*) FROM test_commit_single WHERE val = 'hello';").Scan(&count))
+		require.NoError(t, tx2.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM test_commit_single WHERE val = 'hello';").Scan(&count))
 		require.Equal(t, 1, count)
 	})
 	t.Run("extra action is also committed", func(t *testing.T) {
@@ -178,7 +179,7 @@ func TestSQLiteClient_Commit(t *testing.T) {
 		defer func() { _ = tx2.Rollback() }()
 
 		var count int
-		require.NoError(t, tx2.QueryRow("SELECT COUNT(*) FROM test_commit_extra;").Scan(&count))
+		require.NoError(t, tx2.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM test_commit_extra;").Scan(&count))
 		require.Equal(t, 2, count)
 	})
 	t.Run("primary action failure returns error", func(t *testing.T) {
@@ -200,7 +201,7 @@ func TestSQLiteClient_Commit(t *testing.T) {
 		defer func() { _ = tx2.Rollback() }()
 
 		var count int
-		require.NoError(t, tx2.QueryRow("SELECT COUNT(*) FROM test_commit_fail;").Scan(&count))
+		require.NoError(t, tx2.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM test_commit_fail;").Scan(&count))
 		require.Equal(t, 0, count)
 	})
 	t.Run("returns error when db is closed", func(t *testing.T) {
@@ -222,7 +223,7 @@ func TestSQLiteClient_Rollback(t *testing.T) {
 		t.Helper()
 		tx, err := c.Transaction(t.Context())
 		require.NoError(t, err)
-		_, err = tx.Exec("CREATE TABLE IF NOT EXISTS " + tableName + " (id INTEGER PRIMARY KEY, val TEXT);")
+		_, err = tx.ExecContext(t.Context(), "CREATE TABLE IF NOT EXISTS "+tableName+" (id INTEGER PRIMARY KEY, val TEXT);")
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 	}
@@ -240,7 +241,7 @@ func TestSQLiteClient_Rollback(t *testing.T) {
 		defer func() { _ = tx2.Rollback() }()
 
 		var count int
-		require.NoError(t, tx2.QueryRow("SELECT COUNT(*) FROM test_rollback_single WHERE val = 'world';").Scan(&count))
+		require.NoError(t, tx2.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM test_rollback_single WHERE val = 'world';").Scan(&count))
 		require.Equal(t, 0, count)
 	})
 	t.Run("extra action is also not persisted", func(t *testing.T) {
@@ -257,7 +258,7 @@ func TestSQLiteClient_Rollback(t *testing.T) {
 		defer func() { _ = tx2.Rollback() }()
 
 		var count int
-		require.NoError(t, tx2.QueryRow("SELECT COUNT(*) FROM test_rollback_extra;").Scan(&count))
+		require.NoError(t, tx2.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM test_rollback_extra;").Scan(&count))
 		require.Equal(t, 0, count)
 	})
 	t.Run("primary action failure returns error", func(t *testing.T) {
@@ -300,7 +301,7 @@ func TestSQLiteClient_Close(t *testing.T) {
 		require.NoError(t, err)
 
 		require.NoError(t, c.Close())
-		require.Error(t, mem.Ping())
+		require.Error(t, mem.PingContext(t.Context()))
 	})
 }
 
@@ -328,6 +329,8 @@ func (m *mockFailCommitter) Transaction(_ context.Context) (*sql.Tx, error) {
 
 // stubDataSource implements dsninjector.DataSource for testing by returning a
 // fixed file path from Database().
+var _ dsninjector.DataSource = (*stubDataSource)(nil)
+
 type stubDataSource struct{ path string }
 
 func (s *stubDataSource) Database() string                    { return s.path }
@@ -470,7 +473,7 @@ func TestWriteTransactionsWaitInsteadOfFailing(t *testing.T) {
 
 		c, err := NewSQLiteClientEx(db, os.Stdout)
 		require.NoError(t, err)
-		_, err = db.Exec("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT);")
+		_, err = db.ExecContext(t.Context(), "CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT);")
 		require.NoError(t, err)
 		return c
 	}
