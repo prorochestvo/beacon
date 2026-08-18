@@ -30,7 +30,7 @@ func TestNewHTTPFetcher_FetchJSON(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, err := w.Write([]byte(`{"ok":true}`))
-			require.NoError(t, err)
+			assert.NoError(t, err)
 		}))
 		defer srv.Close()
 
@@ -74,7 +74,7 @@ func TestNewHTTPFetcher_FetchJSON(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, wantHeader, r.Header.Get("X-Telegram-Init-Data"))
 			_, err := w.Write([]byte(`{}`))
-			require.NoError(t, err)
+			assert.NoError(t, err)
 		}))
 		defer srv.Close()
 
@@ -93,12 +93,12 @@ func TestNewHTTPFetcher_FetchJSON(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 			raw, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			var p payload
-			require.NoError(t, json.Unmarshal(raw, &p))
+			assert.NoError(t, json.Unmarshal(raw, &p))
 			assert.Equal(t, "hello", p.Value)
 			_, err = w.Write([]byte(`{}`))
-			require.NoError(t, err)
+			assert.NoError(t, err)
 		}))
 		defer srv.Close()
 
@@ -113,7 +113,7 @@ func TestNewHTTPFetcher_FetchJSON(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			receivedPath = r.URL.Path
 			_, err := w.Write([]byte(`{}`))
-			require.NoError(t, err)
+			assert.NoError(t, err)
 		}))
 		defer srv.Close()
 
@@ -172,9 +172,9 @@ func TestNewHTTPFetcher_FetchNoContent(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 			raw, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			var p payload
-			require.NoError(t, json.Unmarshal(raw, &p))
+			assert.NoError(t, json.Unmarshal(raw, &p))
 			assert.True(t, p.Active)
 			w.WriteHeader(http.StatusNoContent)
 		}))

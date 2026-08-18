@@ -167,7 +167,7 @@ func TestRateRepository_RetainRateValue(t *testing.T) {
 		var value float64
 		require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT "+rateValuePriceFieldName+" FROM"+" "+rateValueTableName+" WHERE "+rateValueIdFieldName+" = ?", rate.ID).Scan(&value))
 		require.NoError(t, err)
-		require.Equal(t, 9.99, value)
+		require.InDelta(t, 9.99, value, 0.001)
 	})
 }
 
@@ -242,8 +242,8 @@ func TestRateRepository_ObtainAllRateValueBySourceName(t *testing.T) {
 			return result[i].QuoteCurrency < result[j].QuoteCurrency
 		})
 
-		require.Equal(t, result[0].Price, 1.1)
-		require.Equal(t, result[1].Price, 1.2)
+		require.InDelta(t, 1.1, result[0].Price, 0.001)
+		require.InDelta(t, 1.2, result[1].Price, 0.001)
 	})
 	t.Run("empty for unknown source", func(t *testing.T) {
 		t.Parallel()
@@ -331,8 +331,8 @@ func TestRateValueRepository_ObtainLatestRateValuesBySourceNames(t *testing.T) {
 			[]string{"bulk-rv-a", "bulk-rv-b", "missing-rv"})
 		require.NoError(t, err)
 		require.Len(t, got, 2, "missing-rv must be absent")
-		require.Equal(t, 200.0, got["bulk-rv-a"].Price, "must return the newest row")
-		require.Equal(t, 500.0, got["bulk-rv-b"].Price)
+		require.InDelta(t, 200.0, got["bulk-rv-a"].Price, 0.001, "must return the newest row")
+		require.InDelta(t, 500.0, got["bulk-rv-b"].Price, 0.001)
 	})
 }
 
@@ -430,7 +430,7 @@ func TestRateValueRepository_ObtainValuesForPairsSince(t *testing.T) {
 		result, err := r.ObtainValuesForPairsSince(t.Context(), pairs, base.Add(-time.Minute))
 		require.NoError(t, err)
 		require.Len(t, result, 1)
-		require.Equal(t, 100.0, result[0].Price)
+		require.InDelta(t, 100.0, result[0].Price, 0.001)
 	})
 
 	t.Run("single pair multiple matches returned in ascending timestamp order", func(t *testing.T) {
@@ -453,9 +453,9 @@ func TestRateValueRepository_ObtainValuesForPairsSince(t *testing.T) {
 		result, err := r.ObtainValuesForPairsSince(t.Context(), pairs, base.Add(-time.Second))
 		require.NoError(t, err)
 		require.Len(t, result, 3)
-		require.Equal(t, 10.0, result[0].Price)
-		require.Equal(t, 20.0, result[1].Price)
-		require.Equal(t, 30.0, result[2].Price)
+		require.InDelta(t, 10.0, result[0].Price, 0.001)
+		require.InDelta(t, 20.0, result[1].Price, 0.001)
+		require.InDelta(t, 30.0, result[2].Price, 0.001)
 	})
 
 	t.Run("multiple pairs interleaved correctly by timestamp", func(t *testing.T) {
@@ -477,9 +477,9 @@ func TestRateValueRepository_ObtainValuesForPairsSince(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result, 3)
 		// ascending timestamp order
-		require.Equal(t, 1.0, result[0].Price)
-		require.Equal(t, 2.0, result[1].Price)
-		require.Equal(t, 3.0, result[2].Price)
+		require.InDelta(t, 1.0, result[0].Price, 0.001)
+		require.InDelta(t, 2.0, result[1].Price, 0.001)
+		require.InDelta(t, 3.0, result[2].Price, 0.001)
 	})
 
 	t.Run("since filter excludes older rows", func(t *testing.T) {
@@ -498,7 +498,7 @@ func TestRateValueRepository_ObtainValuesForPairsSince(t *testing.T) {
 		result, err := r.ObtainValuesForPairsSince(t.Context(), pairs, cutoff)
 		require.NoError(t, err)
 		require.Len(t, result, 1)
-		require.Equal(t, 2.0, result[0].Price)
+		require.InDelta(t, 2.0, result[0].Price, 0.001)
 	})
 
 	t.Run("rows for unrelated source are not returned", func(t *testing.T) {
@@ -515,7 +515,7 @@ func TestRateValueRepository_ObtainValuesForPairsSince(t *testing.T) {
 		result, err := r.ObtainValuesForPairsSince(t.Context(), pairs, base.Add(-time.Second))
 		require.NoError(t, err)
 		require.Len(t, result, 1)
-		require.Equal(t, 1.0, result[0].Price)
+		require.InDelta(t, 1.0, result[0].Price, 0.001)
 	})
 
 	t.Run("rows for deleted source are excluded via FK cascade", func(t *testing.T) {
@@ -601,9 +601,9 @@ func TestRateValueRepository_ObtainHistoryForPairsPaged(t *testing.T) {
 		require.EqualValues(t, 3, groupedTotal)
 		require.Len(t, rows, 3)
 		// Newest first.
-		require.Equal(t, 300.0, rows[0].Price)
-		require.Equal(t, 200.0, rows[1].Price)
-		require.Equal(t, 100.0, rows[2].Price)
+		require.InDelta(t, 300.0, rows[0].Price, 0.001)
+		require.InDelta(t, 200.0, rows[1].Price, 0.001)
+		require.InDelta(t, 100.0, rows[2].Price, 0.001)
 	})
 
 	t.Run("two sources two directions returns interleaved rows ordered by timestamp", func(t *testing.T) {
@@ -625,9 +625,9 @@ func TestRateValueRepository_ObtainHistoryForPairsPaged(t *testing.T) {
 		require.EqualValues(t, 3, total)
 		require.Len(t, rows, 3)
 		// Newest first.
-		require.Equal(t, 3.0, rows[0].Price)
-		require.Equal(t, 2.0, rows[1].Price)
-		require.Equal(t, 1.0, rows[2].Price)
+		require.InDelta(t, 3.0, rows[0].Price, 0.001)
+		require.InDelta(t, 2.0, rows[1].Price, 0.001)
+		require.InDelta(t, 1.0, rows[2].Price, 0.001)
 	})
 
 	t.Run("limit caps returned rows", func(t *testing.T) {
@@ -663,7 +663,7 @@ func TestRateValueRepository_ObtainHistoryForPairsPaged(t *testing.T) {
 		require.NoError(t, err)
 		require.EqualValues(t, 5, total)
 		require.Len(t, rows, 3)
-		require.Equal(t, 3.0, rows[0].Price)
+		require.InDelta(t, 3.0, rows[0].Price, 0.001)
 	})
 
 	t.Run("total reflects un-paginated row count", func(t *testing.T) {
@@ -699,7 +699,7 @@ func TestRateValueRepository_ObtainHistoryForPairsPaged(t *testing.T) {
 		require.Len(t, rows, 2)
 		// ID DESC: rv2 was inserted after rv1, so its ID is lexicographically larger;
 		// it must come first.
-		require.True(t, rv2.ID > rv1.ID, "pre-condition: rv2.ID must be greater for this test to be meaningful")
+		require.Greater(t, rv2.ID, rv1.ID, "pre-condition: rv2.ID must be greater for this test to be meaningful")
 		require.Equal(t, rv2.ID, rows[0].ID)
 		require.Equal(t, rv1.ID, rows[1].ID)
 	})

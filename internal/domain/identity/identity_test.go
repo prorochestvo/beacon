@@ -42,7 +42,7 @@ func TestNew(t *testing.T) {
 			require.False(t, exists, "duplicate ID produced on call %d: %q", i, id)
 			seen[id] = struct{}{}
 			tIdx := strings.LastIndex(id, "T")
-			require.Greater(t, tIdx, 0, "ID %q must contain the T separator", id)
+			require.Positive(t, tIdx, "ID %q must contain the T separator", id)
 			uuidHex := id[tIdx+1:]
 			require.NotEmpty(t, uuidHex, "UUID segment must not be empty in %q", id)
 			require.NotEqual(t, strings.Repeat("0", len(uuidHex)), uuidHex,

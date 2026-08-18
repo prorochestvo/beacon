@@ -35,7 +35,7 @@ func TestChromedpRateExtractor_failFast(t *testing.T) {
 
 		got, ok := e.loadFailedURL("https://not-recorded.example.com/")
 		require.False(t, ok, "loadFailedURL must return false for an unrecorded URL")
-		require.Nil(t, got)
+		require.NoError(t, got)
 	})
 
 	t.Run("recordFailedURL is concurrency-safe", func(t *testing.T) {

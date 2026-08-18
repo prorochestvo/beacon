@@ -55,7 +55,7 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		assert.Equal(t, "Almaty", st.Items[0].DisplayName)
 		assert.True(t, st.Items[0].HasData)
 		assert.False(t, st.AuthFailure)
-		assert.Nil(t, st.LoadError)
+		assert.NoError(t, st.LoadError)
 	})
 
 	t.Run("empty server response returns non-nil empty slice", func(t *testing.T) {
@@ -104,7 +104,7 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		require.Error(t, err)
 		st := page.State()
 		assert.True(t, st.AuthFailure)
-		assert.NotNil(t, st.LoadError)
+		assert.Error(t, st.LoadError)
 	})
 
 	t.Run("network error does not set AuthFailure", func(t *testing.T) {
@@ -120,7 +120,7 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		require.Error(t, err)
 		st := page.State()
 		assert.False(t, st.AuthFailure)
-		assert.NotNil(t, st.LoadError)
+		assert.Error(t, st.LoadError)
 	})
 
 	t.Run("loading flag is reset to false after successful load", func(t *testing.T) {

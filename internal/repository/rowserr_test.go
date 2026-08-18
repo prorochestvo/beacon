@@ -261,7 +261,7 @@ func TestRepositoryReadsReportInterruptedIteration(t *testing.T) {
 		got, err := repo.ObtainWeatherUserCitiesByUserID(t.Context(), domain.UserTypeTelegram, userID)
 
 		require.Error(t, err, "an interrupted read must not pass for a complete one")
-		assert.ErrorIs(t, err, errIterInterrupted)
+		require.ErrorIs(t, err, errIterInterrupted)
 		assert.Nil(t, got, "no caller should be handed the rows that did arrive")
 	})
 
@@ -294,7 +294,7 @@ func TestRepositoryReadsReportInterruptedIteration(t *testing.T) {
 		got, err := repo.ObtainLastNRateValuesBySourceName(t.Context(), sourceName, 10)
 
 		require.Error(t, err, "an interrupted read must not pass for a complete one")
-		assert.ErrorIs(t, err, errIterInterrupted)
+		require.ErrorIs(t, err, errIterInterrupted)
 		assert.Nil(t, got, "no caller should be handed the rows that did arrive")
 	})
 }

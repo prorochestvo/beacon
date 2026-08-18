@@ -357,6 +357,7 @@ func TestTieredReadsUseIndexesOnBothBranches(t *testing.T) {
 	}
 
 	t.Run("the per-source read searches both tiers by index", func(t *testing.T) {
+		t.Parallel()
 		plan := explain(t,
 			rateValueSqlSelect+" WHERE "+rateValueSourceNameFieldName+" = ?"+
 				" ORDER BY "+rateValueTimestampFieldName+" DESC LIMIT ?;",
@@ -368,6 +369,7 @@ func TestTieredReadsUseIndexesOnBothBranches(t *testing.T) {
 	})
 
 	t.Run("the failed-run read searches both tiers by index", func(t *testing.T) {
+		t.Parallel()
 		plan := explain(t,
 			executionHistorySqlSelect+" WHERE "+executionHistorySourceNameFieldName+" = ?"+
 				" AND "+executionHistorySuccessFieldName+" = 0 LIMIT ?;",

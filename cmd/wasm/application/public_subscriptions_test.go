@@ -103,7 +103,7 @@ func TestPublicSubscriptionsPage_LoadPage(t *testing.T) {
 		assert.Equal(t, 1, st.Page)
 		assert.Equal(t, int64(len(pairs)), st.Total)
 		assert.Len(t, st.Chart.Pairs, len(pairs))
-		assert.NoError(t, st.ChartError)
+		require.NoError(t, st.ChartError)
 		assert.False(t, st.ChartLoading)
 	})
 
@@ -116,7 +116,7 @@ func TestPublicSubscriptionsPage_LoadPage(t *testing.T) {
 
 		st := page.State()
 		require.Error(t, st.ChartError)
-		assert.ErrorContains(t, st.ChartError, "http 503")
+		require.ErrorContains(t, st.ChartError, "http 503")
 		assert.False(t, st.ChartLoading, "ChartLoading must be false after error")
 		assert.Nil(t, st.Chart, "Chart must remain nil on error")
 	})

@@ -121,7 +121,7 @@ func TestRateUserSubscriptionRepository_RetainRateUserSubscription(t *testing.T)
 
 		deltaThreshold, err := result[0].DeltaThreshold()
 		require.NoError(t, err)
-		require.Equal(t, 0.75, deltaThreshold)
+		require.InDelta(t, 0.75, deltaThreshold, 0.001)
 	})
 }
 
@@ -237,7 +237,7 @@ func TestRateUserSubscriptionRepository_ObtainRateUserSubscriptionsByUserID(t *t
 			require.Equal(t, subs[i].SourceName, r.SourceName)
 			require.Equal(t, subs[i].ConditionType, r.ConditionType)
 			require.Equal(t, subs[i].ConditionValue, r.ConditionValue)
-			require.Equal(t, subs[i].LatestNotifiedRate, r.LatestNotifiedRate)
+			require.InDelta(t, subs[i].LatestNotifiedRate, r.LatestNotifiedRate, 0.001)
 			require.Equal(t, subs[i].CreatedAt.Format(time.RFC3339), r.CreatedAt.Format(time.RFC3339))
 		}
 	})

@@ -261,7 +261,7 @@ func TestWeatherUserCityRepository_RetainWeatherUserCity(t *testing.T) {
 
 		got, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
 		require.NoError(t, err)
-		assert.Equal(t, "", got.ConditionValue)
+		assert.Empty(t, got.ConditionValue)
 		assert.Equal(t, domain.WeatherNotifyAlertThunderstorm, got.NotifyKind)
 	})
 
@@ -355,7 +355,7 @@ func TestWeatherUserCityRepository_ObtainWeatherUserCityByID(t *testing.T) {
 
 		got, err := repo.ObtainWeatherUserCityByID(t.Context(), "nonexistent")
 		require.Nil(t, got)
-		require.True(t, errors.Is(err, internal.ErrNotFound))
+		require.ErrorIs(t, err, internal.ErrNotFound)
 	})
 }
 
@@ -381,7 +381,7 @@ func TestWeatherUserCityRepository_RemoveWeatherUserCity(t *testing.T) {
 
 		got, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
 		require.Nil(t, got)
-		require.True(t, errors.Is(err, internal.ErrNotFound))
+		require.ErrorIs(t, err, internal.ErrNotFound)
 	})
 
 	t.Run("nil record returns error", func(t *testing.T) {
@@ -453,7 +453,7 @@ func TestWeatherUserCityRepository_RemoveWeatherUserCitiesByLocation(t *testing.
 		require.NoError(t, err)
 
 		err = repo.RemoveWeatherUserCitiesByLocation(t.Context(), domain.UserTypeTelegram, "nobody", "nowhere")
-		require.True(t, errors.Is(err, internal.ErrNotFound))
+		require.ErrorIs(t, err, internal.ErrNotFound)
 	})
 }
 

@@ -240,9 +240,9 @@ func TestClient_Integration_SetSourceActive(t *testing.T) {
 			assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
 			raw, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			var body dto.SourceActiveRequest
-			require.NoError(t, json.Unmarshal(raw, &body))
+			assert.NoError(t, json.Unmarshal(raw, &body))
 			assert.True(t, body.Active)
 
 			w.WriteHeader(http.StatusNoContent)
@@ -259,9 +259,9 @@ func TestClient_Integration_SetSourceActive(t *testing.T) {
 
 		mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
 			raw, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			var body dto.SourceActiveRequest
-			require.NoError(t, json.Unmarshal(raw, &body))
+			assert.NoError(t, json.Unmarshal(raw, &body))
 			assert.False(t, body.Active)
 			w.WriteHeader(http.StatusNoContent)
 		})

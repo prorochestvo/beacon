@@ -342,7 +342,7 @@ func TestRenderSparklineListForPeriod(t *testing.T) {
 		require.Contains(t, html, `period-chip--active`)
 		// Find the active chip span and verify it carries data-period="30".
 		idx := strings.Index(html, `period-chip--active`)
-		require.Greater(t, idx, 0)
+		require.Positive(t, idx)
 		// The active chip HTML contains data-period="30".
 		assert.Contains(t, html[max(0, idx-100):idx+100], `data-period="30"`)
 	})

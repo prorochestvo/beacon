@@ -90,7 +90,7 @@ func TestNewHashedAssetRegistry(t *testing.T) {
 		require.True(t, ok, "expected hashed js URL to be registered: %s", expectedJsURL)
 		assert.Equal(t, "wasm_exec.js", e.sourcePath)
 		assert.Equal(t, "text/javascript; charset=utf-8", e.contentType)
-		assert.Equal(t, "", e.gzipPath)
+		assert.Empty(t, e.gzipPath)
 	})
 
 	t.Run("missing asset returns error naming the path", func(t *testing.T) {
@@ -615,12 +615,13 @@ func TestStaticHandler(t *testing.T) {
 	})
 
 	t.Run("cached body pointer does not change across requests", func(t *testing.T) {
+		t.Parallel()
 		// The cache is built once at boot; serving the same endpoint twice must
 		// reuse the same byte slice without copying.
 		snapshot := indexCache.body
 		_ = get(t, "/")
 		_ = get(t, "/")
-		assert.True(t, &snapshot[0] == &indexCache.body[0],
+		assert.Same(t, &snapshot[0], &indexCache.body[0],
 			"body slice must be the same allocation across requests")
 	})
 

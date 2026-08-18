@@ -47,10 +47,10 @@ func TestGroqClient_Complete(t *testing.T) {
 			receivedAuth = r.Header.Get("Authorization")
 			var err error
 			receivedBody, err = io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(validChatResponseJSON(t, "groq rate result"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -86,10 +86,10 @@ func TestGroqClient_Complete(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var err error
 			receivedBody, err = io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(validChatResponseJSON(t, "result"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -111,10 +111,10 @@ func TestGroqClient_Complete(t *testing.T) {
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.WriteHeader(http.StatusUnauthorized)
 			_, werr := w.Write([]byte(`{"error":{"message":"Invalid API key"}}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -128,10 +128,10 @@ func TestGroqClient_Complete(t *testing.T) {
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.WriteHeader(http.StatusInternalServerError)
 			_, werr := w.Write([]byte(`{"error":{"message":"internal server error"}}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -145,10 +145,10 @@ func TestGroqClient_Complete(t *testing.T) {
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write([]byte(`{"choices":[]}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -163,10 +163,10 @@ func TestGroqClient_Complete(t *testing.T) {
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write([]byte(`{"invalid`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -181,10 +181,10 @@ func TestGroqClient_Complete(t *testing.T) {
 		htmlBody := `<!DOCTYPE html><html><body>Cloudflare error</body></html>`
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "text/html")
 			_, werr := w.Write([]byte(htmlBody))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -200,10 +200,10 @@ func TestGroqClient_Complete(t *testing.T) {
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(validChatResponseJSON(t, "should not reach"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -227,10 +227,10 @@ func TestGroqClient_CheckUP(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var err error
 			receivedBody, err = io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(validChatResponseJSON(t, "pong"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -250,7 +250,7 @@ func TestGroqClient_CheckUP(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusUnauthorized)
 			_, werr := w.Write([]byte(`{"error":{"message":"Invalid API key"}}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -265,7 +265,7 @@ func TestGroqClient_CheckUP(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, werr := w.Write([]byte(`{"error":{"message":"boom"}}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -280,7 +280,7 @@ func TestGroqClient_CheckUP(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(validChatResponseJSON(t, "pong"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -327,7 +327,7 @@ func TestGroqClient_BaseURL(t *testing.T) {
 			capturedURL = r.URL.RequestURI()
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(validChatResponseJSON(t, "pong"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 

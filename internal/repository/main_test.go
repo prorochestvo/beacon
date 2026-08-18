@@ -30,8 +30,8 @@ var _ sqlitedb.Committer = (*mockFailDB)(nil)
 // The shared mutex guards only the sql.Open + PRAGMA + migrate phase; seeding
 // proceeds without it so parallel tests don't serialise behind each other's
 // N source inserts.
-func stubSQLiteDB(t testing.TB, sourceNames ...string) *sqlitedb.SQLiteClient {
-	t.Helper()
+func stubSQLiteDB(tb testing.TB, sourceNames ...string) *sqlitedb.SQLiteClient {
+	tb.Helper()
 
 	sqliteDB := func() *sqlitedb.SQLiteClient {
 		mu.Lock()
@@ -41,7 +41,7 @@ func stubSQLiteDB(t testing.TB, sourceNames ...string) *sqlitedb.SQLiteClient {
 		if err != nil {
 			panic(err)
 		}
-		t.Cleanup(func() { _ = mem.Close() })
+		tb.Cleanup(func() { _ = mem.Close() })
 
 		mem.SetMaxOpenConns(1)
 
@@ -53,12 +53,12 @@ func stubSQLiteDB(t testing.TB, sourceNames ...string) *sqlitedb.SQLiteClient {
 			panic("failed to create SQLite client")
 		}
 
-		sqlitedbtest.Apply(t, db)
+		sqlitedbtest.Apply(tb, db)
 		return db
 	}()
 
 	if len(sourceNames) > 0 {
-		seedRateSources(t, sqliteDB, sourceNames...)
+		seedRateSources(tb, sqliteDB, sourceNames...)
 	}
 
 	return sqliteDB
@@ -127,11 +127,11 @@ func stubSQLiteDBThrough(t *testing.T, throughFilename string) *sqlitedb.SQLiteC
 // reference them without violating the FK on rate_user_subscriptions.source_name.
 // Tests that pick arbitrary source names (not from the canonical seed) should
 // call this immediately after stubSQLiteDB.
-func seedRateSources(t testing.TB, db *sqlitedb.SQLiteClient, names ...string) {
-	t.Helper()
+func seedRateSources(tb testing.TB, db *sqlitedb.SQLiteClient, names ...string) {
+	tb.Helper()
 	r, err := NewRateSourceRepository(db)
 	if err != nil {
-		t.Fatalf("seedRateSources: NewRateSourceRepository: %v", err)
+		tb.Fatalf("seedRateSources: NewRateSourceRepository: %v", err)
 	}
 	for _, name := range names {
 		src := &domain.RateSource{
@@ -144,8 +144,8 @@ func seedRateSources(t testing.TB, db *sqlitedb.SQLiteClient, names ...string) {
 			Kind:          "BID",
 			Active:        true,
 		}
-		if err := r.RetainRateSource(t.Context(), src); err != nil {
-			t.Fatalf("seedRateSources(%q): %v", name, err)
+		if err := r.RetainRateSource(tb.Context(), src); err != nil {
+			tb.Fatalf("seedRateSources(%q): %v", name, err)
 		}
 	}
 }

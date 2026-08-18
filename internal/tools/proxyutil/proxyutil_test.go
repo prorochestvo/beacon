@@ -47,6 +47,9 @@ func TestRedactURL(t *testing.T) {
 
 // TestResolveURL omits top-level t.Parallel because subtests use t.Setenv,
 // which mutates process environment and cannot run under a parallel parent.
+// subtests cannot run concurrently with each other
+//
+//nolint:paralleltest // captureLogOutput swaps the global log writer, so these
 func TestResolveURL(t *testing.T) {
 	// Test-specific env names avoid colliding with an operator's own BEACON_PROXY_URL.
 
@@ -55,7 +58,7 @@ func TestResolveURL(t *testing.T) {
 		const absent = "PROXY_URL_TEST_ABSENT_XYZ"
 		logBuf := captureLogOutput(t)
 		result := ResolveURL(absent)
-		require.Equal(t, "", result)
+		require.Empty(t, result)
 		assert.Contains(t, logBuf.String(), "proxy: not configured")
 	})
 

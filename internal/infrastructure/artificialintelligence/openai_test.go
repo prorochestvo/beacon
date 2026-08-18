@@ -78,7 +78,7 @@ func TestOpenAIClient_CheckUP(t *testing.T) {
 			gotAuth = r.Header.Get("Authorization")
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write([]byte(`{"object":"list","data":[{"id":"gpt-4o","object":"model","created":0,"owned_by":"openai"}]}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -97,7 +97,7 @@ func TestOpenAIClient_CheckUP(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, werr := w.Write([]byte(`{"error":{"message":"Invalid API key","type":"invalid_request_error"}}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -113,7 +113,7 @@ func TestOpenAIClient_CheckUP(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write([]byte(`{"object":"list","data":[]}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -129,7 +129,7 @@ func TestOpenAIClient_CheckUP(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write([]byte(`{"object":"list","data":[{"id":"gpt-4o","object":"model","created":0,"owned_by":"openai"}]}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -161,10 +161,10 @@ func TestOpenAIClient_Complete(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var err error
 			receivedBody, err = io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(minimalResponsesJSON(t, "extraction result"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -195,10 +195,10 @@ func TestOpenAIClient_Complete(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var err error
 			receivedBody, err = io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(minimalResponsesJSON(t, "result"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 

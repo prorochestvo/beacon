@@ -395,7 +395,7 @@ func TestClient_MeRatesChart(t *testing.T) {
 		require.Len(t, got.Pairs[0].Series, 2)
 		assert.Equal(t, "BID", got.Pairs[0].Series[0].Kind)
 		assert.Equal(t, "#1D9E75", got.Pairs[0].Series[0].Color)
-		assert.Equal(t, 449.5, got.Pairs[0].Series[0].Latest)
+		assert.InDelta(t, 449.5, got.Pairs[0].Series[0].Latest, 0.001)
 		require.Len(t, got.Pairs[0].Series[0].Points, 1)
 		assert.Equal(t, "ASK", got.Pairs[0].Series[1].Kind)
 	})
@@ -514,7 +514,7 @@ func TestClient_MeRatesHistory(t *testing.T) {
 		assert.EqualValues(t, 1, resp.Total)
 		require.Len(t, resp.Items, 1)
 		require.NotNil(t, resp.Items[0].Bid)
-		assert.Equal(t, 490.0, *resp.Items[0].Bid)
+		assert.InDelta(t, 490.0, *resp.Items[0].Bid, 0.001)
 	})
 
 	t.Run("X-Telegram-Init-Data header is forwarded", func(t *testing.T) {
