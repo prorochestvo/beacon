@@ -131,7 +131,7 @@ func parseDSNKey(dns dsninjector.DataSource) (string, error) {
 	encoded := dns.Password()
 	if encoded == "" {
 		return "", errors.Join(
-			fmt.Errorf("missing API key in DSN"),
+			errors.New("missing API key in DSN"),
 			loginjector.NewTraceError(),
 		)
 	}
@@ -146,7 +146,7 @@ func parseDSNKey(dns dsninjector.DataSource) (string, error) {
 
 	if len(decoded) == 0 {
 		return "", errors.Join(
-			fmt.Errorf("missing API key in DSN"),
+			errors.New("missing API key in DSN"),
 			loginjector.NewTraceError(),
 		)
 	}

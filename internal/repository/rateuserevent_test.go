@@ -69,7 +69,7 @@ func TestRateUserEventRepository_ObtainLastNRateUserEvents(t *testing.T) {
 		r, err := NewRateUserEventRepository(stubSQLiteDB(t))
 		require.NoError(t, err)
 
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			require.NoError(t, r.RetainRateUserEvent(t.Context(), &domain.RateUserEvent{
 				UserType: domain.UserTypeTelegram,
 				UserID:   uuid.NewV4().String(),
@@ -96,7 +96,7 @@ func TestRateUserEventRepository_ObtainLastNRateUserEvents(t *testing.T) {
 		require.NoError(t, err)
 
 		base := time.Now().UTC().Truncate(time.Second)
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			require.NoError(t, r.RetainRateUserEvent(t.Context(), &domain.RateUserEvent{
 				UserType:  domain.UserTypeTelegram,
 				UserID:    uuid.NewV4().String(),
@@ -132,7 +132,7 @@ func TestRateUserEventRepository_ObtainLastNRateUserEvents(t *testing.T) {
 		require.NoError(t, err)
 
 		base := time.Now().UTC().Truncate(time.Second)
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			require.NoError(t, r.RetainRateUserEvent(t.Context(), &domain.RateUserEvent{
 				UserType:  domain.UserTypeTelegram,
 				UserID:    uuid.NewV4().String(),
@@ -183,7 +183,7 @@ func TestRateUserEventRepository_ObtainUnprocessedRateUserEvents(t *testing.T) {
 		r, err := NewRateUserEventRepository(stubSQLiteDB(t))
 		require.NoError(t, err)
 
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			require.NoError(t, r.RetainRateUserEvent(t.Context(), &domain.RateUserEvent{
 				UserType: domain.UserTypeTelegram,
 				UserID:   uuid.NewV4().String(),
@@ -628,7 +628,7 @@ func TestRateUserEventRepository_ObtainRateUserEventsBySourceName(t *testing.T) 
 		r, err := NewRateUserEventRepository(stubSQLiteDB(t, "src-Z"))
 		require.NoError(t, err)
 
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			require.NoError(t, r.RetainRateUserEvent(t.Context(), &domain.RateUserEvent{
 				SourceName: "src-Z",
 				UserType:   domain.UserTypeTelegram,

@@ -96,7 +96,7 @@ func smallestQualifyingTier1Hit(body []byte, structural, currency []string, coLo
 		seen[a] = true
 		needle := []byte(a)
 		cursor := 0
-		for safety := 0; safety < 1000; safety++ {
+		for range 1000 {
 			rel := bytes.Index(body[cursor:], needle)
 			if rel < 0 {
 				break

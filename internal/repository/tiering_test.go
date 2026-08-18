@@ -76,7 +76,7 @@ func TestRateValueRepository_RolloverToArchive(t *testing.T) {
 		repo, err := NewRateValueRepository(db)
 		require.NoError(t, err)
 
-		for i := 0; i < 12; i++ {
+		for i := range 12 {
 			seedRateValueAt(t, repo, "src-same", now.Add(-time.Duration(i*30)*24*time.Hour), float64(i))
 		}
 
@@ -274,7 +274,7 @@ func TestExecutionHistoryRepository_Tiering(t *testing.T) {
 		db := stubSQLiteDB(t, "src-eh")
 		repo, err := NewExecutionHistoryRepository(db)
 		require.NoError(t, err)
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			seed(t, repo, now.Add(-time.Duration(i*40)*24*time.Hour), i%2 == 0)
 		}
 

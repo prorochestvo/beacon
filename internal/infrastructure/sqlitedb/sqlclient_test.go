@@ -379,7 +379,7 @@ func TestSQLitePoolPerConnectionPragmas(t *testing.T) {
 		// fresh connection. With the pre-fix wiring all but one would report
 		// foreign_keys=0 / busy_timeout=0.
 		conns := make([]*sql.Conn, poolSize)
-		for i := 0; i < poolSize; i++ {
+		for i := range poolSize {
 			c, err := db.Conn(ctx)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = c.Close() })
@@ -426,7 +426,7 @@ func TestSQLitePoolPerConnectionPragmas(t *testing.T) {
 		// — every write opens, writes and commits inside one function — and it is
 		// not what this subtest is about.
 		conns := make([]*sql.Conn, poolSize)
-		for i := 0; i < poolSize; i++ {
+		for i := range poolSize {
 			c, err := db.Conn(ctx)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = c.Close() })

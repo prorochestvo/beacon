@@ -581,7 +581,7 @@ func TestRetryBackoff(t *testing.T) {
 			base := min(openMeteoRetryBackoff<<(attempt-1), openMeteoRetryBackoffCap)
 			lo := time.Duration(float64(base) * (1 - openMeteoRetryJitter))
 			hi := time.Duration(float64(base) * (1 + openMeteoRetryJitter))
-			for i := 0; i < 50; i++ {
+			for range 50 {
 				got := retryBackoff(attempt)
 				assert.GreaterOrEqual(t, got, lo, "attempt %d", attempt)
 				assert.LessOrEqual(t, got, hi, "attempt %d", attempt)
@@ -605,7 +605,7 @@ func TestRetryBackoff(t *testing.T) {
 	t.Run("is not constant, so concurrent callers do not re-send in lockstep", func(t *testing.T) {
 		t.Parallel()
 		seen := map[time.Duration]struct{}{}
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			seen[retryBackoff(1)] = struct{}{}
 		}
 		assert.Greater(t, len(seen), 1, "jitter must actually vary the wait")

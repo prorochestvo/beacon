@@ -14,7 +14,6 @@ import (
 
 	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/shared"
 	"github.com/prorochestvo/dsninjector"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,7 +28,7 @@ func newTestOpenAIClient(t *testing.T, baseURL string) *openAIClient {
 		option.WithBaseURL(baseURL),
 	)
 	return &openAIClient{
-		model:   shared.ChatModel(openaisdk.ChatModelGPT4o),
+		model:   openaisdk.ChatModelGPT4o,
 		api:     api,
 		logger:  log.New(io.Discard, "", 0),
 		timeout: 10 * time.Second,
@@ -146,7 +145,7 @@ func TestOpenAIClient_Model(t *testing.T) {
 
 	t.Run("returns bare model id without provider prefix", func(t *testing.T) {
 		t.Parallel()
-		c := &openAIClient{model: shared.ChatModel(openaisdk.ChatModelGPT4o)}
+		c := &openAIClient{model: openaisdk.ChatModelGPT4o}
 		assert.Equal(t, openaisdk.ChatModelGPT4o, c.Model())
 	})
 }

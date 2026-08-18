@@ -1546,7 +1546,7 @@ func TestGetMeRatesChart(t *testing.T) {
 			MeChartSvc: &mockMeChartService{},
 		})
 		for _, bad := range []string{"45", "-1", "0", "361"} {
-			bad := bad
+
 			t.Run(bad, func(t *testing.T) {
 				t.Parallel()
 				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/rates/chart?period="+bad, http.NoBody)
@@ -1675,7 +1675,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 		})
 
 		for _, bad := range []string{"45", "7d", "-1"} {
-			bad := bad
+
 			t.Run(bad, func(t *testing.T) {
 				t.Parallel()
 				rr := httptest.NewRecorder()
@@ -2536,14 +2536,14 @@ func TestNewHandler_Config(t *testing.T) {
 
 	t.Run("each required dependency is rejected by name", func(t *testing.T) {
 		t.Parallel()
-		clear := map[string]func(*Config){
+		without := map[string]func(*Config){
 			"RateService":     func(c *Config) { c.RateService = nil },
 			"MeSubSvc":        func(c *Config) { c.MeSubSvc = nil },
 			"MeProfileSvc":    func(c *Config) { c.MeProfileSvc = nil },
 			"MeWeatherSvc":    func(c *Config) { c.MeWeatherSvc = nil },
 			"WeatherGeocoder": func(c *Config) { c.WeatherGeocoder = nil },
 		}
-		for name, drop := range clear {
+		for name, drop := range without {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				cfg := complete()

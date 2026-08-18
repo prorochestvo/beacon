@@ -1,6 +1,7 @@
 package rateextractor
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -31,7 +32,7 @@ type pathSegment struct {
 
 func parseJSONPath(pattern string) ([]pathSegment, error) {
 	if pattern == "" {
-		return nil, fmt.Errorf("json_path: path pattern must not be empty")
+		return nil, errors.New("json_path: path pattern must not be empty")
 	}
 
 	rawSegments := strings.Split(pattern, ".")

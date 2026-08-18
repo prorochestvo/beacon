@@ -3,6 +3,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -527,12 +528,12 @@ func longestCommonPrefix(ss []string) string {
 	}
 	p := ss[0]
 	for _, s := range ss[1:] {
-		max := len(p)
-		if len(s) < max {
-			max = len(s)
+		upper := len(p)
+		if len(s) < upper {
+			upper = len(s)
 		}
 		i := 0
-		for i < max && p[i] == s[i] {
+		for i < upper && p[i] == s[i] {
 			i++
 		}
 		p = p[:i]
@@ -551,12 +552,12 @@ func longestCommonSuffix(ss []string) string {
 	}
 	p := ss[0]
 	for _, s := range ss[1:] {
-		max := len(p)
-		if len(s) < max {
-			max = len(s)
+		upper := len(p)
+		if len(s) < upper {
+			upper = len(s)
 		}
 		i := 0
-		for i < max && p[len(p)-1-i] == s[len(s)-1-i] {
+		for i < upper && p[len(p)-1-i] == s[len(s)-1-i] {
 			i++
 		}
 		p = p[len(p)-i:]
@@ -576,7 +577,7 @@ func longestCommonSuffix(ss []string) string {
 // nil when the draft is valid.
 func ValidateSubscriptionDraft(d MeSubscriptionDraft) error {
 	if d.SourceName == "" {
-		return fmt.Errorf("source is required")
+		return errors.New("source is required")
 	}
 	return validateCondition(d.ConditionType, d.ConditionValue)
 }
@@ -587,27 +588,27 @@ func validateCondition(conditionType, conditionValue string) error {
 	switch conditionType {
 	case "daily":
 		if _, err := time.Parse(time.TimeOnly, conditionValue); err != nil {
-			return fmt.Errorf("daily: expected HH:MM:SS (e.g. 09:00:00)")
+			return errors.New("daily: expected HH:MM:SS (e.g. 09:00:00)")
 		}
 	case "delta":
 		d, err := strconv.ParseFloat(conditionValue, 64)
 		if err != nil {
-			return fmt.Errorf("delta: expected a non-negative number (e.g. 1.5)")
+			return errors.New("delta: expected a non-negative number (e.g. 1.5)")
 		}
 		if d < 0 {
-			return fmt.Errorf("delta: threshold must be non-negative")
+			return errors.New("delta: threshold must be non-negative")
 		}
 	case "interval":
 		dur, err := time.ParseDuration(conditionValue)
 		if err != nil {
-			return fmt.Errorf("interval: expected a Go duration (e.g. 1h30m)")
+			return errors.New("interval: expected a Go duration (e.g. 1h30m)")
 		}
 		if dur < time.Minute {
-			return fmt.Errorf("interval: minimum interval is 1m")
+			return errors.New("interval: minimum interval is 1m")
 		}
 	case "cron":
 		if strings.TrimSpace(conditionValue) == "" {
-			return fmt.Errorf("cron: expression must not be empty")
+			return errors.New("cron: expression must not be empty")
 		}
 	default:
 		return fmt.Errorf("unknown condition type %q; must be one of delta, interval, daily, cron", conditionType)

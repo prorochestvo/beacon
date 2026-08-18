@@ -36,7 +36,7 @@ func TestNew(t *testing.T) {
 	t.Run("output is unique across calls", func(t *testing.T) {
 		t.Parallel()
 		seen := make(map[string]struct{}, 100)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			id := identity.New(identity.KindRateValue)
 			_, exists := seen[id]
 			require.False(t, exists, "duplicate ID produced on call %d: %q", i, id)

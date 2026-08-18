@@ -839,13 +839,13 @@ func TestService_ObtainMeChartForPeriod(t *testing.T) {
 
 	t.Run("since equals now minus period*24h for period=7", func(t *testing.T) {
 		t.Parallel()
-		cap := &captureValues{}
+		capture := &captureValues{}
 		svc := chart.NewService(
 			&fakeSubs{subs: []domain.RateUserSubscription{{SourceName: "src"}}},
 			&fakeSources{sources: map[string]domain.RateSource{
 				"src": {BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: "BID"},
 			}},
-			cap,
+			capture,
 			&fakeHistoryValues{},
 			&fakePublicSources{},
 			func() time.Time { return fixedNow },
@@ -853,18 +853,18 @@ func TestService_ObtainMeChartForPeriod(t *testing.T) {
 		_, err := svc.ObtainMeChartForPeriod(t.Context(), "u", 7)
 		require.NoError(t, err)
 		expected := fixedNow.Add(-7 * 24 * time.Hour)
-		assert.Equal(t, expected, cap.capturedSince, "since must be now - 7*24h")
+		assert.Equal(t, expected, capture.capturedSince, "since must be now - 7*24h")
 	})
 
 	t.Run("since equals now minus period*24h for period=90", func(t *testing.T) {
 		t.Parallel()
-		cap := &captureValues{}
+		capture := &captureValues{}
 		svc := chart.NewService(
 			&fakeSubs{subs: []domain.RateUserSubscription{{SourceName: "src"}}},
 			&fakeSources{sources: map[string]domain.RateSource{
 				"src": {BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: "BID"},
 			}},
-			cap,
+			capture,
 			&fakeHistoryValues{},
 			&fakePublicSources{},
 			func() time.Time { return fixedNow },
@@ -872,18 +872,18 @@ func TestService_ObtainMeChartForPeriod(t *testing.T) {
 		_, err := svc.ObtainMeChartForPeriod(t.Context(), "u", 90)
 		require.NoError(t, err)
 		expected := fixedNow.Add(-90 * 24 * time.Hour)
-		assert.Equal(t, expected, cap.capturedSince, "since must be now - 90*24h")
+		assert.Equal(t, expected, capture.capturedSince, "since must be now - 90*24h")
 	})
 
 	t.Run("ObtainMeChart wrapper delegates with period=7", func(t *testing.T) {
 		t.Parallel()
-		cap := &captureValues{}
+		capture := &captureValues{}
 		svc := chart.NewService(
 			&fakeSubs{subs: []domain.RateUserSubscription{{SourceName: "src"}}},
 			&fakeSources{sources: map[string]domain.RateSource{
 				"src": {BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: "BID"},
 			}},
-			cap,
+			capture,
 			&fakeHistoryValues{},
 			&fakePublicSources{},
 			func() time.Time { return fixedNow },
@@ -891,7 +891,7 @@ func TestService_ObtainMeChartForPeriod(t *testing.T) {
 		_, err := svc.ObtainMeChart(t.Context(), "u")
 		require.NoError(t, err)
 		expected := fixedNow.Add(-7 * 24 * time.Hour)
-		assert.Equal(t, expected, cap.capturedSince, "ObtainMeChart must pass since = now - 7*24h")
+		assert.Equal(t, expected, capture.capturedSince, "ObtainMeChart must pass since = now - 7*24h")
 	})
 }
 
@@ -900,14 +900,14 @@ func TestService_ObtainPublicChartForPeriod(t *testing.T) {
 
 	t.Run("since equals now minus period*24h for period=30", func(t *testing.T) {
 		t.Parallel()
-		cap := &captureValues{}
+		capture := &captureValues{}
 		keys := []domain.SourcePairKey{
 			{SourceName: "src", BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: domain.RateSourceKindBID},
 		}
 		svc := chart.NewService(
 			&fakeSubs{},
 			&fakeSources{},
-			cap,
+			capture,
 			&fakeHistoryValues{},
 			&fakePublicSources{keys: keys},
 			func() time.Time { return fixedNow },
@@ -915,19 +915,19 @@ func TestService_ObtainPublicChartForPeriod(t *testing.T) {
 		_, _, err := svc.ObtainPublicChartForPeriod(t.Context(), 1, 20, 30)
 		require.NoError(t, err)
 		expected := fixedNow.Add(-30 * 24 * time.Hour)
-		assert.Equal(t, expected, cap.capturedSince, "since must be now - 30*24h")
+		assert.Equal(t, expected, capture.capturedSince, "since must be now - 30*24h")
 	})
 
 	t.Run("since equals now minus period*24h for period=7", func(t *testing.T) {
 		t.Parallel()
-		cap := &captureValues{}
+		capture := &captureValues{}
 		keys := []domain.SourcePairKey{
 			{SourceName: "src", BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: domain.RateSourceKindBID},
 		}
 		svc := chart.NewService(
 			&fakeSubs{},
 			&fakeSources{},
-			cap,
+			capture,
 			&fakeHistoryValues{},
 			&fakePublicSources{keys: keys},
 			func() time.Time { return fixedNow },
@@ -935,19 +935,19 @@ func TestService_ObtainPublicChartForPeriod(t *testing.T) {
 		_, _, err := svc.ObtainPublicChartForPeriod(t.Context(), 1, 20, 7)
 		require.NoError(t, err)
 		expected := fixedNow.Add(-7 * 24 * time.Hour)
-		assert.Equal(t, expected, cap.capturedSince, "since must be now - 7*24h")
+		assert.Equal(t, expected, capture.capturedSince, "since must be now - 7*24h")
 	})
 
 	t.Run("ObtainPublicChart wrapper delegates with period=7", func(t *testing.T) {
 		t.Parallel()
-		cap := &captureValues{}
+		capture := &captureValues{}
 		keys := []domain.SourcePairKey{
 			{SourceName: "src", BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: domain.RateSourceKindBID},
 		}
 		svc := chart.NewService(
 			&fakeSubs{},
 			&fakeSources{},
-			cap,
+			capture,
 			&fakeHistoryValues{},
 			&fakePublicSources{keys: keys},
 			func() time.Time { return fixedNow },
@@ -955,7 +955,7 @@ func TestService_ObtainPublicChartForPeriod(t *testing.T) {
 		_, _, err := svc.ObtainPublicChart(t.Context(), 1, 20)
 		require.NoError(t, err)
 		expected := fixedNow.Add(-7 * 24 * time.Hour)
-		assert.Equal(t, expected, cap.capturedSince, "ObtainPublicChart must pass since = now - 7*24h")
+		assert.Equal(t, expected, capture.capturedSince, "ObtainPublicChart must pass since = now - 7*24h")
 	})
 }
 

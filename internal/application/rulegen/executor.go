@@ -85,7 +85,7 @@ func (e *defaultRuleExecutor) Execute(rules []domain.RateSourceRule, body []byte
 	}
 
 	if math.IsNaN(v) || math.IsInf(v, 0) {
-		return 0, fmt.Errorf("rulegen: NaN or Inf")
+		return 0, errors.New("rulegen: NaN or Inf")
 	}
 
 	if v <= rateextractor.MinPlausibleRateValue || v > rateextractor.MaxPlausibleRateValue {

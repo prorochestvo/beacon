@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/seilbekskindirov/beacon/cmd/wasm/application"
@@ -169,7 +170,7 @@ func renderDailyEventRow(e dto.DailyEventResponse) string {
         </tr>`,
 		dom.Escape(e.Type),
 		dom.Escape(e.Date),
-		dom.Escape(fmt.Sprintf("%d", e.SuccessCount)),
-		dom.Escape(fmt.Sprintf("%d", e.FailedCount)),
+		dom.Escape(strconv.FormatInt(e.SuccessCount, 10)),
+		dom.Escape(strconv.FormatInt(e.FailedCount, 10)),
 	)
 }

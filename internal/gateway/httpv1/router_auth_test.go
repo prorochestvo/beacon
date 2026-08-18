@@ -12,6 +12,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -314,7 +315,7 @@ func signedInitData(t *testing.T, botToken string, userID int64) string {
 
 	fields := map[string]string{
 		"user":      fmt.Sprintf(`{"id":%d,"first_name":"Test"}`, userID),
-		"auth_date": fmt.Sprintf("%d", time.Now().Unix()),
+		"auth_date": strconv.FormatInt(time.Now().Unix(), 10),
 	}
 
 	keys := make([]string, 0, len(fields))
