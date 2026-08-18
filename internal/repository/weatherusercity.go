@@ -163,7 +163,7 @@ func (r *WeatherUserCityRepository) ObtainWeatherUserCitiesByUserID(ctx context.
 	defer printRollbackError(tx)
 
 	condition := "WHERE " + weatherUserCityUserTypeFieldName + " = ? AND " + weatherUserCityUserIDFieldName + " = ?;"
-	return weatherUserCityQueryContext(tx, ctx, condition, userType, userID)
+	return weatherUserCityQueryContext(ctx, tx, condition, userType, userID)
 }
 
 // ObtainWeatherUserCityByID returns the city subscription row for the given primary key.
@@ -176,7 +176,7 @@ func (r *WeatherUserCityRepository) ObtainWeatherUserCityByID(ctx context.Contex
 	defer printRollbackError(tx)
 
 	condition := "WHERE " + weatherUserCityIDFieldName + " = ?;"
-	items, err := weatherUserCityQueryContext(tx, ctx, condition, id)
+	items, err := weatherUserCityQueryContext(ctx, tx, condition, id)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +304,7 @@ func (r *WeatherUserCityRepository) ObtainDueWeatherUserCities(ctx context.Conte
 	defer printRollbackError(tx)
 
 	condition := "WHERE " + weatherUserCityNotifyKindFieldName + " = ?;"
-	return weatherUserCityQueryContext(tx, ctx, condition, notifyKind)
+	return weatherUserCityQueryContext(ctx, tx, condition, notifyKind)
 }
 
 // AdvanceLastNotifiedAt updates last_notified_at for the given city ID so that
@@ -430,7 +430,7 @@ type weatherUserCityScanner interface {
 	Scan(dest ...any) error
 }
 
-func weatherUserCityQueryContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) ([]domain.WeatherUserCity, error) {
+func weatherUserCityQueryContext(ctx context.Context, tx *sql.Tx, condition string, args ...any) ([]domain.WeatherUserCity, error) {
 	query := weatherUserCitySQLSelect + " " + condition
 
 	rows, err := tx.QueryContext(ctx, query, args...)

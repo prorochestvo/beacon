@@ -36,7 +36,7 @@ func (r *RateUserSubscriptionRepository) CheckUP(ctx context.Context) error {
 	}
 	defer printRollbackError(tx)
 
-	count, err := rateUserSubscriptionCount(tx, ctx, ";")
+	count, err := rateUserSubscriptionCount(ctx, tx, ";")
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return err
@@ -61,7 +61,7 @@ func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsByUserID(ctx
 	}
 	defer printRollbackError(tx)
 
-	rows, err := rateUserSubscriptionQueryContext(tx, ctx, "WHERE "+rateUserSubscriptionUserTypeFieldName+" = ? AND "+rateUserSubscriptionUserIdFieldName+" = ?;", userType, userID)
+	rows, err := rateUserSubscriptionQueryContext(ctx, tx, "WHERE "+rateUserSubscriptionUserTypeFieldName+" = ? AND "+rateUserSubscriptionUserIdFieldName+" = ?;", userType, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsBySource(ctx
 	}
 	defer printRollbackError(tx)
 
-	rows, err := rateUserSubscriptionQueryContext(tx, ctx, "WHERE "+rateUserSubscriptionSourceNameFieldName+" = ?;", sourceName)
+	rows, err := rateUserSubscriptionQueryContext(ctx, tx, "WHERE "+rateUserSubscriptionSourceNameFieldName+" = ?;", sourceName)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
@@ -114,7 +114,7 @@ func (r *RateUserSubscriptionRepository) RetainRateUserSubscription(ctx context.
 	}
 	defer printRollbackError(tx)
 
-	count, err := rateUserSubscriptionCount(tx, ctx, "WHERE "+rateUserSubscriptionIdFieldName+" = ?;", record.ID)
+	count, err := rateUserSubscriptionCount(ctx, tx, "WHERE "+rateUserSubscriptionIdFieldName+" = ?;", record.ID)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return err
@@ -346,7 +346,7 @@ func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionByID(ctx cont
 	}
 	defer printRollbackError(tx)
 
-	return rateUserSubscriptionQueryRowContext(tx, ctx, "WHERE "+rateUserSubscriptionIdFieldName+" = ?;", id)
+	return rateUserSubscriptionQueryRowContext(ctx, tx, "WHERE "+rateUserSubscriptionIdFieldName+" = ?;", id)
 }
 
 // RemoveRateUserSubscription deletes the given subscription record by ID.
@@ -405,7 +405,7 @@ const (
 		"\nFROM " + rateUserSubscriptionTableName
 )
 
-func rateUserSubscriptionCount(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
+func rateUserSubscriptionCount(ctx context.Context, tx *sql.Tx, condition string, args ...any) (int64, error) {
 	query := "SELECT\n" +
 		" COUNT(*)\n" +
 		"FROM " + rateUserSubscriptionTableName + "\n" + condition
@@ -423,15 +423,15 @@ func rateUserSubscriptionCount(tx *sql.Tx, ctx context.Context, condition string
 	return count, nil
 }
 
-func rateUserSubscriptionQueryContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (items []domain.RateUserSubscription, err error) {
-	count, err := rateUserSubscriptionCount(tx, ctx, condition, args...)
+func rateUserSubscriptionQueryContext(ctx context.Context, tx *sql.Tx, condition string, args ...any) (items []domain.RateUserSubscription, err error) {
+	count, err := rateUserSubscriptionCount(ctx, tx, condition, args...)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
-		return
+		return items, err
 	}
 	if count == 0 {
 		items = []domain.RateUserSubscription{}
-		return
+		return items, err
 	}
 
 	query := rateUserSubscriptionSqlSelect + "\n" + condition
@@ -440,7 +440,7 @@ func rateUserSubscriptionQueryContext(tx *sql.Tx, ctx context.Context, condition
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
 		err = errors.Join(err, loginjector.NewTraceError())
-		return
+		return items, err
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 
@@ -463,13 +463,13 @@ func rateUserSubscriptionQueryContext(tx *sql.Tx, ctx context.Context, condition
 		)
 		if err != nil {
 			err = errors.Join(err, loginjector.NewTraceError())
-			return
+			return items, err
 		}
 
 		item.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
 		if err != nil {
 			err = errors.Join(err, loginjector.NewTraceError())
-			return
+			return items, err
 		}
 
 		item.UpdatedAt, err = time.Parse(time.RFC3339, updatedAt)
@@ -486,10 +486,10 @@ func rateUserSubscriptionQueryContext(tx *sql.Tx, ctx context.Context, condition
 		return nil, err
 	}
 
-	return
+	return items, err
 }
 
-func rateUserSubscriptionQueryRowContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (*domain.RateUserSubscription, error) {
+func rateUserSubscriptionQueryRowContext(ctx context.Context, tx *sql.Tx, condition string, args ...any) (*domain.RateUserSubscription, error) {
 	query := rateUserSubscriptionSqlSelect + "\n" + condition
 
 	var item domain.RateUserSubscription

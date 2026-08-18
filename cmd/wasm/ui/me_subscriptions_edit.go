@@ -1,6 +1,7 @@
-// Package ui provides HTML renderers for the WASM frontend. This file handles
-// the subscription editor screen which is split into two logical views
-// dispatched by state.ActiveView:
+package ui
+
+// This file handles the subscription editor screen which is split into two
+// logical views dispatched by state.ActiveView:
 //
 //	EditViewList — paginated, searchable list of existing subscriptions plus
 //	               a "+ Add" button that switches to the form view.
@@ -14,7 +15,6 @@
 // element survives keystrokes and keeps focus.
 //
 // AuthFailure short-circuits both views to the auth-failure message.
-package ui
 
 import (
 	"fmt"

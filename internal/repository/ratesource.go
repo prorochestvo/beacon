@@ -55,7 +55,7 @@ func (r *RateSourceRepository) ObtainRateSourceByName(ctx context.Context, name 
 	}
 	defer printRollbackError(tx)
 
-	rows, err := rateSourceQueryRowContext(tx, ctx, "WHERE "+rateSourceNameFieldName+" = ?;", name)
+	rows, err := rateSourceQueryRowContext(ctx, tx, "WHERE "+rateSourceNameFieldName+" = ?;", name)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
@@ -86,7 +86,7 @@ func (r *RateSourceRepository) ObtainRateSourcesByNames(ctx context.Context, nam
 		args = append(args, n)
 	}
 
-	rows, err := rateSourceQueryContext(tx, ctx, "WHERE "+rateSourceNameFieldName+" IN ("+placeholders+");", args...)
+	rows, err := rateSourceQueryContext(ctx, tx, "WHERE "+rateSourceNameFieldName+" IN ("+placeholders+");", args...)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
@@ -150,7 +150,7 @@ func (r *RateSourceRepository) ObtainAllRateSources(ctx context.Context) ([]doma
 	}
 	defer printRollbackError(tx)
 
-	rows, err := rateSourceQueryContext(tx, ctx, "ORDER BY "+rateSourceNameFieldName+" DESC;")
+	rows, err := rateSourceQueryContext(ctx, tx, "ORDER BY "+rateSourceNameFieldName+" DESC;")
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
@@ -210,7 +210,7 @@ func (r *RateSourceRepository) RetainRateSource(ctx context.Context, record *dom
 	}
 	defer printRollbackError(tx)
 
-	count, err := rateSourceCount(tx, ctx, "WHERE "+rateSourceNameFieldName+" = ?;", record.Name)
+	count, err := rateSourceCount(ctx, tx, "WHERE "+rateSourceNameFieldName+" = ?;", record.Name)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return err
@@ -375,7 +375,7 @@ const (
 		"\nFROM " + rateSourceTableName
 )
 
-func rateSourceCount(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
+func rateSourceCount(ctx context.Context, tx *sql.Tx, condition string, args ...any) (int64, error) {
 	query := "SELECT\n" +
 		" COUNT(*)\n" +
 		"FROM " + rateSourceTableName + "\n" + condition
@@ -393,15 +393,15 @@ func rateSourceCount(tx *sql.Tx, ctx context.Context, condition string, args ...
 	return count, nil
 }
 
-func rateSourceQueryContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (items []domain.RateSource, err error) {
-	count, err := rateSourceCount(tx, ctx, condition, args...)
+func rateSourceQueryContext(ctx context.Context, tx *sql.Tx, condition string, args ...any) (items []domain.RateSource, err error) {
+	count, err := rateSourceCount(ctx, tx, condition, args...)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
-		return
+		return items, err
 	}
 	if count == 0 {
 		items = []domain.RateSource{}
-		return
+		return items, err
 	}
 
 	query := rateSourceSqlSelect + "\n" + condition
@@ -472,10 +472,10 @@ func rateSourceQueryContext(tx *sql.Tx, ctx context.Context, condition string, a
 		return nil, err
 	}
 
-	return
+	return items, err
 }
 
-func rateSourceQueryRowContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (*domain.RateSource, error) {
+func rateSourceQueryRowContext(ctx context.Context, tx *sql.Tx, condition string, args ...any) (*domain.RateSource, error) {
 	query := rateSourceSqlSelect + "\n" + condition
 
 	var item domain.RateSource

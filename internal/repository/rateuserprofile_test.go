@@ -37,6 +37,8 @@ func TestRateUserProfileRepository_UpsertRateUserProfile(t *testing.T) {
 
 		// Sleep one second so the UpdatedAt change is observable through
 		// the 1-second RFC3339 truncation.
+		//nolint:forbidigo // the repository stamps time.Now() with no seam to inject,
+		// so observing an UpdatedAt change means waiting out the 1s RFC3339 truncation
 		time.Sleep(1100 * time.Millisecond)
 
 		err = repo.UpsertRateUserProfile(t.Context(), &domain.RateUserProfile{

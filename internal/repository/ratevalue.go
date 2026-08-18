@@ -36,7 +36,7 @@ func (r *RateValueRepository) CheckUP(ctx context.Context) error {
 	}
 	defer printRollbackError(tx)
 
-	count, err := rateValueCount(tx, ctx, ";")
+	count, err := rateValueCount(ctx, tx, ";")
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return err
@@ -62,7 +62,7 @@ func (r *RateValueRepository) ObtainAllRateValueBySourceName(ctx context.Context
 	defer printRollbackError(tx)
 
 	sqlCommand := "WHERE " + rateValueSourceNameFieldName + " = ?;"
-	rates, err := rateValueQueryContext(tx, ctx, sqlCommand, sourceName)
+	rates, err := rateValueQueryContext(ctx, tx, sqlCommand, sourceName)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
@@ -156,7 +156,7 @@ func (r *RateValueRepository) ObtainLastNRateValuesBySourceName(ctx context.Cont
 	// Secondary sort by rowid DESC keeps newest-first deterministic when rows
 	// share the same second-precision RFC3339 timestamp string.
 	sqlCommand := " WHERE " + rateValueSourceNameFieldName + " = ?" + " ORDER BY " + rateValueTimestampFieldName + " DESC, " + rateValueIdFieldName + " DESC LIMIT ?;"
-	rates, err := rateValueQueryContext(tx, ctx, sqlCommand, sourceName, limit)
+	rates, err := rateValueQueryContext(ctx, tx, sqlCommand, sourceName, limit)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
@@ -194,7 +194,7 @@ func (r *RateValueRepository) RetainRateValue(ctx context.Context, record *domai
 	// solely in the archive down the UPDATE path, which would match nothing and lose the
 	// write. Ids are minted per insert so the case is unreachable in practice — the check
 	// is scoped correctly anyway rather than relying on that.
-	count, err := rateValueCountHot(tx, ctx, " WHERE "+rateValueIdFieldName+" = ?;", record.ID)
+	count, err := rateValueCountHot(ctx, tx, " WHERE "+rateValueIdFieldName+" = ?;", record.ID)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return err
@@ -544,15 +544,15 @@ func rateValueSqlFrom(alias string) string {
 
 // rateValueCountHot counts the hot table alone. Write paths use it: they decide what to do
 // to rate_values, so they must ask about rate_values.
-func rateValueCountHot(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
-	return rateValueCountIn(tx, ctx, "FROM "+rateValueTableName, condition, args...)
+func rateValueCountHot(ctx context.Context, tx *sql.Tx, condition string, args ...any) (int64, error) {
+	return rateValueCountIn(ctx, tx, "FROM "+rateValueTableName, condition, args...)
 }
 
-func rateValueCount(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
-	return rateValueCountIn(tx, ctx, rateValueSqlFrom(rateValueTableName), condition, args...)
+func rateValueCount(ctx context.Context, tx *sql.Tx, condition string, args ...any) (int64, error) {
+	return rateValueCountIn(ctx, tx, rateValueSqlFrom(rateValueTableName), condition, args...)
 }
 
-func rateValueCountIn(tx *sql.Tx, ctx context.Context, from, condition string, args ...any) (int64, error) {
+func rateValueCountIn(ctx context.Context, tx *sql.Tx, from, condition string, args ...any) (int64, error) {
 	query := "SELECT\n" +
 		" COUNT(*)\n" +
 		from + "\n" + condition
@@ -570,15 +570,15 @@ func rateValueCountIn(tx *sql.Tx, ctx context.Context, from, condition string, a
 	return count, nil
 }
 
-func rateValueQueryContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (items []domain.RateValue, err error) {
-	count, err := rateValueCount(tx, ctx, condition, args...)
+func rateValueQueryContext(ctx context.Context, tx *sql.Tx, condition string, args ...any) (items []domain.RateValue, err error) {
+	count, err := rateValueCount(ctx, tx, condition, args...)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
-		return
+		return items, err
 	}
 	if count == 0 {
 		items = []domain.RateValue{}
-		return
+		return items, err
 	}
 
 	query := rateValueSqlSelect + "\n" + condition
@@ -587,7 +587,7 @@ func rateValueQueryContext(tx *sql.Tx, ctx context.Context, condition string, ar
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
 		err = errors.Join(err, loginjector.NewTraceError())
-		return
+		return items, err
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 
@@ -607,14 +607,14 @@ func rateValueQueryContext(tx *sql.Tx, ctx context.Context, condition string, ar
 		)
 		if err != nil {
 			err = errors.Join(err, loginjector.NewTraceError())
-			return
+			return items, err
 		}
 
 		item.Timestamp, err = time.Parse(time.RFC3339, timestamp)
 		if err != nil {
 			err = fmt.Errorf("rate %s has invalid timestamp %s: %w", item.ID, timestamp, err)
 			err = errors.Join(err, loginjector.NewTraceError())
-			return
+			return items, err
 		}
 
 		items = append(items, item)
@@ -625,5 +625,5 @@ func rateValueQueryContext(tx *sql.Tx, ctx context.Context, condition string, ar
 		return nil, err
 	}
 
-	return
+	return items, err
 }

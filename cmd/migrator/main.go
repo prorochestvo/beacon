@@ -58,6 +58,11 @@ func main() {
 	}
 }
 
+// test binary sees the flags too. The rule this package does follow is the one
+// that matters: nothing here logs or exits, because a line written before the
+// logger exists goes to a stderr the cron wrappers discard.
+//
+//nolint:gochecknoinits // flag registration has to happen before main runs so the
 func init() {
 	// Register flags here so the test binary can see them, but do NOT call flag.Parse()
 	// in init() — it would consume go test's own flags before the testing package
@@ -87,11 +92,11 @@ var (
 	flagVerbosity *string
 )
 
-func run(dsnSQLiteDB dsninjector.DataSource, logger *loginjector.Logger) (err error) {
+func run(dsnSQLiteDB dsninjector.DataSource, _ *loginjector.Logger) (err error) {
 
 	db, err := sqlitedb.NewSQLiteClient(dsnSQLiteDB, os.Stdout)
 	if err != nil {
-		return
+		return err
 	}
 	defer func() {
 		if e := db.Close(); e != nil {
@@ -101,14 +106,17 @@ func run(dsnSQLiteDB dsninjector.DataSource, logger *loginjector.Logger) (err er
 
 	m, err := sqlitedb.NewMigrator(db, migrations.MigrationsFS)
 	if err != nil {
-		return
+		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	//nolint:gocritic // err is the named return the deferred close joins into;
+	// declaring a new one here would leave that defer writing to a different
+	// variable than the reader expects
 	if err = m.Run(ctx); err != nil {
-		return
+		return err
 	}
 
 	log.Printf("migrator: applied %d migration(s)", m.Applied())
@@ -119,12 +127,12 @@ func run(dsnSQLiteDB dsninjector.DataSource, logger *loginjector.Logger) (err er
 	// time rather than weeks later at the first query against a missing column.
 	if err = m.Verify(ctx); err != nil {
 		err = fmt.Errorf("schema verification failed after migrate: %w", err)
-		return
+		return err
 	}
 
 	log.Println("migrator: schema verified against the embedded migration set")
 
-	return
+	return err
 }
 
 // initFlags applies the parsed flag values. Called from main after flag.Parse.

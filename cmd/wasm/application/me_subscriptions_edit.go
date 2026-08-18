@@ -1,5 +1,6 @@
-// Package application contains the WASM page controllers for the Mini App.
 package application
+
+// Package application contains the WASM page controllers for the Mini App.
 
 import (
 	"context"

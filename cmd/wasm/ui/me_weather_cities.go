@@ -1,8 +1,9 @@
-// Package ui provides HTML renderers for the WASM frontend. This file renders
-// the city weather subscription screen: a text input for geocoding search, a
-// list of matches to pick from, and the caller's saved city list with per-row
-// delete controls. All user-supplied and server-returned text is HTML-escaped.
 package ui
+
+// This file renders the city weather subscription screen: a text input for
+// geocoding search, a list of matches to pick from, and the caller's saved
+// city list with per-row delete controls. All user-supplied and server-
+// returned text is HTML-escaped.
 
 import (
 	"fmt"

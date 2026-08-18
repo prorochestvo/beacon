@@ -1,8 +1,9 @@
-// Package ui provides HTML renderers for the WASM frontend. This file handles
-// the Mini App rates home tab: a sparkline-list chart slot followed by a modal
-// slot, wrapped in the section shell (see section_rail.go). Per-pair detail is
-// surfaced through the modal overlay (the old list section, search bar, and
-// toggle button are gone).
+package ui
+
+// This file handles the Mini App rates home tab: a sparkline-list chart slot
+// followed by a modal slot, wrapped in the section shell (see
+// section_rail.go). Per-pair detail is surfaced through the modal overlay (the
+// old list section, search bar, and toggle button are gone).
 //
 // The modal is text-only (no SVG). When state.HistoryOpen is true the modal
 // body swaps to the per-pair history view rendered by me_pair_history.go.
@@ -13,7 +14,6 @@
 //  3. #me-pair-modal-slot — pair detail overlay (empty unless OpenPair is set).
 //
 // AuthFailure short-circuits to just the error message.
-package ui
 
 import (
 	"fmt"

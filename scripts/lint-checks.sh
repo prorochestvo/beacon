@@ -91,8 +91,14 @@ fi
 # .claude/agent-memory is exempt: it is written by agents to record where a piece
 # of context came from, so a plan reference there is the point rather than a
 # leak. The rest of .claude/ is hand-authored and stays under the rule.
+#
+# docs/decisions and docs/reviews are exempt for the same reason from the other
+# direction: an ADR that names the plan it superseded, or a review that lists the
+# plan files it moved, is a document *about* the process. There the citation is
+# the content, and replacing it with a paraphrase would lose the only thing the
+# reader is there for.
 if hits=$(scan_list '\.(go|sql|md)$' \
-	| grep -vE '^(plans/|logs/|tmp/|build/|backups/|.*/agent-memory/)' \
+	| grep -vE '^(plans/|logs/|tmp/|build/|backups/|docs/decisions/|docs/reviews/|.*/agent-memory/)' \
 	| grep_files '(plans/[0-9]{3}-|PLAN-[0-9]+|task #[0-9]+)'); then
 	report "plan or task references outside plans/ (write the reason, not the ticket):"
 	printf '%s\n' "$hits" >&2

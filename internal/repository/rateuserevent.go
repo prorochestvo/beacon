@@ -38,7 +38,7 @@ func (r *RateUserEventRepository) CheckUP(ctx context.Context) error {
 	}
 	defer printRollbackError(tx)
 
-	count, err := rateUserEventCount(tx, ctx, ";")
+	count, err := rateUserEventCount(ctx, tx, ";")
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return err
@@ -74,7 +74,7 @@ func (r *RateUserEventRepository) ObtainLastNRateUserEvents(ctx context.Context,
 		}
 	}
 
-	count, err := rateUserEventCount(tx, ctx, whereClause+";", statusArgs...)
+	count, err := rateUserEventCount(ctx, tx, whereClause+";", statusArgs...)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
@@ -166,7 +166,7 @@ func (r *RateUserEventRepository) ObtainRateUserEventsBySourceName(ctx context.C
 		}
 	}
 
-	count, err := rateUserEventCount(tx, ctx, where+";", args...)
+	count, err := rateUserEventCount(ctx, tx, where+";", args...)
 	if err != nil {
 		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
@@ -278,7 +278,7 @@ func (r *RateUserEventRepository) ObtainUnprocessedRateUserEvents(ctx context.Co
 	}
 	defer printRollbackError(tx)
 
-	rows, err := rateUserEventQueryContext(tx, ctx, "WHERE "+rateUserEventStatusFieldName+" in (?, ?) ORDER BY "+rateUserEventCreatedAtFieldName+" ASC;", domain.RateUserEventStatusPending, domain.RateUserEventStatusFailed)
+	rows, err := rateUserEventQueryContext(ctx, tx, "WHERE "+rateUserEventStatusFieldName+" in (?, ?) ORDER BY "+rateUserEventCreatedAtFieldName+" ASC;", domain.RateUserEventStatusPending, domain.RateUserEventStatusFailed)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +295,7 @@ func (r *RateUserEventRepository) ObtainRateUserEventById(ctx context.Context, i
 	}
 	defer printRollbackError(tx)
 
-	row, err := rateUserEventQueryRowContext(tx, ctx, "WHERE "+rateUserEventIdFieldName+" = ? ORDER BY "+rateUserEventCreatedAtFieldName+" ASC;", id)
+	row, err := rateUserEventQueryRowContext(ctx, tx, "WHERE "+rateUserEventIdFieldName+" = ? ORDER BY "+rateUserEventCreatedAtFieldName+" ASC;", id)
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +328,7 @@ func (r *RateUserEventRepository) RetainRateUserEvent(ctx context.Context, recor
 	}
 	defer printRollbackError(tx)
 
-	count, err := rateUserEventCount(tx, ctx, " WHERE "+rateUserEventIdFieldName+" = ?;", record.ID)
+	count, err := rateUserEventCount(ctx, tx, " WHERE "+rateUserEventIdFieldName+" = ?;", record.ID)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return err
@@ -518,7 +518,7 @@ func sourceNameForDB(s string) any {
 	return s
 }
 
-func rateUserEventCount(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
+func rateUserEventCount(ctx context.Context, tx *sql.Tx, condition string, args ...any) (int64, error) {
 	query := "SELECT\n" +
 		" COUNT(*)\n" +
 		"FROM " + rateUserEventTableName + "\n" + condition
@@ -536,15 +536,15 @@ func rateUserEventCount(tx *sql.Tx, ctx context.Context, condition string, args 
 	return count, nil
 }
 
-func rateUserEventQueryContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (items []domain.RateUserEvent, err error) {
-	count, err := rateUserEventCount(tx, ctx, condition, args...)
+func rateUserEventQueryContext(ctx context.Context, tx *sql.Tx, condition string, args ...any) (items []domain.RateUserEvent, err error) {
+	count, err := rateUserEventCount(ctx, tx, condition, args...)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
-		return
+		return items, err
 	}
 	if count == 0 {
 		items = []domain.RateUserEvent{}
-		return
+		return items, err
 	}
 
 	query := rateUserEventSqlSelect + "\n" + condition
@@ -553,7 +553,7 @@ func rateUserEventQueryContext(tx *sql.Tx, ctx context.Context, condition string
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
 		err = errors.Join(err, loginjector.NewTraceError())
-		return
+		return items, err
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 
@@ -577,7 +577,7 @@ func rateUserEventQueryContext(tx *sql.Tx, ctx context.Context, condition string
 		)
 		if err != nil {
 			err = errors.Join(err, loginjector.NewTraceError())
-			return
+			return items, err
 		}
 
 		item.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
@@ -606,10 +606,10 @@ func rateUserEventQueryContext(tx *sql.Tx, ctx context.Context, condition string
 		return nil, err
 	}
 
-	return
+	return items, err
 }
 
-func rateUserEventQueryRowContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (*domain.RateUserEvent, error) {
+func rateUserEventQueryRowContext(ctx context.Context, tx *sql.Tx, condition string, args ...any) (*domain.RateUserEvent, error) {
 	query := rateUserEventSqlSelect + "\n" + condition
 
 	var item domain.RateUserEvent

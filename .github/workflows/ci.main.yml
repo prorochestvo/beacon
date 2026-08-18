@@ -25,10 +25,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # lint-new compares against LINT_BASE with --new-from-rev, and
-          # scripts/lint-checks.sh asks git what changed since it. The default
-          # shallow clone has neither the base commit nor the history to reach it,
-          # and both would fail on a ref that does not resolve rather than on code.
+          # Full history: the build stamps a version out of git, and lint-new — still
+          # in the Makefile for local use — resolves LINT_BASE through it. A shallow
+          # clone fails on a ref that does not resolve rather than on code, which is
+          # the least useful red a gate can produce.
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
@@ -41,14 +41,14 @@ jobs:
       # Tee each fail-prone step into a shared trace so the Telegram failure
       # notification can paste the real reason inline (see Notify failure).
       #
-      # lint-new, not lint: the tree carries standing findings that are being
-      # worked off under #68, so the full run is a worklist rather than a gate.
-      # Wiring CI to it would paint every branch red on findings its author did
-      # not introduce, which is how a gate stops being read.
+      # lint, not lint-new: the standing backlog is gone, so the full run is a
+      # gate rather than a worklist and a regression anywhere is caught, not only
+      # one on a line the author happened to touch. lint-new stays in the Makefile
+      # for fast local feedback on a branch.
       - name: Lint
         run: |
           exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
-          make lint-new
+          make lint
       - name: Test
         run: |
           exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1

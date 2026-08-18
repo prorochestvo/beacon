@@ -189,6 +189,11 @@ func main() {
 	}
 }
 
+// test binary sees the flags too. The rule this package does follow is the one
+// that matters: nothing here logs or exits, because a line written before the
+// logger exists goes to a stderr the cron wrappers discard.
+//
+//nolint:gochecknoinits // flag registration has to happen before main runs so the
 func init() {
 	// Register flags here so the test binary can see them, but do NOT call flag.Parse()
 	// in init() — it would consume go test's own flags before the testing package

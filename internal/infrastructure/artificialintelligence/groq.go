@@ -1,3 +1,5 @@
+package artificialintelligence
+
 // Groq client.
 //
 // The Groq REST API is OpenAI-compatible at the chat-completions path, so this
@@ -16,7 +18,6 @@
 // is the cheapest model in the strict-schema tier ($0.075/$0.30 per 1M tokens),
 // hence the default. Before changing it, verify the replacement model's
 // strict-schema support at https://console.groq.com/docs/structured-outputs.
-package artificialintelligence
 
 import (
 	"context"
