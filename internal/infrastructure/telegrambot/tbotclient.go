@@ -19,8 +19,11 @@ import (
 	"github.com/prorochestvo/loginjector"
 )
 
-// UpdateHandler is called for every incoming Telegram update in the event bus.
-type UpdateHandler func(ctx context.Context, update tgbotapi.Update)
+// updatePollTimeoutSeconds is the long-poll hold time asked of the Bot API. Thirty
+// seconds is Telegram's own recommendation: long enough that an idle bot makes two
+// requests a minute rather than a flood, short enough that a dropped connection is
+// noticed within one cycle.
+const updatePollTimeoutSeconds = 30
 
 // TelegramChatID is a typed int64 that identifies a Telegram chat or user.
 type TelegramChatID int64
@@ -184,30 +187,61 @@ func (tbot *TelegramBotClient) EditHTMLMessageWithKeyboard(
 	return nil
 }
 
-// Listen starts long-polling and dispatches every incoming update to handler.
-// Blocks until ctx is cancelled — run it in a goroutine.
-func (tbot *TelegramBotClient) Listen(ctx context.Context, handler UpdateHandler) {
-	log.Println("telegram: bot started listening for updates")
-	defer log.Println("telegram: bot stopped listening for updates")
+// Updates starts long-polling and returns a channel carrying every incoming
+// update. It returns immediately; the polling runs until ctx is cancelled or the
+// Bot API closes its own channel, and the returned channel is closed on the way
+// out so a consumer ranging over it ends with the context rather than having to
+// watch both.
+//
+// This hands out values rather than taking a callback because fetching updates is
+// protocol and deciding what one means is not: the dispatch loop belongs to the
+// gateway, and moving to webhooks should replace this method without touching a
+// handler.
+func (tbot *TelegramBotClient) Updates(ctx context.Context) <-chan tgbotapi.Update {
+	out := make(chan tgbotapi.Update)
 
-	isTerminated := false
-
-	cfg := tgbotapi.NewUpdate(0)
-	cfg.Timeout = 30
-	updates := tbot.bot.GetUpdatesChan(cfg)
-
-	for !isTerminated {
-		select {
-		case <-ctx.Done():
-			tbot.bot.StopReceivingUpdates()
-			isTerminated = true
-		case update, ok := <-updates:
-			if !ok {
-				return
-			}
-			handler(ctx, update)
-		}
+	// The client is handed a logger and, until now, never used it: these two lines
+	// went to the global one instead. Routing them through the field is what lets a
+	// caller — and the test below — see the loop start and stop.
+	logger := tbot.logger
+	if logger == nil {
+		logger = io.Discard
 	}
+
+	go func() {
+		defer close(out)
+
+		fmt.Fprintln(logger, "telegram: bot started listening for updates")
+		defer fmt.Fprintln(logger, "telegram: bot stopped listening for updates")
+
+		cfg := tgbotapi.NewUpdate(0)
+		cfg.Timeout = updatePollTimeoutSeconds
+		updates := tbot.bot.GetUpdatesChan(cfg)
+
+		for {
+			select {
+			case <-ctx.Done():
+				tbot.bot.StopReceivingUpdates()
+				return
+			case update, ok := <-updates:
+				if !ok {
+					return
+				}
+				// The send is guarded by ctx as well: a consumer that has stopped
+				// reading would otherwise pin this goroutine — and the poller behind
+				// it — past cancellation, which is the shutdown hang this loop exists
+				// to avoid.
+				select {
+				case out <- update:
+				case <-ctx.Done():
+					tbot.bot.StopReceivingUpdates()
+					return
+				}
+			}
+		}
+	}()
+
+	return out
 }
 
 // emit dispatches a Chattable message via the bot API, writes an access-log

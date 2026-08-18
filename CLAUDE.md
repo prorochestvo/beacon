@@ -90,10 +90,10 @@ source wants it. No source is opted in today, and the default is a measured deci
 | Layer | Location | Role |
 |-------|----------|------|
 | Entry point | `cmd/<binary>/` | Composition root per binary (collector, notifier, web, migrator, doctor, wasm) |
-| Application | `internal/application/` | Business logic: collection, notification, rulegen, sourceaudit, REST/Telegram services |
+| Application | `internal/application/` | What the answer is, free of transport: collection, notification, chart, digest, rulegen, sourceaudit |
 | Domain | `internal/domain/` | Value objects / models, no logic |
 | DTO | `internal/dto/` | JSON wire contract shared by the server (gateway) and the WASM client |
-| Gateway | `internal/gateway/` | Routers, controllers, middleware |
+| Gateway | `internal/gateway/` | Receiving and rendering: HTTP routers, middleware, Telegram update loop |
 | Repository | `internal/repository/` | Persistence queries |
 | Infrastructure | `internal/infrastructure/` | External clients (SQLite, Telegram, AI providers) |
 | Tools | `internal/tools/` | Cross-cutting utilities |
