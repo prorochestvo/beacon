@@ -129,7 +129,7 @@ func (c *openAICompatibleClient) ping(ctx context.Context, model, prompt, expect
 		c.logger.Printf("[ERR] %s %s (model=%s err=%v)", req.Method, req.URL.Path, model, err)
 		return errors.Join(fmt.Errorf("%s: checkup: do: %w", c.providerName, err), loginjector.NewTraceError())
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	c.logger.Printf("[%.3d] %s %s (model=%s)", resp.StatusCode, req.Method, req.URL.Path, model)
 
@@ -214,7 +214,7 @@ func (c *openAICompatibleClient) doRequest(ctx context.Context, urlPath string, 
 		c.logger.Printf("[ERR] %s %s (model=%s err=%v)", req.Method, req.URL.Path, reqBody.Model, err)
 		return "", errors.Join(fmt.Errorf("%s: %s: do: %w", c.providerName, op, err), loginjector.NewTraceError())
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	c.logger.Printf("[%.3d] %s %s (model=%s)", resp.StatusCode, req.Method, req.URL.Path, reqBody.Model)
 

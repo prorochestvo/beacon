@@ -96,11 +96,6 @@ func searchResponse(items []dto.WeatherCitySearchItem) []byte {
 	return mustMarshal(dto.WeatherCitySearchResponse{Items: items})
 }
 
-// createCityResponse marshals a dto.WeatherCityCreateResponse to JSON for fake fetcher setup.
-func createCityResponse(id string) []byte {
-	return mustMarshal(dto.WeatherCityCreateResponse{ID: id})
-}
-
 func TestMeWeatherCitiesPage_LoadCities(t *testing.T) {
 	t.Parallel()
 
@@ -608,18 +603,12 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 			ID: "c-alert", LocationID: "loc1", DisplayName: "Almaty",
 			Timezone: "Asia/Almaty", NotifyKind: "alert_heat", ConditionValue: "35",
 		}
-		f := &weatherFakeFetcher{
-			getJSON: map[string][]byte{
-				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow, savedRow}),
-			},
-		}
 		// First GET loads initial list; POST succeeds (no postErr); second GET after save.
 		initialFetcher := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
 				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
 			},
 		}
-		_ = f // reassigned below for the reload
 		page := application.NewMeWeatherCitiesPage(apiclient.New(initialFetcher), "init-token")
 		require.NoError(t, page.LoadCities(t.Context()))
 		// Swap fetcher so that post-save reload returns two rows.

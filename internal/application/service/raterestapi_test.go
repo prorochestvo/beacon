@@ -438,6 +438,7 @@ func (m *mockRateSourceRepository) ObtainRateSourceByName(_ context.Context, n s
 			return &s, nil
 		}
 	}
+	//nolint:nilnil // mirrors the repository contract this double stands in for
 	return nil, nil
 }
 

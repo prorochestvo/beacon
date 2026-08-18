@@ -31,7 +31,7 @@ func runBackfillAlertThaw(t *testing.T, db db) {
 	t.Helper()
 	tx, err := db.Transaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.Exec(backfillAlertThawSQL(t))
+	_, err = tx.ExecContext(t.Context(), backfillAlertThawSQL(t))
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 }

@@ -354,27 +354,3 @@ func renderWeatherAlertForm(state application.WeatherCitiesState) string {
 	b.WriteString(`</div>`)
 	return b.String()
 }
-
-// renderWeatherCityRow emits one saved-city row with a delete button.
-// Retained for backward compatibility; new code calls renderWeatherKindRow.
-// All displayed strings are escaped; id is stored in data-id on the delete button.
-func renderWeatherCityRow(id, displayName, country, admin1, timezone string, notifyHour int) string {
-	label := displayName
-	if admin1 != "" {
-		label += ", " + admin1
-	}
-	if country != "" {
-		label += ", " + country
-	}
-	return fmt.Sprintf(
-		`<li class="weather-city-row">`+
-			`<span class="weather-city-name">%s</span>`+
-			`<span class="weather-city-detail">%s · %02d:00</span>`+
-			`<button class="weather-city-delete" type="button" data-id="%s" aria-label="Remove city">✕</button>`+
-			`</li>`,
-		dom.Escape(label),
-		dom.Escape(timezone),
-		notifyHour,
-		dom.Escape(id),
-	)
-}

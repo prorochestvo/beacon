@@ -20,7 +20,7 @@ func TestLogger(t *testing.T) {
 			_, _ = w.Write([]byte("ok"))
 		}), &buf)
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil)
 		h.ServeHTTP(rec, req)
 		got := buf.String()
 		require.Contains(t, got, "middleware [200] GET /healthz",
@@ -34,7 +34,7 @@ func TestLogger(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		}), &buf)
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/missing", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/missing", nil)
 		h.ServeHTTP(rec, req)
 		require.Contains(t, buf.String(), "middleware [404] POST /api/missing")
 	})
@@ -47,7 +47,7 @@ func TestLogger(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 		}), &buf)
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPut, "/api/echo", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/api/echo", nil)
 		h.ServeHTTP(rec, req)
 		require.Contains(t, buf.String(), "middleware [202] PUT /api/echo")
 		require.False(t, strings.Contains(buf.String(), "[500]"),

@@ -33,7 +33,7 @@ func (f *httpFetcher) FetchJSON(ctx context.Context, method, url string, body an
 	if err != nil {
 		return nil, fmt.Errorf("fetch: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("http %d", resp.StatusCode)
 	}
@@ -56,7 +56,7 @@ func (f *httpFetcher) FetchNoContent(ctx context.Context, method, url string, bo
 	if err != nil {
 		return fmt.Errorf("fetch: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("http %d", resp.StatusCode)
 	}

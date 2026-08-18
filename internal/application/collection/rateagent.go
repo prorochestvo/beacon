@@ -86,8 +86,8 @@ func (a *RateAgent) Run(ctx context.Context) (err error) {
 		interval time.Duration,
 		now time.Time,
 	) bool {
-		records, err := repository.ObtainLastNExecutionHistoryBySourceName(ctx, sourceName, 1, true)
-		if err != nil || len(records) == 0 {
+		records, histErr := repository.ObtainLastNExecutionHistoryBySourceName(ctx, sourceName, 1, true)
+		if histErr != nil || len(records) == 0 {
 			return true
 		}
 		grace := interval >> 2
@@ -184,6 +184,7 @@ func (a *RateAgent) execution(ctx context.Context, sources []domain.RateSource) 
 			h.Error = errors.Join(runErr, loginjector.NewTraceError()).Error()
 		}
 
+		//nolint:contextcheck // persistCtx is deliberately detached; see the comment above its declaration
 		retainErr := a.executionHistoryRepository.RetainExecutionHistory(persistCtx, h)
 		combined := errors.Join(runErr, retainErr)
 		if combined != nil {

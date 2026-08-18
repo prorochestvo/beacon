@@ -114,7 +114,7 @@ func TestEveryMeRouteRejectsUnauthenticated(t *testing.T) {
 				t.Parallel()
 				mux := newAuthTestRouter(t)
 
-				req := httptest.NewRequest(route.method, route.path, nil)
+				req := httptest.NewRequestWithContext(t.Context(), route.method, route.path, nil)
 				for k, v := range header {
 					req.Header.Set(k, v)
 				}
@@ -260,7 +260,7 @@ func TestMeRoutesResolveThroughTheMount(t *testing.T) {
 			t.Parallel()
 			mux := newAuthTestRouter(t)
 
-			req := httptest.NewRequest(route.method, route.path, nil)
+			req := httptest.NewRequestWithContext(t.Context(), route.method, route.path, nil)
 			req.Header.Set("X-Telegram-Init-Data", signedInitData(t, authTestBotToken, 4242))
 			rec := httptest.NewRecorder()
 
@@ -297,7 +297,7 @@ func TestMeMountKeepsMethodMatching(t *testing.T) {
 	// exists, the verb does not.
 	mux := newAuthTestRouter(t)
 
-	req := httptest.NewRequest(http.MethodPut, routes.MeSubscriptions, nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, routes.MeSubscriptions, nil)
 	req.Header.Set("X-Telegram-Init-Data", signedInitData(t, authTestBotToken, 4242))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)

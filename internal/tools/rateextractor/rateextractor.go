@@ -361,7 +361,7 @@ func applyRulesAndStore(ctx context.Context, source *domain.RateSource, payload 
 			var f float64
 			p := bytes.ReplaceAll(payload, []byte(" "), []byte(""))
 			p = bytes.ReplaceAll(p, []byte(","), []byte("."))
-			f, err = strconv.ParseFloat(string(p), 10)
+			f, err = strconv.ParseFloat(string(p), 64)
 			if err != nil {
 				err = fmt.Errorf("could not parse rate value %s: %s", string(payload), err.Error())
 				err = errors.Join(err, loginjector.NewTraceError())

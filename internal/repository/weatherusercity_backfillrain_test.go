@@ -30,7 +30,7 @@ func runBackfillRainAlert(t *testing.T, db db) {
 	t.Helper()
 	tx, err := db.Transaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.Exec(backfillRainAlertSQL(t))
+	_, err = tx.ExecContext(t.Context(), backfillRainAlertSQL(t))
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 }

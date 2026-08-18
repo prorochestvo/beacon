@@ -18,7 +18,11 @@ import (
 // (read via fs.ReadDir(fsys, ".")) followed by any migrations returned by the
 // optional sources. Call Run to execute pending migrations.
 func NewMigrator(db committer, fsys fs.FS, sources ...source) (*Migrator, error) {
-	tx, err := db.Transaction(context.Background())
+	// No caller context reaches a constructor, and the ledger table has to exist
+	// before Run can be given one. The detached context is named here rather than
+	// implied by a call that takes none.
+	ctx := context.Background()
+	tx, err := db.Transaction(ctx)
 	if err != nil || tx == nil {
 		if err == nil {
 			err = errors.New("transaction is nil")
@@ -30,7 +34,7 @@ func NewMigrator(db committer, fsys fs.FS, sources ...source) (*Migrator, error)
 		_ = tx.Rollback()
 	}()
 
-	if _, err = tx.Exec(sqlCreateTable()); err != nil {
+	if _, err = tx.ExecContext(ctx, sqlCreateTable()); err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
@@ -98,7 +102,7 @@ func (m *Migrator) Run(ctx context.Context) error {
 		}
 
 		var exists bool
-		if err = tx.QueryRow(sqlLookupFileName(item.name)).Scan(&exists); err != nil {
+		if err = tx.QueryRowContext(ctx, sqlLookupFileName(item.name)).Scan(&exists); err != nil {
 			err = fmt.Errorf("migrations[%d]: check of the %s is failed, reason: %s", i, item.name, err.Error())
 			err = errors.Join(err, loginjector.NewTraceError())
 			return err

@@ -80,7 +80,8 @@ func NewSQLiteClientEx(db *sql.DB, logger io.Writer) (*SQLiteClient, error) {
 		"PRAGMA journal_mode=WAL;",
 		"PRAGMA busy_timeout=5000;",
 	} {
-		if _, err := db.Exec(pragma); err != nil {
+		// A constructor has no caller context; the detached one is deliberate.
+		if _, err := db.ExecContext(context.Background(), pragma); err != nil {
 			err = fmt.Errorf("set %s: %w", pragma, err)
 			err = errors.Join(err, db.Close())
 			err = errors.Join(err, loginjector.NewTraceError())

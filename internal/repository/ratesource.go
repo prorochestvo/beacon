@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/prorochestvo/loginjector"
@@ -125,7 +124,7 @@ func (r *RateSourceRepository) ObtainDistinctActivePairTriples(ctx context.Conte
 	if err != nil {
 		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
-	defer func(rows io.Closer) { err = errors.Join(err, rows.Close()) }(rows)
+	defer func() { err = errors.Join(err, rows.Close()) }()
 
 	out := make([]domain.SourcePairKey, 0, 32)
 	for rows.Next() {
@@ -413,7 +412,7 @@ func rateSourceQueryContext(tx *sql.Tx, ctx context.Context, condition string, a
 		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
-	defer func(rows io.Closer) { err = errors.Join(err, rows.Close()) }(rows)
+	defer func() { err = errors.Join(err, rows.Close()) }()
 
 	items = make([]domain.RateSource, 0, count)
 
@@ -496,6 +495,7 @@ func rateSourceQueryRowContext(tx *sql.Tx, ctx context.Context, condition string
 		&ruleMetadataJSON,
 	)
 	if err != nil && errors.Is(err, sql.ErrNoRows) {
+		//nolint:nilnil // (nil, nil) for "no such row" is this layer's contract, relied on by every caller
 		return nil, nil
 	} else if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))

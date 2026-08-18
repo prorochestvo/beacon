@@ -248,7 +248,7 @@ func TestHashedAssetRegistry_Serve(t *testing.T) {
 		require.True(t, ok)
 
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodGet, wasmURL, nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, wasmURL, nil)
 		serveHashedAsset(w, r, mapFS, entry)
 
 		result := w.Result()
@@ -267,7 +267,7 @@ func TestHashedAssetRegistry_Serve(t *testing.T) {
 		require.True(t, ok)
 
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodGet, wasmURL, nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, wasmURL, nil)
 		r.Header.Set("Accept-Encoding", "gzip")
 		serveHashedAsset(w, r, mapFS, entry)
 
@@ -302,7 +302,7 @@ func TestHashedAssetRegistry_Serve(t *testing.T) {
 		}
 
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodGet, url, nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
 		r.Header.Set("Accept-Encoding", "gzip")
 		serveHashedAsset(w, r, noGzFS, entry)
 
@@ -321,7 +321,7 @@ func TestHashedAssetRegistry_Serve(t *testing.T) {
 		require.True(t, ok)
 
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodGet, jsURL, nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, jsURL, nil)
 		serveHashedAsset(w, r, mapFS, entry)
 
 		result := w.Result()
@@ -456,7 +456,7 @@ func TestStaticHandler(t *testing.T) {
 	// helper to issue a GET and return the recorder.
 	get := func(t *testing.T, url string, headers ...string) *httptest.ResponseRecorder {
 		t.Helper()
-		r := httptest.NewRequest(http.MethodGet, url, nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
 		for i := 0; i+1 < len(headers); i += 2 {
 			r.Header.Set(headers[i], headers[i+1])
 		}
@@ -603,7 +603,7 @@ func TestStaticHandler(t *testing.T) {
 
 	t.Run("POST / is not served from HTML cache", func(t *testing.T) {
 		t.Parallel()
-		r := httptest.NewRequest(http.MethodPost, "/", nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", nil)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		result := w.Result()
@@ -703,7 +703,7 @@ func TestHTMLCache_Serve(t *testing.T) {
 	t.Run("GET returns true and writes body", func(t *testing.T) {
 		t.Parallel()
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
 		handled := c.serve(w, r)
 		assert.True(t, handled)
 		result := w.Result()
@@ -716,7 +716,7 @@ func TestHTMLCache_Serve(t *testing.T) {
 	t.Run("HEAD returns true", func(t *testing.T) {
 		t.Parallel()
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodHead, "/", nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodHead, "/", nil)
 		handled := c.serve(w, r)
 		assert.True(t, handled)
 		assert.Equal(t, "no-cache", w.Result().Header.Get("Cache-Control"))
@@ -725,7 +725,7 @@ func TestHTMLCache_Serve(t *testing.T) {
 	t.Run("POST returns false", func(t *testing.T) {
 		t.Parallel()
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodPost, "/", nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", nil)
 		handled := c.serve(w, r)
 		assert.False(t, handled)
 		assert.Equal(t, http.StatusOK, w.Code, "serve must not write to w when returning false")
@@ -738,7 +738,7 @@ func TestHTMLCache_Serve(t *testing.T) {
 	t.Run("DELETE returns false", func(t *testing.T) {
 		t.Parallel()
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodDelete, "/", nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/", nil)
 		handled := c.serve(w, r)
 		assert.False(t, handled)
 	})

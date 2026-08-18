@@ -1,6 +1,7 @@
 package sqlitedb
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"testing"
@@ -16,7 +17,7 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic("sqlitedb TestMain: prime sqlite open: " + err.Error())
 	}
-	if err = primeDB.Ping(); err != nil {
+	if err = primeDB.PingContext(context.Background()); err != nil {
 		panic("sqlitedb TestMain: prime sqlite ping: " + err.Error())
 	}
 	_ = primeDB.Close()
