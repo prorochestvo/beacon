@@ -25,8 +25,6 @@ import (
 )
 
 var _ meSubscriptionService = (*mockMeSubSvc)(nil)
-var _ meSubscriptionRepository = (*mockMeSubRepo)(nil)
-var _ meSourceRepository = (*mockMeSourceRepo)(nil)
 var _ meProfileRepository = (*mockMeProfileRepo)(nil)
 var _ rateService = (*mockRateService)(nil)
 var _ meChartService = (*mockMeChartService)(nil)
@@ -1053,82 +1051,6 @@ func (m *mockRateService) ObtainLastNExecutionHistoryErrors(_ context.Context, _
 	return m.historyItems, m.err
 }
 
-// mockMeSubRepo is a test double for meSubscriptionRepository.
-type mockMeSubRepo struct {
-	subs      map[string][]domain.RateUserSubscription
-	byID      map[string]*domain.RateUserSubscription
-	retained  []*domain.RateUserSubscription
-	removed   []*domain.RateUserSubscription
-	err       error
-	retainErr error
-	removeErr error
-}
-
-func (m *mockMeSubRepo) ObtainRateUserSubscriptionsByUserID(_ context.Context, _ domain.UserType, userID string) ([]domain.RateUserSubscription, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return m.subs[userID], nil
-}
-
-func (m *mockMeSubRepo) ObtainRateUserSubscriptionByID(_ context.Context, id string) (*domain.RateUserSubscription, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	if m.byID == nil {
-		return nil, nil
-	}
-	return m.byID[id], nil
-}
-
-func (m *mockMeSubRepo) RetainRateUserSubscription(_ context.Context, record *domain.RateUserSubscription) error {
-	if m.retainErr != nil {
-		return m.retainErr
-	}
-	if record.ID == "" {
-		record.ID = "generated-id"
-	}
-	m.retained = append(m.retained, record)
-	return nil
-}
-
-func (m *mockMeSubRepo) RemoveRateUserSubscription(_ context.Context, record *domain.RateUserSubscription) error {
-	if m.removeErr != nil {
-		return m.removeErr
-	}
-	m.removed = append(m.removed, record)
-	return nil
-}
-
-// mockMeSourceRepo is a test double for meSourceRepository.
-type mockMeSourceRepo struct {
-	sources map[string]*domain.RateSource
-	err     error
-}
-
-func (m *mockMeSourceRepo) ObtainRateSourceByName(_ context.Context, name string) (*domain.RateSource, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	if m.sources == nil {
-		return nil, nil
-	}
-	return m.sources[name], nil
-}
-
-func (m *mockMeSourceRepo) ObtainRateSourcesByNames(_ context.Context, names []string) (map[string]domain.RateSource, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	out := make(map[string]domain.RateSource, len(names))
-	for _, n := range names {
-		if s, ok := m.sources[n]; ok && s != nil {
-			out[n] = *s
-		}
-	}
-	return out, nil
-}
-
 // mockMeSubSvc is a test double for meSubscriptionService. It records the
 // arguments the handler derived from the request so the query-string parsing can
 // be asserted, and replays whatever the test staged.
@@ -1140,10 +1062,40 @@ type mockMeSubSvc struct {
 	rawRows []appsub.ConditionRow
 	rawErr  error
 
+	createID  string
+	createErr error
+	updateErr error
+	deleteErr error
+
 	gotUserID   string
 	gotQuery    string
 	gotPage     int64
 	gotPageSize int64
+
+	gotID     string
+	gotCreate *appsub.NewSubscription
+	gotUpdate *appsub.ConditionUpdate
+}
+
+func (m *mockMeSubSvc) CreateMeSubscription(_ context.Context, userID string, req appsub.NewSubscription) (string, error) {
+	m.gotUserID, m.gotCreate = userID, &req
+	if m.createErr != nil {
+		return "", m.createErr
+	}
+	if m.createID == "" {
+		return "generated-id", nil
+	}
+	return m.createID, nil
+}
+
+func (m *mockMeSubSvc) UpdateMeSubscription(_ context.Context, userID, id string, upd appsub.ConditionUpdate) error {
+	m.gotUserID, m.gotID, m.gotUpdate = userID, id, &upd
+	return m.updateErr
+}
+
+func (m *mockMeSubSvc) DeleteMeSubscription(_ context.Context, userID, id string) error {
+	m.gotUserID, m.gotID = userID, id
+	return m.deleteErr
 }
 
 func (m *mockMeSubSvc) ObtainMeSubscriptions(_ context.Context, userID, query string, page, pageSize int64) ([]appsub.SourceRow, int64, error) {
@@ -2342,71 +2294,71 @@ func TestHandler_ListMeSubscriptionsRaw(t *testing.T) {
 	})
 }
 
+// TestHandler_CreateMeSubscription covers what the handler still owns: reading
+// the body, handing the caller and the request to the application service, and
+// turning what comes back into a status. The rules — an unknown source, an
+// unparseable condition — are exercised in internal/application/subscription.
 func TestHandler_CreateMeSubscription(t *testing.T) {
 	t.Parallel()
 
 	const callerID = int64(42)
-	callerIDStr := strconv.FormatInt(callerID, 10)
-
-	validSrc := &domain.RateSource{
-		Name:          "src_a",
-		Title:         "Source A",
-		BaseCurrency:  "USD",
-		QuoteCurrency: "KZT",
-		Active:        true,
-	}
 
 	newReq := func(body string) *http.Request {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/subscriptions", strings.NewReader(body))
-		req.Header.Set("X-Telegram-Init-Data", "valid")
 		req.Header.Set("Content-Type", "application/json")
 		return req
 	}
 
-	t.Run("201 created with generated ID", func(t *testing.T) {
+	t.Run("201 with the generated id, built from the caller and the body", func(t *testing.T) {
 		t.Parallel()
 
-		subRepo := &mockMeSubRepo{}
-		sourceRepo := &mockMeSourceRepo{sources: map[string]*domain.RateSource{"src_a": validSrc}}
-
-		h := newTestHandler(t, Config{
-			MeSubRepo:    subRepo,
-			MeSourceRepo: sourceRepo,
-		})
+		svc := &mockMeSubSvc{createID: "sub-new"}
+		h := newTestHandler(t, Config{MeSubSvc: svc})
 		rr := httptest.NewRecorder()
 		h.CreateMeSubscription(rr, withCaller(newReq(`{"source_name":"src_a","condition_type":"delta","condition_value":"5"}`), callerID))
 
 		require.Equal(t, http.StatusCreated, rr.Code)
 		var resp dto.MeSubscriptionCreateResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
-		assert.NotEmpty(t, resp.ID)
+		assert.Equal(t, "sub-new", resp.ID)
 
-		require.Len(t, subRepo.retained, 1)
-		assert.Equal(t, callerIDStr, subRepo.retained[0].UserID)
-		assert.Equal(t, domain.UserTypeTelegram, subRepo.retained[0].UserType)
-		assert.Equal(t, "src_a", subRepo.retained[0].SourceName)
-		assert.Equal(t, domain.ConditionTypeDelta, subRepo.retained[0].ConditionType)
-		assert.Equal(t, "5", subRepo.retained[0].ConditionValue)
+		assert.Equal(t, "42", svc.gotUserID, "ownership comes from the authenticated caller, never from the body")
+		require.NotNil(t, svc.gotCreate)
+		assert.Equal(t, "src_a", svc.gotCreate.SourceName)
+		assert.Equal(t, domain.ConditionTypeDelta, svc.gotCreate.ConditionType)
+		assert.Equal(t, "5", svc.gotCreate.ConditionValue)
 	})
 
-	t.Run("400 on malformed JSON body", func(t *testing.T) {
+	t.Run("400 on a malformed body, before the service is reached", func(t *testing.T) {
 		t.Parallel()
 
-		h := newTestHandler(t, Config{})
+		svc := &mockMeSubSvc{}
+		h := newTestHandler(t, Config{MeSubSvc: svc})
 		rr := httptest.NewRecorder()
 		h.CreateMeSubscription(rr, withCaller(newReq(`not-json`), callerID))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Contains(t, rr.Body.String(), "invalid request body")
+		assert.Nil(t, svc.gotCreate)
 	})
 
-	t.Run("400 on unknown source", func(t *testing.T) {
+	t.Run("400 on a body exceeding 4 KiB", func(t *testing.T) {
 		t.Parallel()
 
-		sourceRepo := &mockMeSourceRepo{sources: map[string]*domain.RateSource{}} // source not present
-		h := newTestHandler(t, Config{
-			MeSourceRepo: sourceRepo,
-		})
+		svc := &mockMeSubSvc{}
+		h := newTestHandler(t, Config{MeSubSvc: svc})
+		rr := httptest.NewRecorder()
+		h.CreateMeSubscription(rr, withCaller(newReq(strings.Repeat("x", 5<<10)), callerID))
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		assert.Nil(t, svc.gotCreate)
+	})
+
+	t.Run("a PublicError from the service becomes a 400 carrying its message", func(t *testing.T) {
+		t.Parallel()
+
+		svc := &mockMeSubSvc{createErr: internal.NewPublicError("unknown source")}
+		h := newTestHandler(t, Config{MeSubSvc: svc})
 		rr := httptest.NewRecorder()
 		h.CreateMeSubscription(rr, withCaller(newReq(`{"source_name":"no_such","condition_type":"delta","condition_value":"5"}`), callerID))
 
@@ -2414,95 +2366,17 @@ func TestHandler_CreateMeSubscription(t *testing.T) {
 		require.Contains(t, rr.Body.String(), "unknown source")
 	})
 
-	t.Run("400 on invalid condition type", func(t *testing.T) {
+	t.Run("500 on any other service failure, with the detail kept out of the body", func(t *testing.T) {
 		t.Parallel()
 
-		sourceRepo := &mockMeSourceRepo{sources: map[string]*domain.RateSource{"src_a": validSrc}}
-		h := newTestHandler(t, Config{
-			MeSourceRepo: sourceRepo,
-		})
-		rr := httptest.NewRecorder()
-		h.CreateMeSubscription(rr, withCaller(newReq(`{"source_name":"src_a","condition_type":"bogus","condition_value":"5"}`), callerID))
-
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-		require.Contains(t, rr.Body.String(), "invalid condition")
-	})
-
-	t.Run("400 on invalid condition value delta", func(t *testing.T) {
-		t.Parallel()
-
-		sourceRepo := &mockMeSourceRepo{sources: map[string]*domain.RateSource{"src_a": validSrc}}
-		h := newTestHandler(t, Config{
-			MeSourceRepo: sourceRepo,
-		})
-		rr := httptest.NewRecorder()
-		h.CreateMeSubscription(rr, withCaller(newReq(`{"source_name":"src_a","condition_type":"delta","condition_value":"not-a-number"}`), callerID))
-
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-		require.Contains(t, rr.Body.String(), "invalid condition")
-	})
-
-	t.Run("400 on invalid condition value interval", func(t *testing.T) {
-		t.Parallel()
-
-		sourceRepo := &mockMeSourceRepo{sources: map[string]*domain.RateSource{"src_a": validSrc}}
-		h := newTestHandler(t, Config{
-			MeSourceRepo: sourceRepo,
-		})
-		rr := httptest.NewRecorder()
-		h.CreateMeSubscription(rr, withCaller(newReq(`{"source_name":"src_a","condition_type":"interval","condition_value":"30s"}`), callerID))
-
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-		require.Contains(t, rr.Body.String(), "invalid condition")
-	})
-
-	t.Run("400 on invalid condition value daily", func(t *testing.T) {
-		t.Parallel()
-
-		sourceRepo := &mockMeSourceRepo{sources: map[string]*domain.RateSource{"src_a": validSrc}}
-		h := newTestHandler(t, Config{
-			MeSourceRepo: sourceRepo,
-		})
-		rr := httptest.NewRecorder()
-		h.CreateMeSubscription(rr, withCaller(newReq(`{"source_name":"src_a","condition_type":"daily","condition_value":"not-a-time"}`), callerID))
-
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-		require.Contains(t, rr.Body.String(), "invalid condition")
-	})
-
-	t.Run("500 on source repo failure", func(t *testing.T) {
-		t.Parallel()
-
-		sourceRepo := &mockMeSourceRepo{err: errors.New("db down")}
-		h := newTestHandler(t, Config{
-			MeSourceRepo: sourceRepo,
-		})
-		h.logger = log.New(log.Writer(), "", 0)
-
+		h := newTestHandler(t, Config{MeSubSvc: &mockMeSubSvc{createErr: errors.New("db down")}})
+		h.logger = log.New(io.Discard, "", 0)
 		rr := httptest.NewRecorder()
 		h.CreateMeSubscription(rr, withCaller(newReq(`{"source_name":"src_a","condition_type":"delta","condition_value":"5"}`), callerID))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		require.Contains(t, rr.Body.String(), "internal error")
-	})
-
-	t.Run("500 on retain repo failure", func(t *testing.T) {
-		t.Parallel()
-
-		subRepo := &mockMeSubRepo{retainErr: errors.New("db down")}
-		sourceRepo := &mockMeSourceRepo{sources: map[string]*domain.RateSource{"src_a": validSrc}}
-
-		h := newTestHandler(t, Config{
-			MeSubRepo:    subRepo,
-			MeSourceRepo: sourceRepo,
-		})
-		h.logger = log.New(log.Writer(), "", 0)
-
-		rr := httptest.NewRecorder()
-		h.CreateMeSubscription(rr, withCaller(newReq(`{"source_name":"src_a","condition_type":"delta","condition_value":"5"}`), callerID))
-
-		require.Equal(t, http.StatusInternalServerError, rr.Code)
-		require.Contains(t, rr.Body.String(), "internal error")
+		assert.NotContains(t, rr.Body.String(), "db down")
 	})
 }
 
@@ -2510,168 +2384,106 @@ func TestHandler_UpdateMeSubscription(t *testing.T) {
 	t.Parallel()
 
 	const callerID = int64(10)
-	const otherID = int64(20)
-	callerIDStr := strconv.FormatInt(callerID, 10)
-	otherIDStr := strconv.FormatInt(otherID, 10)
-
-	existingSub := &domain.RateUserSubscription{
-		ID:             "sub-001",
-		UserType:       domain.UserTypeTelegram,
-		UserID:         callerIDStr,
-		SourceName:     "src_a",
-		ConditionType:  domain.ConditionTypeDelta,
-		ConditionValue: "5",
-	}
 
 	newReq := func(id, body string) *http.Request {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/me/subscriptions/"+id, strings.NewReader(body))
-		req.Header.Set("X-Telegram-Init-Data", "valid")
 		req.Header.Set("Content-Type", "application/json")
 		req.SetPathValue("id", id)
 		return req
 	}
 
-	t.Run("204 on successful update", func(t *testing.T) {
+	t.Run("204 on success, forwarding the caller, the id and the condition", func(t *testing.T) {
 		t.Parallel()
 
-		sub := *existingSub
-		subRepo := &mockMeSubRepo{
-			byID: map[string]*domain.RateUserSubscription{"sub-001": &sub},
-		}
-		h := newTestHandler(t, Config{
-			MeSubRepo: subRepo,
-		})
+		svc := &mockMeSubSvc{}
+		h := newTestHandler(t, Config{MeSubSvc: svc})
 		rr := httptest.NewRecorder()
 		h.UpdateMeSubscription(rr, withCaller(newReq("sub-001", `{"condition_type":"interval","condition_value":"1h"}`), callerID))
 
 		require.Equal(t, http.StatusNoContent, rr.Code)
-		require.Len(t, subRepo.retained, 1)
-		assert.Equal(t, domain.ConditionTypeInterval, subRepo.retained[0].ConditionType)
-		assert.Equal(t, "1h", subRepo.retained[0].ConditionValue)
+		assert.Equal(t, "10", svc.gotUserID)
+		assert.Equal(t, "sub-001", svc.gotID)
+		require.NotNil(t, svc.gotUpdate)
+		assert.Equal(t, domain.ConditionTypeInterval, svc.gotUpdate.ConditionType)
+		assert.Equal(t, "1h", svc.gotUpdate.ConditionValue)
 	})
 
-	t.Run("404 on missing subscription", func(t *testing.T) {
+	t.Run("404 on a missing subscription and on another user's", func(t *testing.T) {
 		t.Parallel()
 
-		subRepo := &mockMeSubRepo{byID: map[string]*domain.RateUserSubscription{}}
-		h := newTestHandler(t, Config{
-			MeSubRepo: subRepo,
-		})
-		rr := httptest.NewRecorder()
-		h.UpdateMeSubscription(rr, withCaller(newReq("no-such", `{"condition_type":"delta","condition_value":"1"}`), callerID))
-
-		require.Equal(t, http.StatusNotFound, rr.Code)
-		require.Contains(t, rr.Body.String(), "subscription not found")
-	})
-
-	t.Run("404 on cross-user access (ownership mismatch)", func(t *testing.T) {
-		t.Parallel()
-
-		otherSub := &domain.RateUserSubscription{
-			ID:             "sub-other",
-			UserType:       domain.UserTypeTelegram,
-			UserID:         otherIDStr,
-			SourceName:     "src_a",
-			ConditionType:  domain.ConditionTypeDelta,
-			ConditionValue: "3",
-		}
-		subRepo := &mockMeSubRepo{byID: map[string]*domain.RateUserSubscription{"sub-other": otherSub}}
-		h := newTestHandler(t, Config{
-			MeSubRepo: subRepo,
-		})
+		// One sentinel covers both, so there is one response and no way to tell
+		// a row that does not exist from one that belongs to somebody else.
+		svc := &mockMeSubSvc{updateErr: internal.ErrNotFound}
+		h := newTestHandler(t, Config{MeSubSvc: svc})
 		rr := httptest.NewRecorder()
 		h.UpdateMeSubscription(rr, withCaller(newReq("sub-other", `{"condition_type":"delta","condition_value":"1"}`), callerID))
 
-		require.Equal(t, http.StatusNotFound, rr.Code)
+		require.Equal(t, http.StatusNotFound, rr.Code,
+			"another user's subscription is 404, never 403 — a 403 confirms it exists")
 		require.Contains(t, rr.Body.String(), "subscription not found")
 	})
 
-	t.Run("400 on malformed body", func(t *testing.T) {
+	t.Run("400 on a missing id, before the service is reached", func(t *testing.T) {
 		t.Parallel()
 
-		sub := *existingSub
-		subRepo := &mockMeSubRepo{byID: map[string]*domain.RateUserSubscription{"sub-001": &sub}}
-		h := newTestHandler(t, Config{
-			MeSubRepo: subRepo,
-		})
+		svc := &mockMeSubSvc{}
+		h := newTestHandler(t, Config{MeSubSvc: svc})
+		rr := httptest.NewRecorder()
+		h.UpdateMeSubscription(rr, withCaller(newReq("", `{"condition_type":"delta","condition_value":"1"}`), callerID))
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		require.Contains(t, rr.Body.String(), "missing subscription id")
+		assert.Empty(t, svc.gotID)
+	})
+
+	t.Run("400 on a malformed body", func(t *testing.T) {
+		t.Parallel()
+
+		svc := &mockMeSubSvc{}
+		h := newTestHandler(t, Config{MeSubSvc: svc})
 		rr := httptest.NewRecorder()
 		h.UpdateMeSubscription(rr, withCaller(newReq("sub-001", `not-json`), callerID))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Contains(t, rr.Body.String(), "invalid request body")
+		assert.Empty(t, svc.gotID)
 	})
 
-	t.Run("400 on invalid condition", func(t *testing.T) {
+	t.Run("400 on a body exceeding 4 KiB", func(t *testing.T) {
 		t.Parallel()
 
-		sub := *existingSub
-		subRepo := &mockMeSubRepo{byID: map[string]*domain.RateUserSubscription{"sub-001": &sub}}
-		h := newTestHandler(t, Config{
-			MeSubRepo: subRepo,
-		})
+		svc := &mockMeSubSvc{}
+		h := newTestHandler(t, Config{MeSubSvc: svc})
 		rr := httptest.NewRecorder()
-		h.UpdateMeSubscription(rr, withCaller(newReq("sub-001", `{"condition_type":"unknown","condition_value":"x"}`), callerID))
+		h.UpdateMeSubscription(rr, withCaller(newReq("sub-001", strings.Repeat("x", 5<<10)), callerID))
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		require.Contains(t, rr.Body.String(), "invalid request body")
+		assert.Empty(t, svc.gotID, "the cap has to bite before the ownership query, not after it")
+	})
+
+	t.Run("a PublicError from the service becomes a 400 carrying its message", func(t *testing.T) {
+		t.Parallel()
+
+		svc := &mockMeSubSvc{updateErr: internal.NewPublicError("invalid condition value for delta: check the format and try again")}
+		h := newTestHandler(t, Config{MeSubSvc: svc})
+		rr := httptest.NewRecorder()
+		h.UpdateMeSubscription(rr, withCaller(newReq("sub-001", `{"condition_type":"delta","condition_value":"x"}`), callerID))
 
 		require.Equal(t, http.StatusBadRequest, rr.Code)
 		require.Contains(t, rr.Body.String(), "invalid condition")
 	})
 
-	t.Run("500 on lookup failure", func(t *testing.T) {
+	t.Run("500 on any other service failure", func(t *testing.T) {
 		t.Parallel()
 
-		subRepo := &mockMeSubRepo{err: errors.New("db down")}
-		h := newTestHandler(t, Config{
-			MeSubRepo: subRepo,
-		})
-		h.logger = log.New(log.Writer(), "", 0)
-
+		h := newTestHandler(t, Config{MeSubSvc: &mockMeSubSvc{updateErr: errors.New("db down")}})
+		h.logger = log.New(io.Discard, "", 0)
 		rr := httptest.NewRecorder()
 		h.UpdateMeSubscription(rr, withCaller(newReq("sub-001", `{"condition_type":"delta","condition_value":"1"}`), callerID))
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		require.Contains(t, rr.Body.String(), "internal error")
-	})
-
-	t.Run("500 on retain failure", func(t *testing.T) {
-		t.Parallel()
-
-		sub := *existingSub
-		subRepo := &mockMeSubRepo{
-			byID:      map[string]*domain.RateUserSubscription{"sub-001": &sub},
-			retainErr: errors.New("db down"),
-		}
-		h := newTestHandler(t, Config{
-			MeSubRepo: subRepo,
-		})
-		h.logger = log.New(log.Writer(), "", 0)
-
-		rr := httptest.NewRecorder()
-		h.UpdateMeSubscription(rr, withCaller(newReq("sub-001", `{"condition_type":"interval","condition_value":"1h"}`), callerID))
-
-		require.Equal(t, http.StatusInternalServerError, rr.Code)
-		require.Contains(t, rr.Body.String(), "internal error")
-	})
-
-	t.Run("400 on body exceeding 4 KiB", func(t *testing.T) {
-		t.Parallel()
-
-		sub := *existingSub
-		subRepo := &mockMeSubRepo{byID: map[string]*domain.RateUserSubscription{"sub-001": &sub}}
-		h := newTestHandler(t, Config{
-			MeSubRepo: subRepo,
-		})
-		// 5 KiB body — exceeds the 4 KiB MaxBytesReader limit.
-		bigBody := strings.Repeat("x", 5<<10)
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/me/subscriptions/sub-001", strings.NewReader(bigBody))
-		req.Header.Set("X-Telegram-Init-Data", "valid")
-		req.Header.Set("Content-Type", "application/json")
-		req.SetPathValue("id", "sub-001")
-
-		rr := httptest.NewRecorder()
-		h.UpdateMeSubscription(rr, withCaller(req, callerID))
-
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-		require.Contains(t, rr.Body.String(), "invalid request body")
 	})
 }
 
@@ -2679,107 +2491,56 @@ func TestHandler_DeleteMeSubscription(t *testing.T) {
 	t.Parallel()
 
 	const callerID = int64(10)
-	const otherID = int64(20)
-	callerIDStr := strconv.FormatInt(callerID, 10)
-	otherIDStr := strconv.FormatInt(otherID, 10)
-
-	existingSub := &domain.RateUserSubscription{
-		ID:             "sub-001",
-		UserType:       domain.UserTypeTelegram,
-		UserID:         callerIDStr,
-		SourceName:     "src_a",
-		ConditionType:  domain.ConditionTypeDelta,
-		ConditionValue: "5",
-	}
 
 	newReq := func(id string) *http.Request {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/me/subscriptions/"+id, http.NoBody)
-		req.Header.Set("X-Telegram-Init-Data", "valid")
 		req.SetPathValue("id", id)
 		return req
 	}
 
-	t.Run("204 on successful delete", func(t *testing.T) {
+	t.Run("204 on success, forwarding the caller and the id", func(t *testing.T) {
 		t.Parallel()
 
-		sub := *existingSub
-		subRepo := &mockMeSubRepo{byID: map[string]*domain.RateUserSubscription{"sub-001": &sub}}
-		h := newTestHandler(t, Config{
-			MeSubRepo: subRepo,
-		})
+		svc := &mockMeSubSvc{}
+		h := newTestHandler(t, Config{MeSubSvc: svc})
 		rr := httptest.NewRecorder()
 		h.DeleteMeSubscription(rr, withCaller(newReq("sub-001"), callerID))
 
 		require.Equal(t, http.StatusNoContent, rr.Code)
-		require.Len(t, subRepo.removed, 1)
-		assert.Equal(t, "sub-001", subRepo.removed[0].ID)
+		assert.Equal(t, "10", svc.gotUserID)
+		assert.Equal(t, "sub-001", svc.gotID)
 	})
 
-	t.Run("404 on missing subscription", func(t *testing.T) {
+	t.Run("404 on a missing subscription and on another user's", func(t *testing.T) {
 		t.Parallel()
 
-		subRepo := &mockMeSubRepo{byID: map[string]*domain.RateUserSubscription{}}
-		h := newTestHandler(t, Config{
-			MeSubRepo: subRepo,
-		})
-		rr := httptest.NewRecorder()
-		h.DeleteMeSubscription(rr, withCaller(newReq("no-such"), callerID))
-
-		require.Equal(t, http.StatusNotFound, rr.Code)
-		require.Contains(t, rr.Body.String(), "subscription not found")
-	})
-
-	t.Run("404 on cross-user access (ownership mismatch)", func(t *testing.T) {
-		t.Parallel()
-
-		otherSub := &domain.RateUserSubscription{
-			ID:             "sub-other",
-			UserType:       domain.UserTypeTelegram,
-			UserID:         otherIDStr,
-			SourceName:     "src_a",
-			ConditionType:  domain.ConditionTypeDelta,
-			ConditionValue: "3",
-		}
-		subRepo := &mockMeSubRepo{byID: map[string]*domain.RateUserSubscription{"sub-other": otherSub}}
-		h := newTestHandler(t, Config{
-			MeSubRepo: subRepo,
-		})
+		h := newTestHandler(t, Config{MeSubSvc: &mockMeSubSvc{deleteErr: internal.ErrNotFound}})
 		rr := httptest.NewRecorder()
 		h.DeleteMeSubscription(rr, withCaller(newReq("sub-other"), callerID))
 
-		require.Equal(t, http.StatusNotFound, rr.Code)
+		require.Equal(t, http.StatusNotFound, rr.Code,
+			"another user's subscription is 404, never 403 — a 403 confirms it exists")
 		require.Contains(t, rr.Body.String(), "subscription not found")
 	})
 
-	t.Run("500 on lookup failure", func(t *testing.T) {
+	t.Run("400 on a missing id, before the service is reached", func(t *testing.T) {
 		t.Parallel()
 
-		subRepo := &mockMeSubRepo{err: errors.New("db down")}
-		h := newTestHandler(t, Config{
-			MeSubRepo: subRepo,
-		})
-		h.logger = log.New(log.Writer(), "", 0)
-
+		svc := &mockMeSubSvc{}
+		h := newTestHandler(t, Config{MeSubSvc: svc})
 		rr := httptest.NewRecorder()
-		h.DeleteMeSubscription(rr, withCaller(newReq("sub-001"), callerID))
+		h.DeleteMeSubscription(rr, withCaller(newReq(""), callerID))
 
-		require.Equal(t, http.StatusInternalServerError, rr.Code)
-		require.Contains(t, rr.Body.String(), "internal error")
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		require.Contains(t, rr.Body.String(), "missing subscription id")
+		assert.Empty(t, svc.gotID)
 	})
 
-	t.Run("500 on remove failure", func(t *testing.T) {
+	t.Run("500 on any other service failure", func(t *testing.T) {
 		t.Parallel()
 
-		sub := *existingSub
-		subRepo := &mockMeSubRepo{
-			byID:      map[string]*domain.RateUserSubscription{"sub-001": &sub},
-			removeErr: errors.New("db down"),
-		}
-		h := newTestHandler(t, Config{
-			MeSubRepo: subRepo,
-		})
-		h.logger = log.New(log.Writer(), "", 0)
-
+		h := newTestHandler(t, Config{MeSubSvc: &mockMeSubSvc{deleteErr: errors.New("db down")}})
+		h.logger = log.New(io.Discard, "", 0)
 		rr := httptest.NewRecorder()
 		h.DeleteMeSubscription(rr, withCaller(newReq("sub-001"), callerID))
 
@@ -2800,8 +2561,6 @@ func TestNewHandler_Config(t *testing.T) {
 		return Config{
 			RateService:     &mockRateService{},
 			MeSubSvc:        &mockMeSubSvc{},
-			MeSubRepo:       &mockMeSubRepo{},
-			MeSourceRepo:    &mockMeSourceRepo{},
 			MeProfileRepo:   &mockMeProfileRepo{},
 			MeWeatherSvc:    &mockMeWeatherSvc{},
 			WeatherCityRepo: &mockWeatherCityRepo{},
@@ -2821,8 +2580,6 @@ func TestNewHandler_Config(t *testing.T) {
 		clear := map[string]func(*Config){
 			"RateService":     func(c *Config) { c.RateService = nil },
 			"MeSubSvc":        func(c *Config) { c.MeSubSvc = nil },
-			"MeSubRepo":       func(c *Config) { c.MeSubRepo = nil },
-			"MeSourceRepo":    func(c *Config) { c.MeSourceRepo = nil },
 			"MeProfileRepo":   func(c *Config) { c.MeProfileRepo = nil },
 			"MeWeatherSvc":    func(c *Config) { c.MeWeatherSvc = nil },
 			"WeatherCityRepo": func(c *Config) { c.WeatherCityRepo = nil },
@@ -2846,8 +2603,8 @@ func TestNewHandler_Config(t *testing.T) {
 		_, err := NewHandler(Config{})
 		require.Error(t, err)
 		for _, name := range []string{
-			"RateService", "MeSubSvc", "MeSubRepo", "MeSourceRepo",
-			"MeProfileRepo", "MeWeatherSvc", "WeatherCityRepo", "WeatherGeocoder",
+			"RateService", "MeSubSvc", "MeProfileRepo",
+			"MeWeatherSvc", "WeatherCityRepo", "WeatherGeocoder",
 		} {
 			require.Contains(t, err.Error(), name)
 		}
@@ -2893,12 +2650,6 @@ func newTestHandler(t *testing.T, cfg Config) *Handler {
 	}
 	if cfg.MeSubSvc == nil {
 		cfg.MeSubSvc = &mockMeSubSvc{}
-	}
-	if cfg.MeSubRepo == nil {
-		cfg.MeSubRepo = &mockMeSubRepo{}
-	}
-	if cfg.MeSourceRepo == nil {
-		cfg.MeSourceRepo = &mockMeSourceRepo{}
 	}
 	if cfg.MeProfileRepo == nil {
 		cfg.MeProfileRepo = &mockMeProfileRepo{}

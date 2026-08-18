@@ -198,7 +198,7 @@ func main() {
 	}
 	geoAdapter := &openMeteoGeoAdapter{client: openMeteoClient}
 
-	mux, err := gateway.NewGateway(restAPI, botToken, subSvc, subscriptionRepo, sourceRepo, profileRepo, chartSvc, healthAgent, BuildVersion, serviceStart, gateway.WeatherGatewayDeps{
+	mux, err := gateway.NewGateway(restAPI, botToken, subSvc, profileRepo, chartSvc, healthAgent, BuildVersion, serviceStart, gateway.WeatherGatewayDeps{
 		Service:  weatherSvc,
 		CityRepo: weatherCityRepo,
 		Geocoder: geoAdapter,

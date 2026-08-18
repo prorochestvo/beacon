@@ -7,23 +7,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 var (
-	_ SubscriptionsLoader = (*stubSubscriptions)(nil)
-	_ SourcesLoader       = (*stubSources)(nil)
-	_ ValuesLoader        = (*stubValues)(nil)
+	_ SubscriptionsStore = (*stubSubscriptions)(nil)
+	_ SourcesLoader      = (*stubSources)(nil)
+	_ ValuesLoader       = (*stubValues)(nil)
 )
 
 // stubSubscriptions serves subscriptions keyed by user id and records the
 // (userType, userID) pair it was asked for, so a test can prove the service
-// scopes the read to one caller.
+// scopes the read to one caller. byID backs the ownership look-up, and a miss
+// answers (nil, nil) exactly as the repository does.
 type stubSubscriptions struct {
 	byUser map[string][]domain.RateUserSubscription
+	byID   map[string]*domain.RateUserSubscription
 	err    error
+
+	retainErr error
+	removeErr error
+
+	retained []*domain.RateUserSubscription
+	removed  []*domain.RateUserSubscription
 
 	askedUserType domain.UserType
 	askedUserID   string
@@ -40,8 +49,34 @@ func (s *stubSubscriptions) ObtainRateUserSubscriptionsByUserID(_ context.Contex
 	return append([]domain.RateUserSubscription(nil), s.byUser[userID]...), nil
 }
 
+func (s *stubSubscriptions) ObtainRateUserSubscriptionByID(_ context.Context, id string) (*domain.RateUserSubscription, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.byID[id], nil
+}
+
+func (s *stubSubscriptions) RetainRateUserSubscription(_ context.Context, record *domain.RateUserSubscription) error {
+	if s.retainErr != nil {
+		return s.retainErr
+	}
+	if record.ID == "" {
+		record.ID = "generated-id"
+	}
+	s.retained = append(s.retained, record)
+	return nil
+}
+
+func (s *stubSubscriptions) RemoveRateUserSubscription(_ context.Context, record *domain.RateUserSubscription) error {
+	if s.removeErr != nil {
+		return s.removeErr
+	}
+	s.removed = append(s.removed, record)
+	return nil
+}
+
 // stubSources resolves source metadata; a name absent from sources is simply
-// missing from the returned map, as the repository behaves.
+// missing from the returned map (or a nil record), as the repository behaves.
 type stubSources struct {
 	sources map[string]domain.RateSource
 	err     error
@@ -58,6 +93,16 @@ func (s *stubSources) ObtainRateSourcesByNames(_ context.Context, names []string
 		}
 	}
 	return out, nil
+}
+
+func (s *stubSources) ObtainRateSourceByName(_ context.Context, name string) (*domain.RateSource, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if src, ok := s.sources[name]; ok {
+		return &src, nil
+	}
+	return nil, nil //nolint:nilnil // the repository reports a missing source as (nil, nil); the stub has to match it
 }
 
 // stubValues resolves the latest value per source and records the names it was
@@ -388,5 +433,268 @@ func TestService_ObtainMeSubscriptionsRaw(t *testing.T) {
 				assert.Nil(t, rows)
 			})
 		}
+	})
+}
+
+func TestService_CreateMeSubscription(t *testing.T) {
+	t.Parallel()
+
+	const caller = "42"
+
+	sources := func() *stubSources {
+		return &stubSources{sources: map[string]domain.RateSource{
+			"src_a": {Name: "src_a", Title: "Source A", BaseCurrency: "USD", QuoteCurrency: "KZT", Active: true},
+		}}
+	}
+	valid := NewSubscription{SourceName: "src_a", ConditionType: domain.ConditionTypeDelta, ConditionValue: "5"}
+
+	t.Run("stores the row under the caller and returns the generated id", func(t *testing.T) {
+		t.Parallel()
+
+		subs := &stubSubscriptions{}
+		id, err := NewService(subs, sources(), &stubValues{}).CreateMeSubscription(t.Context(), caller, valid)
+		require.NoError(t, err)
+		assert.NotEmpty(t, id)
+
+		require.Len(t, subs.retained, 1)
+		assert.Equal(t, domain.UserTypeTelegram, subs.retained[0].UserType)
+		assert.Equal(t, caller, subs.retained[0].UserID, "ownership comes from the caller, never from the request")
+		assert.Equal(t, "src_a", subs.retained[0].SourceName)
+		assert.Equal(t, domain.ConditionTypeDelta, subs.retained[0].ConditionType)
+		assert.Equal(t, "5", subs.retained[0].ConditionValue)
+		assert.Equal(t, id, subs.retained[0].ID)
+	})
+
+	t.Run("an unknown source is refused before the insert", func(t *testing.T) {
+		t.Parallel()
+
+		subs := &stubSubscriptions{}
+		req := valid
+		req.SourceName = "no_such"
+		id, err := NewService(subs, sources(), &stubValues{}).CreateMeSubscription(t.Context(), caller, req)
+
+		var pub *internal.PublicError
+		require.ErrorAs(t, err, &pub, "an unknown source is the caller's mistake and has to be shown to them")
+		assert.Equal(t, "unknown source", pub.Details())
+		assert.Empty(t, id)
+		assert.Empty(t, subs.retained, "the foreign key would refuse this anyway, as an error nobody can act on")
+	})
+
+	t.Run("an unparseable condition is refused with the type but not the value", func(t *testing.T) {
+		t.Parallel()
+
+		unparseable := map[string]NewSubscription{
+			"unknown type": {SourceName: "src_a", ConditionType: "bogus", ConditionValue: "5"},
+			"delta":        {SourceName: "src_a", ConditionType: domain.ConditionTypeDelta, ConditionValue: "not-a-number"},
+			"interval":     {SourceName: "src_a", ConditionType: domain.ConditionTypeInterval, ConditionValue: "30s"},
+			"daily":        {SourceName: "src_a", ConditionType: domain.ConditionTypeDaily, ConditionValue: "not-a-time"},
+			"cron":         {SourceName: "src_a", ConditionType: domain.ConditionTypeCron, ConditionValue: "* * *"},
+		}
+		for name, req := range unparseable {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				subs := &stubSubscriptions{}
+				_, err := NewService(subs, sources(), &stubValues{}).CreateMeSubscription(t.Context(), caller, req)
+
+				var pub *internal.PublicError
+				require.ErrorAs(t, err, &pub)
+				assert.Contains(t, pub.Details(), "invalid condition value for "+string(req.ConditionType))
+				assert.NotContains(t, pub.Details(), req.ConditionValue,
+					"echoing the value back tells the caller nothing they did not just send")
+				assert.Empty(t, subs.retained)
+			})
+		}
+	})
+
+	t.Run("a store failure is reported as a failure, not as a message for the caller", func(t *testing.T) {
+		t.Parallel()
+
+		down := errors.New("db down")
+		broken := map[string]*Service{
+			"source lookup": NewService(&stubSubscriptions{}, &stubSources{err: down}, &stubValues{}),
+			"retain":        NewService(&stubSubscriptions{retainErr: down}, sources(), &stubValues{}),
+		}
+		for name, svc := range broken {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				id, err := svc.CreateMeSubscription(t.Context(), caller, valid)
+				require.ErrorIs(t, err, down)
+				assert.Empty(t, id)
+
+				var pub *internal.PublicError
+				require.NotErrorAs(t, err, &pub, "a dead database is not something to tell the caller about")
+			})
+		}
+	})
+}
+
+func TestService_UpdateMeSubscription(t *testing.T) {
+	t.Parallel()
+
+	const caller = "10"
+	const other = "20"
+
+	stored := func() *stubSubscriptions {
+		return &stubSubscriptions{byID: map[string]*domain.RateUserSubscription{
+			"sub-001": {
+				ID: "sub-001", UserType: domain.UserTypeTelegram, UserID: caller,
+				SourceName: "src_a", ConditionType: domain.ConditionTypeDelta, ConditionValue: "5",
+			},
+			"sub-other": {
+				ID: "sub-other", UserType: domain.UserTypeTelegram, UserID: other,
+				SourceName: "src_a", ConditionType: domain.ConditionTypeDelta, ConditionValue: "3",
+			},
+		}}
+	}
+	toInterval := ConditionUpdate{ConditionType: domain.ConditionTypeInterval, ConditionValue: "1h"}
+
+	t.Run("rewrites the condition and carries the rest of the row over", func(t *testing.T) {
+		t.Parallel()
+
+		subs := stored()
+		require.NoError(t, NewService(subs, &stubSources{}, &stubValues{}).
+			UpdateMeSubscription(t.Context(), caller, "sub-001", toInterval))
+
+		require.Len(t, subs.retained, 1)
+		assert.Equal(t, domain.ConditionTypeInterval, subs.retained[0].ConditionType)
+		assert.Equal(t, "1h", subs.retained[0].ConditionValue)
+		assert.Equal(t, "sub-001", subs.retained[0].ID, "an update must not mint a new identifier")
+		assert.Equal(t, caller, subs.retained[0].UserID)
+		assert.Equal(t, "src_a", subs.retained[0].SourceName, "changing source is a delete and a create")
+	})
+
+	t.Run("a missing row and another user's row are the same answer", func(t *testing.T) {
+		t.Parallel()
+
+		unreachable := map[string]string{
+			"no such subscription":  "no-such",
+			"owned by another user": "sub-other",
+		}
+		for name, id := range unreachable {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				subs := stored()
+				err := NewService(subs, &stubSources{}, &stubValues{}).
+					UpdateMeSubscription(t.Context(), caller, id, toInterval)
+
+				require.ErrorIs(t, err, internal.ErrNotFound,
+					"one sentinel for both, so nothing downstream can answer 403 and confirm the row exists")
+				assert.Empty(t, subs.retained)
+			})
+		}
+	})
+
+	t.Run("ownership is settled before the condition is judged", func(t *testing.T) {
+		t.Parallel()
+
+		subs := stored()
+		err := NewService(subs, &stubSources{}, &stubValues{}).UpdateMeSubscription(
+			t.Context(), caller, "sub-other",
+			ConditionUpdate{ConditionType: "bogus", ConditionValue: "x"},
+		)
+
+		require.ErrorIs(t, err, internal.ErrNotFound,
+			"validating first would answer 400 for another user's row and 404 for a missing one — a probe")
+	})
+
+	t.Run("an unparseable condition is refused and nothing is written", func(t *testing.T) {
+		t.Parallel()
+
+		subs := stored()
+		err := NewService(subs, &stubSources{}, &stubValues{}).UpdateMeSubscription(
+			t.Context(), caller, "sub-001",
+			ConditionUpdate{ConditionType: domain.ConditionTypeDelta, ConditionValue: "not-a-number"},
+		)
+
+		var pub *internal.PublicError
+		require.ErrorAs(t, err, &pub)
+		assert.Empty(t, subs.retained)
+	})
+
+	t.Run("a store failure is reported", func(t *testing.T) {
+		t.Parallel()
+
+		down := errors.New("db down")
+
+		lookupBroken := stored()
+		lookupBroken.err = down
+		require.ErrorIs(t, NewService(lookupBroken, &stubSources{}, &stubValues{}).
+			UpdateMeSubscription(t.Context(), caller, "sub-001", toInterval), down)
+
+		retainBroken := stored()
+		retainBroken.retainErr = down
+		require.ErrorIs(t, NewService(retainBroken, &stubSources{}, &stubValues{}).
+			UpdateMeSubscription(t.Context(), caller, "sub-001", toInterval), down)
+	})
+}
+
+func TestService_DeleteMeSubscription(t *testing.T) {
+	t.Parallel()
+
+	const caller = "10"
+	const other = "20"
+
+	stored := func() *stubSubscriptions {
+		return &stubSubscriptions{byID: map[string]*domain.RateUserSubscription{
+			"sub-001": {
+				ID: "sub-001", UserType: domain.UserTypeTelegram, UserID: caller,
+				SourceName: "src_a", ConditionType: domain.ConditionTypeDelta, ConditionValue: "5",
+			},
+			"sub-other": {
+				ID: "sub-other", UserType: domain.UserTypeTelegram, UserID: other,
+				SourceName: "src_a", ConditionType: domain.ConditionTypeDelta, ConditionValue: "3",
+			},
+		}}
+	}
+
+	t.Run("removes the stored row", func(t *testing.T) {
+		t.Parallel()
+
+		subs := stored()
+		require.NoError(t, NewService(subs, &stubSources{}, &stubValues{}).
+			DeleteMeSubscription(t.Context(), caller, "sub-001"))
+
+		require.Len(t, subs.removed, 1)
+		assert.Equal(t, "sub-001", subs.removed[0].ID)
+	})
+
+	t.Run("a missing row and another user's row are the same answer", func(t *testing.T) {
+		t.Parallel()
+
+		unreachable := map[string]string{
+			"no such subscription":  "no-such",
+			"owned by another user": "sub-other",
+		}
+		for name, id := range unreachable {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				subs := stored()
+				err := NewService(subs, &stubSources{}, &stubValues{}).
+					DeleteMeSubscription(t.Context(), caller, id)
+
+				require.ErrorIs(t, err, internal.ErrNotFound)
+				assert.Empty(t, subs.removed, "another user's subscription must survive the attempt")
+			})
+		}
+	})
+
+	t.Run("a store failure is reported", func(t *testing.T) {
+		t.Parallel()
+
+		down := errors.New("db down")
+
+		lookupBroken := stored()
+		lookupBroken.err = down
+		require.ErrorIs(t, NewService(lookupBroken, &stubSources{}, &stubValues{}).
+			DeleteMeSubscription(t.Context(), caller, "sub-001"), down)
+
+		removeBroken := stored()
+		removeBroken.removeErr = down
+		require.ErrorIs(t, NewService(removeBroken, &stubSources{}, &stubValues{}).
+			DeleteMeSubscription(t.Context(), caller, "sub-001"), down)
 	})
 }

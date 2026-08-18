@@ -11,10 +11,12 @@ package subscription
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
@@ -40,6 +42,23 @@ type SourceRow struct {
 	LatestAt    time.Time
 }
 
+// NewSubscription is a request to create one subscription. There is no user
+// field: ownership comes from the authenticated caller passed alongside it, and
+// a request body has never been allowed to name its own owner.
+type NewSubscription struct {
+	SourceName     string
+	ConditionType  domain.SubscriptionConditionType
+	ConditionValue string
+}
+
+// ConditionUpdate is the mutable part of an existing subscription. Its source is
+// deliberately absent: moving a subscription to another source is a delete and a
+// create, not an update.
+type ConditionUpdate struct {
+	ConditionType  domain.SubscriptionConditionType
+	ConditionValue string
+}
+
 // ConditionRow is one subscription exactly as stored — a single condition
 // carrying the stable identifier that addresses it for update and delete — plus
 // the source metadata a caller needs to label it.
@@ -58,14 +77,14 @@ type ConditionRow struct {
 // and rate-value stores. Construct it with NewService; it holds no mutable state
 // and is safe for concurrent use.
 type Service struct {
-	subs    SubscriptionsLoader
+	subs    SubscriptionsStore
 	sources SourcesLoader
 	values  ValuesLoader
 }
 
 // NewService constructs a Service over the three stores a subscription view
 // reads from. In production all three are repositories.
-func NewService(subs SubscriptionsLoader, sources SourcesLoader, values ValuesLoader) *Service {
+func NewService(subs SubscriptionsStore, sources SourcesLoader, values ValuesLoader) *Service {
 	return &Service{subs: subs, sources: sources, values: values}
 }
 
@@ -193,25 +212,138 @@ func (s *Service) ObtainMeSubscriptionsRaw(ctx context.Context, userID string) (
 	return rows, nil
 }
 
-// SubscriptionsLoader reads the subscription rows one user owns. Satisfied by
+// CreateMeSubscription stores a new subscription owned by userID and returns the
+// identifier the store generated for it.
+//
+// The source is resolved before the insert. The foreign key would refuse an
+// unknown one anyway, but as a constraint violation the caller can do nothing
+// with; a *internal.PublicError names the problem instead. An unparseable
+// condition is reported the same way. Every other failure is the store's, and is
+// returned as it came.
+func (s *Service) CreateMeSubscription(ctx context.Context, userID string, req NewSubscription) (string, error) {
+	src, err := s.sources.ObtainRateSourceByName(ctx, req.SourceName)
+	if err != nil {
+		return "", fmt.Errorf("source lookup: %w", err)
+	}
+	if src == nil {
+		return "", internal.NewPublicError("unknown source")
+	}
+
+	record := domain.RateUserSubscription{
+		UserType:       domain.UserTypeTelegram,
+		UserID:         userID,
+		SourceName:     req.SourceName,
+		ConditionType:  req.ConditionType,
+		ConditionValue: req.ConditionValue,
+	}
+	if validationErr := record.Validate(); validationErr != nil {
+		return "", invalidConditionError(record.ConditionType)
+	}
+
+	if err := s.subs.RetainRateUserSubscription(ctx, &record); err != nil {
+		return "", fmt.Errorf("retain subscription: %w", err)
+	}
+	return record.ID, nil
+}
+
+// UpdateMeSubscription rewrites the condition of subscription id, which userID
+// must own. Only the condition changes: the identifier, the owner, the source
+// and the notification cursors are carried over from the stored row.
+//
+// A subscription that does not exist and one owned by somebody else both report
+// internal.ErrNotFound. See obtainOwned.
+func (s *Service) UpdateMeSubscription(ctx context.Context, userID, id string, upd ConditionUpdate) error {
+	sub, err := s.obtainOwned(ctx, userID, id)
+	if err != nil {
+		return err
+	}
+
+	sub.ConditionType = upd.ConditionType
+	sub.ConditionValue = upd.ConditionValue
+	if validationErr := sub.Validate(); validationErr != nil {
+		return invalidConditionError(sub.ConditionType)
+	}
+
+	if err := s.subs.RetainRateUserSubscription(ctx, sub); err != nil {
+		return fmt.Errorf("retain subscription: %w", err)
+	}
+	return nil
+}
+
+// DeleteMeSubscription removes subscription id, which userID must own, reporting
+// internal.ErrNotFound when it does not exist or belongs to somebody else.
+//
+// The rate_user_events rows recording what this subscription already delivered
+// are left in place. They are keyed to the source rather than to the
+// subscription and are treated as historical truth: unsubscribing is not a
+// request to rewrite what was sent.
+func (s *Service) DeleteMeSubscription(ctx context.Context, userID, id string) error {
+	sub, err := s.obtainOwned(ctx, userID, id)
+	if err != nil {
+		return err
+	}
+
+	if err := s.subs.RemoveRateUserSubscription(ctx, sub); err != nil {
+		return fmt.Errorf("remove subscription: %w", err)
+	}
+	return nil
+}
+
+// obtainOwned loads subscription id and reports internal.ErrNotFound unless
+// userID owns it.
+//
+// "No such row" and "somebody else's row" are one answer on purpose, and the
+// caller is given no way to tell them apart. Ownership is decided here so that
+// the sentinel crossing the boundary says only "not found for you" — a service
+// that answered "forbidden" would be one refactor away from a 403 that confirms
+// another user's subscription exists.
+func (s *Service) obtainOwned(ctx context.Context, userID, id string) (*domain.RateUserSubscription, error) {
+	sub, err := s.subs.ObtainRateUserSubscriptionByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("subscription lookup: %w", err)
+	}
+	if sub == nil || sub.UserID != userID {
+		return nil, internal.ErrNotFound
+	}
+	return sub, nil
+}
+
+// SubscriptionsStore reads and writes subscription rows. Satisfied by
 // *repository.RateUserSubscriptionRepository.
-type SubscriptionsLoader interface {
+//
+// ObtainRateUserSubscriptionByID reports (nil, nil) for an id that does not
+// exist; a missing row is not an error at this level, it is one of the two
+// inputs to the ownership answer.
+type SubscriptionsStore interface {
 	ObtainRateUserSubscriptionsByUserID(
 		ctx context.Context, userType domain.UserType, userID string,
 	) ([]domain.RateUserSubscription, error)
+	ObtainRateUserSubscriptionByID(ctx context.Context, id string) (*domain.RateUserSubscription, error)
+	RetainRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
+	RemoveRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
 }
 
-// SourcesLoader resolves source metadata (title, base, quote) for a set of
-// source names. A name with no row is absent from the returned map rather than
-// an error.
+// SourcesLoader resolves source metadata (title, base, quote). A name with no
+// row is absent from the map ObtainRateSourcesByNames returns, and is a nil
+// record from ObtainRateSourceByName — neither is an error.
 type SourcesLoader interface {
 	ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error)
+	ObtainRateSourceByName(ctx context.Context, name string) (*domain.RateSource, error)
 }
 
 // ValuesLoader resolves the latest collected value per source name. A source
 // that has never been collected is absent from the returned map.
 type ValuesLoader interface {
 	ObtainLatestRateValuesBySourceNames(ctx context.Context, names []string) (map[string]domain.RateValue, error)
+}
+
+// invalidConditionError is the answer to a condition value the domain refuses.
+// It names the condition type and not the value: the value came from the caller
+// and telling them what they just sent adds nothing they do not know.
+func invalidConditionError(kind domain.SubscriptionConditionType) error {
+	return internal.NewPublicError(
+		fmt.Sprintf("invalid condition value for %s: check the format and try again", kind),
+	)
 }
 
 // sourceGroup accumulates every condition one user holds against a single

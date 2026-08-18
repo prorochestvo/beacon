@@ -24,9 +24,9 @@ import (
 
 // Config carries every dependency a Handler needs.
 //
-// Named fields rather than a positional parameter list: among thirteen
-// dependencies sit four repository interfaces and two strings, so a transposed
-// pair compiles cleanly and misbehaves only in production.
+// Named fields rather than a positional parameter list: several of these are
+// interfaces of similar shape sitting next to two strings, so a transposed pair
+// compiles cleanly and misbehaves only in production.
 //
 // Everything is required except MeChartSvc, HealthAgent and Logger.
 // The weather trio is required for a specific reason: it used to be attached
@@ -36,12 +36,9 @@ import (
 type Config struct {
 	// RateService backs every public and admin rate endpoint.
 	RateService rateService
-	// MeSubSvc reads the caller's own subscriptions for the two list endpoints.
+	// MeSubSvc backs the whole /api/v1/me/subscriptions family.
 	MeSubSvc meSubscriptionService
-	// MeSubRepo, MeSourceRepo and MeProfileRepo back the /api/v1/me
-	// subscription-write, source and profile endpoints.
-	MeSubRepo     meSubscriptionRepository
-	MeSourceRepo  meSourceRepository
+	// MeProfileRepo backs the /api/v1/me/profile endpoint.
 	MeProfileRepo meProfileRepository
 
 	// MeWeatherSvc reads the caller's own weather subscriptions and their
@@ -78,8 +75,6 @@ func NewHandler(cfg Config) (*Handler, error) {
 	}{
 		{"RateService", cfg.RateService != nil},
 		{"MeSubSvc", cfg.MeSubSvc != nil},
-		{"MeSubRepo", cfg.MeSubRepo != nil},
-		{"MeSourceRepo", cfg.MeSourceRepo != nil},
 		{"MeProfileRepo", cfg.MeProfileRepo != nil},
 		{"MeWeatherSvc", cfg.MeWeatherSvc != nil},
 		{"WeatherCityRepo", cfg.WeatherCityRepo != nil},
@@ -105,8 +100,6 @@ func NewHandler(cfg Config) (*Handler, error) {
 	return &Handler{
 		rateService:       cfg.RateService,
 		meSubSvc:          cfg.MeSubSvc,
-		meSubRepo:         cfg.MeSubRepo,
-		meSourceRepo:      cfg.MeSourceRepo,
 		meProfileRepo:     cfg.MeProfileRepo,
 		meChartSvc:        cfg.MeChartSvc,
 		healthAgent:       cfg.HealthAgent,
@@ -123,8 +116,6 @@ func NewHandler(cfg Config) (*Handler, error) {
 type Handler struct {
 	rateService
 	meSubSvc      meSubscriptionService
-	meSubRepo     meSubscriptionRepository
-	meSourceRepo  meSourceRepository
 	meProfileRepo meProfileRepository
 	meChartSvc    meChartService
 	healthAgent   healthCheckAgent
@@ -703,7 +694,6 @@ func (h *Handler) CreateMeSubscription(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	chatIDStr := strconv.FormatInt(userID, 10)
 
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10) // 4 KiB
 	var body dto.MeSubscriptionCreateRequest
@@ -712,39 +702,19 @@ func (h *Handler) CreateMeSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Guard against FK failure: verify the source exists before inserting.
-	src, err := h.meSourceRepo.ObtainRateSourceByName(r.Context(), body.SourceName)
-	if err != nil {
-		h.internalError(w, fmt.Errorf("CreateMeSubscription source lookup: %w", err))
-		return
-	}
-	if src == nil {
-		pub := internal.NewPublicError("unknown source")
-		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
-		return
-	}
-
-	record := domain.RateUserSubscription{
-		UserType:       domain.UserTypeTelegram,
-		UserID:         chatIDStr,
+	id, err := h.meSubSvc.CreateMeSubscription(r.Context(), strconv.FormatInt(userID, 10), appsub.NewSubscription{
 		SourceName:     body.SourceName,
 		ConditionType:  domain.SubscriptionConditionType(body.ConditionType),
 		ConditionValue: body.ConditionValue,
-	}
-	if err := record.Validate(); err != nil {
-		pub := internal.NewPublicError(fmt.Sprintf("invalid condition value for %s: check the format and try again", record.ConditionType))
-		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
-		return
-	}
-
-	if err := h.meSubRepo.RetainRateUserSubscription(r.Context(), &record); err != nil {
-		h.internalError(w, fmt.Errorf("CreateMeSubscription retain: %w", err))
+	})
+	if err != nil {
+		h.meWriteError(w, err, "CreateMeSubscription")
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(dto.MeSubscriptionCreateResponse{ID: record.ID}); err != nil {
+	if err := json.NewEncoder(w).Encode(dto.MeSubscriptionCreateResponse{ID: id}); err != nil {
 		h.logger.Print(errors.Join(
 			fmt.Errorf("encode CreateMeSubscription response: %w", err),
 			loginjector.NewTraceError(),
@@ -769,11 +739,10 @@ func (h *Handler) UpdateMeSubscription(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	chatIDStr := strconv.FormatInt(userID, 10)
 
-	// Cap the body before any reads — including the ownership DB query — so an
-	// authenticated owner cannot hold the connection open with a large body
-	// during the lookup window.
+	// Cap the body before any reads — including the ownership query the service
+	// runs — so an authenticated caller cannot hold the connection open with a
+	// large body during the lookup window.
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10) // 4 KiB
 
 	id := r.PathValue("id")
@@ -782,26 +751,25 @@ func (h *Handler) UpdateMeSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sub := h.meSubscriptionOwnershipCheck(w, r, id, chatIDStr)
-	if sub == nil {
-		return
-	}
 	var body dto.MeSubscriptionUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
 		return
 	}
 
-	sub.ConditionType = domain.SubscriptionConditionType(body.ConditionType)
-	sub.ConditionValue = body.ConditionValue
-	if err := sub.Validate(); err != nil {
-		pub := internal.NewPublicError(fmt.Sprintf("invalid condition value for %s: check the format and try again", sub.ConditionType))
-		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
-		return
-	}
-
-	if err := h.meSubRepo.RetainRateUserSubscription(r.Context(), sub); err != nil {
-		h.internalError(w, fmt.Errorf("UpdateMeSubscription retain: %w", err))
+	err := h.meSubSvc.UpdateMeSubscription(r.Context(), strconv.FormatInt(userID, 10), id, appsub.ConditionUpdate{
+		ConditionType:  domain.SubscriptionConditionType(body.ConditionType),
+		ConditionValue: body.ConditionValue,
+	})
+	if err != nil {
+		// 404 (not 403) for a row that is missing and for one owned by somebody
+		// else. The service reports one sentinel for both, and this answers with
+		// one message, so nothing here discloses that the row exists.
+		if errors.Is(err, internal.ErrNotFound) {
+			h.publicError(w, meSubscriptionNotFound, http.StatusNotFound)
+			return
+		}
+		h.meWriteError(w, err, "UpdateMeSubscription")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -825,7 +793,6 @@ func (h *Handler) DeleteMeSubscription(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	chatIDStr := strconv.FormatInt(userID, 10)
 
 	id := r.PathValue("id")
 	if id == "" {
@@ -833,13 +800,14 @@ func (h *Handler) DeleteMeSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sub := h.meSubscriptionOwnershipCheck(w, r, id, chatIDStr)
-	if sub == nil {
-		return
-	}
-
-	if err := h.meSubRepo.RemoveRateUserSubscription(r.Context(), sub); err != nil {
-		h.internalError(w, fmt.Errorf("DeleteMeSubscription remove: %w", err))
+	if err := h.meSubSvc.DeleteMeSubscription(r.Context(), strconv.FormatInt(userID, 10), id); err != nil {
+		// 404 (not 403) for a row that is missing and for one owned by somebody
+		// else — see UpdateMeSubscription.
+		if errors.Is(err, internal.ErrNotFound) {
+			h.publicError(w, meSubscriptionNotFound, http.StatusNotFound)
+			return
+		}
+		h.meWriteError(w, err, "DeleteMeSubscription")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1157,25 +1125,28 @@ func (h *Handler) GetPublicRatesChart(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// meSubscriptionOwnershipCheck loads the subscription by id, verifies the
-// caller owns it, and returns it. On not-found or ownership mismatch it writes
-// a 404 and returns nil. On repo error it writes 500 and returns nil.
-// Callers must return when this function returns nil.
-func (h *Handler) meSubscriptionOwnershipCheck(w http.ResponseWriter, r *http.Request, id, chatIDStr string) *domain.RateUserSubscription {
-	sub, err := h.meSubRepo.ObtainRateUserSubscriptionByID(r.Context(), id)
-	if err != nil {
-		h.internalError(w, fmt.Errorf("subscription lookup: %w", err))
-		return nil
+// meWriteError renders a failure returned by an /api/v1/me application service.
+//
+// A *internal.PublicError carries a message built to be shown to the caller, so
+// it answers 400 with that text. Anything else is the store's problem, not the
+// request's: the detail goes to the log and the caller gets the fallback.
+//
+// internal.ErrNotFound is deliberately not handled here. It is the ownership
+// answer, and the 404 it produces is written at the call site so that a reader
+// of a write handler sees the rule rather than having to follow a helper to it.
+func (h *Handler) meWriteError(w http.ResponseWriter, err error, logContext string) {
+	var pub *internal.PublicError
+	if errors.As(err, &pub) {
+		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
+		return
 	}
-	if sub == nil || sub.UserID != chatIDStr {
-		// 404 (not 403) to avoid disclosing another user's subscription. "No
-		// such row" and "wrong owner" share the same PublicError message so the
-		// distinction is invisible externally.
-		pub := internal.NewPublicError("subscription not found")
-		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusNotFound)
-		return nil
-	}
-	return sub
+	h.internalError(w, fmt.Errorf("%s: %w", logContext, err))
+}
+
+// publicError sends message as a PublicError body under status.
+func (h *Handler) publicError(w http.ResponseWriter, message string, status int) {
+	pub := internal.NewPublicError(message)
+	http.Error(w, `{"error":"`+pub.Details()+`"}`, status)
 }
 
 // internalError logs the underlying error with a trace and returns a generic 500 to the client.
@@ -1201,6 +1172,11 @@ func (h *Handler) callerID(w http.ResponseWriter, r *http.Request) (int64, bool)
 	}
 	return userID, true
 }
+
+// meSubscriptionNotFound is the answer for a subscription that does not exist
+// and for one owned by somebody else. One message under one status: telling the
+// two apart would confirm that another user's subscription exists.
+const meSubscriptionNotFound = "subscription not found"
 
 const (
 	meSubscriptionsDefaultPage = int64(1)
@@ -1245,25 +1221,16 @@ type rateService interface {
 	ObtainLastNExecutionHistoryErrors(ctx context.Context, offset, limit int64) ([]domain.ExecutionHistory, error)
 }
 
-type meSubscriptionRepository interface {
-	ObtainRateUserSubscriptionsByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.RateUserSubscription, error)
-	ObtainRateUserSubscriptionByID(ctx context.Context, id string) (*domain.RateUserSubscription, error)
-	RetainRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
-	RemoveRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error
-}
-
-type meSourceRepository interface {
-	ObtainRateSourceByName(ctx context.Context, name string) (*domain.RateSource, error)
-	ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error)
-}
-
-// meSubscriptionService is the application service behind the two
-// /api/v1/me/subscriptions read endpoints, satisfied by *appsub.Service. The
-// grouping, search and pagination rules live there; this package parses the
-// query string and renders the result.
+// meSubscriptionService is the application service behind the whole
+// /api/v1/me/subscriptions family, satisfied by *appsub.Service. Grouping,
+// search, pagination, condition validation and ownership all live there; this
+// package parses the request and renders the answer.
 type meSubscriptionService interface {
 	ObtainMeSubscriptions(ctx context.Context, userID, query string, page, pageSize int64) ([]appsub.SourceRow, int64, error)
 	ObtainMeSubscriptionsRaw(ctx context.Context, userID string) ([]appsub.ConditionRow, error)
+	CreateMeSubscription(ctx context.Context, userID string, req appsub.NewSubscription) (string, error)
+	UpdateMeSubscription(ctx context.Context, userID, id string, upd appsub.ConditionUpdate) error
+	DeleteMeSubscription(ctx context.Context, userID, id string) error
 }
 
 type meProfileRepository interface {
