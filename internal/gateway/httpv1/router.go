@@ -8,6 +8,8 @@ import (
 
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
 	"github.com/seilbekskindirov/beacon/internal/application/service"
+	appsub "github.com/seilbekskindirov/beacon/internal/application/subscription"
+	appweather "github.com/seilbekskindirov/beacon/internal/application/weather"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
 	v1 "github.com/seilbekskindirov/beacon/internal/gateway/httpv1/handlers"
@@ -24,12 +26,13 @@ const meCredentialMaxAge = 24 * time.Hour
 // router so the constructor signature does not grow one positional parameter per
 // weather feature. Fields are added here as new weather endpoints need them.
 type WeatherGatewayDeps struct {
+	// Service backs the caller's own weather reads: the tracked city list and
+	// the current-conditions endpoint.
+	Service *appweather.Service
 	// CityRepo is the weather city subscription repository.
 	CityRepo meWeatherCityRepo
 	// Geocoder is the geocoding provider for the city-search endpoint.
 	Geocoder weatherGeocoder
-	// ObsRepo is the weather observation repository for the on-demand current-weather endpoint.
-	ObsRepo meWeatherObsRepo
 }
 
 // healthCheckAgent is the contract for the dependency-health aggregator, threaded
@@ -54,12 +57,6 @@ type meSourceRepo interface {
 	ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error)
 }
 
-// meRateValueRepo is a thin interface for rate value look-ups in the Mini App handler.
-type meRateValueRepo interface {
-	ObtainLastNRateValuesBySourceName(ctx context.Context, name string, limit int64) ([]domain.RateValue, error)
-	ObtainLatestRateValuesBySourceNames(ctx context.Context, names []string) (map[string]domain.RateValue, error)
-}
-
 // meProfileRepo is a thin interface for user-profile upserts (timezone).
 type meProfileRepo interface {
 	UpsertRateUserProfile(ctx context.Context, record *domain.RateUserProfile) error
@@ -81,20 +78,14 @@ type weatherGeocoder interface {
 	Geocode(ctx context.Context, name string, count int) ([]dto.WeatherCitySearchItem, error)
 }
 
-// meWeatherObsRepo threads the weather observation repository through the router
-// layer for the on-demand current-weather endpoint.
-type meWeatherObsRepo interface {
-	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
-}
-
 // NewRouter registers all v1 HTTP routes on mux and returns it.
 func NewRouter(
 	mux *http.ServeMux,
 	srvRateRestApi *service.RateRestApi,
 	botToken string,
+	subSvc *appsub.Service,
 	subRepo meSubscriptionRepo,
 	sourceRepo meSourceRepo,
-	rateValueRepo meRateValueRepo,
 	profileRepo meProfileRepo,
 	chartSvc *appchart.Service,
 	healthAgent healthCheckAgent,
@@ -104,13 +95,13 @@ func NewRouter(
 ) (*http.ServeMux, error) {
 	h, err := v1.NewHandler(v1.Config{
 		RateService:     srvRateRestApi,
+		MeSubSvc:        subSvc,
 		MeSubRepo:       subRepo,
 		MeSourceRepo:    sourceRepo,
-		MeRateValueRepo: rateValueRepo,
 		MeProfileRepo:   profileRepo,
+		MeWeatherSvc:    weather.Service,
 		WeatherCityRepo: weather.CityRepo,
 		WeatherGeocoder: weather.Geocoder,
-		WeatherObsRepo:  weather.ObsRepo,
 		MeChartSvc:      chartSvc,
 		HealthAgent:     healthAgent,
 		ServerVersion:   serverVersion,

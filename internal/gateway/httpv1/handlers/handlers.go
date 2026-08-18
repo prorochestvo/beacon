@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
+	appsub "github.com/seilbekskindirov/beacon/internal/application/subscription"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
 	"github.com/seilbekskindirov/beacon/internal/gateway/middleware"
@@ -36,17 +36,20 @@ import (
 type Config struct {
 	// RateService backs every public and admin rate endpoint.
 	RateService rateService
-	// MeSubRepo, MeSourceRepo, MeRateValueRepo and MeProfileRepo back the
-	// /api/v1/me subscription, source, rate-value and profile endpoints.
-	MeSubRepo       meSubscriptionRepository
-	MeSourceRepo    meSourceRepository
-	MeRateValueRepo meRateValueRepository
-	MeProfileRepo   meProfileRepository
+	// MeSubSvc reads the caller's own subscriptions for the two list endpoints.
+	MeSubSvc meSubscriptionService
+	// MeSubRepo, MeSourceRepo and MeProfileRepo back the /api/v1/me
+	// subscription-write, source and profile endpoints.
+	MeSubRepo     meSubscriptionRepository
+	MeSourceRepo  meSourceRepository
+	MeProfileRepo meProfileRepository
 
-	// WeatherCityRepo, WeatherGeocoder and WeatherObsRepo back /api/v1/me/weather.
+	// MeWeatherSvc reads the caller's own weather subscriptions and their
+	// observations; WeatherCityRepo and WeatherGeocoder back the write and
+	// search endpoints under /api/v1/me/weather.
+	MeWeatherSvc    meWeatherService
 	WeatherCityRepo meWeatherCityRepository
 	WeatherGeocoder weatherGeocoder
-	WeatherObsRepo  meWeatherObsRepository
 
 	// MeChartSvc drives GetMeRatesChart and GetPublicRatesChart. Optional: those
 	// endpoints answer 503 when it is absent, which is how a deployment without
@@ -74,13 +77,13 @@ func NewHandler(cfg Config) (*Handler, error) {
 		present bool
 	}{
 		{"RateService", cfg.RateService != nil},
+		{"MeSubSvc", cfg.MeSubSvc != nil},
 		{"MeSubRepo", cfg.MeSubRepo != nil},
 		{"MeSourceRepo", cfg.MeSourceRepo != nil},
-		{"MeRateValueRepo", cfg.MeRateValueRepo != nil},
 		{"MeProfileRepo", cfg.MeProfileRepo != nil},
+		{"MeWeatherSvc", cfg.MeWeatherSvc != nil},
 		{"WeatherCityRepo", cfg.WeatherCityRepo != nil},
 		{"WeatherGeocoder", cfg.WeatherGeocoder != nil},
-		{"WeatherObsRepo", cfg.WeatherObsRepo != nil},
 	}
 	// Report every absentee at once: a composition root that forgot one
 	// dependency has usually forgotten its neighbours too.
@@ -101,17 +104,17 @@ func NewHandler(cfg Config) (*Handler, error) {
 
 	return &Handler{
 		rateService:       cfg.RateService,
+		meSubSvc:          cfg.MeSubSvc,
 		meSubRepo:         cfg.MeSubRepo,
 		meSourceRepo:      cfg.MeSourceRepo,
-		meRateValueRepo:   cfg.MeRateValueRepo,
 		meProfileRepo:     cfg.MeProfileRepo,
 		meChartSvc:        cfg.MeChartSvc,
 		healthAgent:       cfg.HealthAgent,
 		serverVersion:     cfg.ServerVersion,
 		serverStart:       cfg.ServerStart,
+		meWeatherSvc:      cfg.MeWeatherSvc,
 		meWeatherCityRepo: cfg.WeatherCityRepo,
 		weatherGeocoder:   cfg.WeatherGeocoder,
-		meWeatherObsRepo:  cfg.WeatherObsRepo,
 		logger:            logger,
 	}, nil
 }
@@ -119,20 +122,20 @@ func NewHandler(cfg Config) (*Handler, error) {
 // Handler groups all v1 HTTP handlers and their repository dependencies.
 type Handler struct {
 	rateService
-	meSubRepo       meSubscriptionRepository
-	meSourceRepo    meSourceRepository
-	meRateValueRepo meRateValueRepository
-	meProfileRepo   meProfileRepository
-	meChartSvc      meChartService
-	healthAgent     healthCheckAgent
-	serverVersion   string
-	serverStart     time.Time
+	meSubSvc      meSubscriptionService
+	meSubRepo     meSubscriptionRepository
+	meSourceRepo  meSourceRepository
+	meProfileRepo meProfileRepository
+	meChartSvc    meChartService
+	healthAgent   healthCheckAgent
+	serverVersion string
+	serverStart   time.Time
 
 	// Weather endpoints. NewHandler rejects a Config leaving any of these nil, so
 	// the handlers below may use them without a wiring check.
+	meWeatherSvc      meWeatherService
 	meWeatherCityRepo meWeatherCityRepository
 	weatherGeocoder   weatherGeocoder
-	meWeatherObsRepo  meWeatherObsRepository
 
 	// logger receives the detail behind a 500 (see internalError). Ordinary
 	// wiring from Config.Logger, defaulted to log.Default() by NewHandler.
@@ -613,108 +616,29 @@ func (h *Handler) ListMeSubscriptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: DM-only assumption — this bot stores subscriptions keyed by Telegram chat_id,
-	// which equals user_id for direct chats. If the bot is ever added to groups the
-	// subscriptions keyed under group chat_ids will not appear here. See plan R5.
 	tgUserID := strconv.FormatInt(userID, 10)
-	subs, err := h.meSubRepo.ObtainRateUserSubscriptionsByUserID(r.Context(), domain.UserTypeTelegram, tgUserID)
+	rows, total, err := h.meSubSvc.ObtainMeSubscriptions(r.Context(), tgUserID, q, page, pageSize)
 	if err != nil {
-		h.internalError(w, err)
+		h.internalError(w, fmt.Errorf("ListMeSubscriptions: %w", err))
 		return
 	}
 
-	// Group subscriptions by source name, collecting conditions for the same source.
-	type group struct {
-		sourceName string
-		conditions []string
-	}
-	seen := make(map[string]int) // sourceName → index in groups
-	groups := make([]group, 0)
-	for _, s := range subs {
-		cond := string(s.ConditionType) + ":" + s.ConditionValue
-		if idx, ok := seen[s.SourceName]; ok {
-			groups[idx].conditions = append(groups[idx].conditions, cond)
-		} else {
-			seen[s.SourceName] = len(groups)
-			groups = append(groups, group{sourceName: s.SourceName, conditions: []string{cond}})
+	items := make([]dto.MeSubscriptionRow, 0, len(rows))
+	for _, row := range rows {
+		item := dto.MeSubscriptionRow{
+			SourceName:    row.SourceName,
+			SourceTitle:   row.SourceTitle,
+			BaseCurrency:  row.BaseCurrency,
+			QuoteCurrency: row.QuoteCurrency,
+			Conditions:    row.Conditions,
+			LatestPrice:   row.LatestPrice,
 		}
-	}
-
-	// Bulk-load every distinct source up front so the search and render loops
-	// are O(1) per group instead of one ObtainRateSourceByName transaction each
-	// (the previous 2*M N+1 pattern).
-	sourceNames := make([]string, 0, len(groups))
-	for _, g := range groups {
-		sourceNames = append(sourceNames, g.sourceName)
-	}
-	sourceMap, err := h.meSourceRepo.ObtainRateSourcesByNames(r.Context(), sourceNames)
-	if err != nil {
-		h.internalError(w, err)
-		return
-	}
-
-	// Apply case-insensitive substring search before pagination.
-	var filtered []group
-	if q == "" {
-		filtered = groups
-	} else {
-		lq := strings.ToLower(q)
-		for _, g := range groups {
-			src, ok := sourceMap[g.sourceName]
-			if !ok {
-				continue
-			}
-			pair := strings.ToLower(src.BaseCurrency + "/" + src.QuoteCurrency)
-			if strings.Contains(strings.ToLower(src.Title), lq) ||
-				strings.Contains(strings.ToLower(src.Name), lq) ||
-				strings.Contains(pair, lq) {
-				filtered = append(filtered, g)
-			}
+		// A source with no collected value carries the zero time, which must stay
+		// an absent latest_at rather than render as year one.
+		if !row.LatestAt.IsZero() {
+			item.LatestAt = row.LatestAt.Format(time.RFC3339)
 		}
-	}
-
-	total := int64(len(filtered))
-
-	// Paginate.
-	offset := (page - 1) * pageSize
-	if offset >= total {
-		offset = max(total, 0)
-	}
-	end := offset + pageSize
-	if end > total {
-		end = total
-	}
-	pageItems := filtered[offset:end]
-
-	// Bulk-load the latest rate value per page item so the render loop is O(1)
-	// per row. Previously one ObtainLastNRateValuesBySourceName transaction per
-	// page item — pageSize=50 → 50 round-trips per request.
-	rateNames := make([]string, 0, len(pageItems))
-	for _, g := range pageItems {
-		rateNames = append(rateNames, g.sourceName)
-	}
-	latestRates, err := h.meRateValueRepo.ObtainLatestRateValuesBySourceNames(r.Context(), rateNames)
-	if err != nil {
-		h.internalError(w, err)
-		return
-	}
-
-	items := make([]dto.MeSubscriptionRow, 0, len(pageItems))
-	for _, g := range pageItems {
-		row := dto.MeSubscriptionRow{
-			SourceName: g.sourceName,
-			Conditions: g.conditions,
-		}
-		if src, ok := sourceMap[g.sourceName]; ok {
-			row.SourceTitle = src.Title
-			row.BaseCurrency = src.BaseCurrency
-			row.QuoteCurrency = src.QuoteCurrency
-		}
-		if rv, ok := latestRates[g.sourceName]; ok {
-			row.LatestPrice = rv.Price
-			row.LatestAt = rv.Timestamp.UTC().Format(time.RFC3339)
-		}
-		items = append(items, row)
+		items = append(items, item)
 	}
 
 	writeJSON(w, dto.MeSubscriptionsResponse{
@@ -741,50 +665,24 @@ func (h *Handler) ListMeSubscriptionsRaw(w http.ResponseWriter, r *http.Request)
 	}
 
 	tgUserID := strconv.FormatInt(userID, 10)
-	subs, err := h.meSubRepo.ObtainRateUserSubscriptionsByUserID(r.Context(), domain.UserTypeTelegram, tgUserID)
+	rows, err := h.meSubSvc.ObtainMeSubscriptionsRaw(r.Context(), tgUserID)
 	if err != nil {
-		h.internalError(w, err)
+		h.internalError(w, fmt.Errorf("ListMeSubscriptionsRaw: %w", err))
 		return
 	}
 
-	// Collect distinct source names for a bulk metadata load (avoids N+1).
-	seen := make(map[string]struct{}, len(subs))
-	sourceNames := make([]string, 0, len(subs))
-	for _, s := range subs {
-		if _, ok := seen[s.SourceName]; !ok {
-			seen[s.SourceName] = struct{}{}
-			sourceNames = append(sourceNames, s.SourceName)
-		}
-	}
-	sourceMap, err := h.meSourceRepo.ObtainRateSourcesByNames(r.Context(), sourceNames)
-	if err != nil {
-		h.internalError(w, err)
-		return
-	}
-
-	// Sort: source_name ASC, updated_at DESC.
-	sort.Slice(subs, func(i, j int) bool {
-		if subs[i].SourceName != subs[j].SourceName {
-			return subs[i].SourceName < subs[j].SourceName
-		}
-		return subs[i].UpdatedAt.After(subs[j].UpdatedAt)
-	})
-
-	items := make([]dto.MeSubscriptionEditRow, 0, len(subs))
-	for _, s := range subs {
-		row := dto.MeSubscriptionEditRow{
-			ID:             s.ID,
-			SourceName:     s.SourceName,
-			ConditionType:  string(s.ConditionType),
-			ConditionValue: s.ConditionValue,
-			UpdatedAt:      s.UpdatedAt.UTC().Format(time.RFC3339),
-		}
-		if src, ok := sourceMap[s.SourceName]; ok {
-			row.SourceTitle = src.Title
-			row.BaseCurrency = src.BaseCurrency
-			row.QuoteCurrency = src.QuoteCurrency
-		}
-		items = append(items, row)
+	items := make([]dto.MeSubscriptionEditRow, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, dto.MeSubscriptionEditRow{
+			ID:             row.ID,
+			SourceName:     row.SourceName,
+			SourceTitle:    row.SourceTitle,
+			BaseCurrency:   row.BaseCurrency,
+			QuoteCurrency:  row.QuoteCurrency,
+			ConditionType:  string(row.ConditionType),
+			ConditionValue: row.ConditionValue,
+			UpdatedAt:      row.UpdatedAt.Format(time.RFC3339),
+		})
 	}
 
 	writeJSON(w, dto.MeSubscriptionsRawResponse{Items: items})
@@ -1359,9 +1257,13 @@ type meSourceRepository interface {
 	ObtainRateSourcesByNames(ctx context.Context, names []string) (map[string]domain.RateSource, error)
 }
 
-type meRateValueRepository interface {
-	ObtainLastNRateValuesBySourceName(ctx context.Context, name string, limit int64) ([]domain.RateValue, error)
-	ObtainLatestRateValuesBySourceNames(ctx context.Context, names []string) (map[string]domain.RateValue, error)
+// meSubscriptionService is the application service behind the two
+// /api/v1/me/subscriptions read endpoints, satisfied by *appsub.Service. The
+// grouping, search and pagination rules live there; this package parses the
+// query string and renders the result.
+type meSubscriptionService interface {
+	ObtainMeSubscriptions(ctx context.Context, userID, query string, page, pageSize int64) ([]appsub.SourceRow, int64, error)
+	ObtainMeSubscriptionsRaw(ctx context.Context, userID string) ([]appsub.ConditionRow, error)
 }
 
 type meProfileRepository interface {

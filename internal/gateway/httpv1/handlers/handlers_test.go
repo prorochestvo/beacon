@@ -15,6 +15,7 @@ import (
 
 	"github.com/seilbekskindirov/beacon/internal"
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
+	appsub "github.com/seilbekskindirov/beacon/internal/application/subscription"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/domain/ratepair"
 	"github.com/seilbekskindirov/beacon/internal/dto"
@@ -23,9 +24,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var _ meSubscriptionService = (*mockMeSubSvc)(nil)
 var _ meSubscriptionRepository = (*mockMeSubRepo)(nil)
 var _ meSourceRepository = (*mockMeSourceRepo)(nil)
-var _ meRateValueRepository = (*mockMeRateValueRepo)(nil)
 var _ meProfileRepository = (*mockMeProfileRepo)(nil)
 var _ rateService = (*mockRateService)(nil)
 var _ meChartService = (*mockMeChartService)(nil)
@@ -1128,162 +1129,155 @@ func (m *mockMeSourceRepo) ObtainRateSourcesByNames(_ context.Context, names []s
 	return out, nil
 }
 
-// mockMeRateValueRepo is a test double for meRateValueRepository.
-type mockMeRateValueRepo struct {
-	rates map[string][]domain.RateValue
+// mockMeSubSvc is a test double for meSubscriptionService. It records the
+// arguments the handler derived from the request so the query-string parsing can
+// be asserted, and replays whatever the test staged.
+type mockMeSubSvc struct {
+	rows  []appsub.SourceRow
+	total int64
 	err   error
+
+	rawRows []appsub.ConditionRow
+	rawErr  error
+
+	gotUserID   string
+	gotQuery    string
+	gotPage     int64
+	gotPageSize int64
 }
 
-func (m *mockMeRateValueRepo) ObtainLatestRateValuesBySourceNames(_ context.Context, names []string) (map[string]domain.RateValue, error) {
+func (m *mockMeSubSvc) ObtainMeSubscriptions(_ context.Context, userID, query string, page, pageSize int64) ([]appsub.SourceRow, int64, error) {
+	m.gotUserID, m.gotQuery, m.gotPage, m.gotPageSize = userID, query, page, pageSize
 	if m.err != nil {
-		return nil, m.err
+		return nil, 0, m.err
 	}
-	out := make(map[string]domain.RateValue, len(names))
-	for _, n := range names {
-		if rates, ok := m.rates[n]; ok && len(rates) > 0 {
-			out[n] = rates[0]
-		}
-	}
-	return out, nil
+	return m.rows, m.total, nil
 }
 
-func (m *mockMeRateValueRepo) ObtainLastNRateValuesBySourceName(_ context.Context, name string, _ int64) ([]domain.RateValue, error) {
-	if m.err != nil {
-		return nil, m.err
+func (m *mockMeSubSvc) ObtainMeSubscriptionsRaw(_ context.Context, userID string) ([]appsub.ConditionRow, error) {
+	m.gotUserID = userID
+	if m.rawErr != nil {
+		return nil, m.rawErr
 	}
-	return m.rates[name], nil
+	return m.rawRows, nil
 }
 
+// TestHandler_ListMeSubscriptions covers what stayed behind in the handler once
+// the grouping, search and pagination rules moved to the application service:
+// deriving the service arguments from the request, and rendering what comes back.
+// The rules themselves are exercised in internal/application/subscription.
 func TestHandler_ListMeSubscriptions(t *testing.T) {
 	t.Parallel()
 
 	const callerUserID = int64(111)
-	callerIDStr := "111"
-	otherIDStr := "222"
 
-	callerSub := domain.RateUserSubscription{
-		ID: "sub1", UserType: domain.UserTypeTelegram, UserID: callerIDStr,
-		SourceName: "src_a", ConditionType: "delta", ConditionValue: "5",
-	}
-	otherSub := domain.RateUserSubscription{
-		ID: "sub2", UserType: domain.UserTypeTelegram, UserID: otherIDStr,
-		SourceName: "src_b", ConditionType: "interval", ConditionValue: "1h",
-	}
-	srcA := &domain.RateSource{Name: "src_a", Title: "Source A", BaseCurrency: "USD", QuoteCurrency: "KZT"}
-
-	t.Run("happy path returns only caller's subscriptions", func(t *testing.T) {
+	t.Run("derives the caller and the query arguments from the request", func(t *testing.T) {
 		t.Parallel()
 
-		subRepo := &mockMeSubRepo{
-			subs: map[string][]domain.RateUserSubscription{
-				callerIDStr: {callerSub},
-				otherIDStr:  {otherSub},
-			},
-		}
-		sourceRepo := &mockMeSourceRepo{
-			sources: map[string]*domain.RateSource{"src_a": srcA},
-		}
-		rateRepo := &mockMeRateValueRepo{
-			rates: map[string][]domain.RateValue{
-				"src_a": {{Price: 470.5, Timestamp: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)}},
-			},
-		}
-
-		h := newTestHandler(t, Config{
-			MeSubRepo:       subRepo,
-			MeSourceRepo:    sourceRepo,
-			MeRateValueRepo: rateRepo,
-		})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions", http.NoBody)
-		req.Header.Set("X-Telegram-Init-Data", "valid")
+		svc := &mockMeSubSvc{}
+		h := newTestHandler(t, Config{MeSubSvc: svc})
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions?q=euro&page=2&page_size=10", http.NoBody)
 		rr := httptest.NewRecorder()
 		h.ListMeSubscriptions(rr, withCaller(req, callerUserID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "111", svc.gotUserID, "the service is scoped to the authenticated caller, never to a request parameter")
+		assert.Equal(t, "euro", svc.gotQuery)
+		assert.Equal(t, int64(2), svc.gotPage)
+		assert.Equal(t, int64(10), svc.gotPageSize)
+	})
 
+	t.Run("renders the rows and echoes the requested window", func(t *testing.T) {
+		t.Parallel()
+
+		collectedAt := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+		svc := &mockMeSubSvc{
+			total: 12,
+			rows: []appsub.SourceRow{{
+				SourceName:    "src_a",
+				SourceTitle:   "Source A",
+				BaseCurrency:  "USD",
+				QuoteCurrency: "KZT",
+				Conditions:    []string{"delta:5"},
+				LatestPrice:   470.5,
+				LatestAt:      collectedAt,
+			}},
+		}
+
+		h := newTestHandler(t, Config{MeSubSvc: svc})
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions?page=2&page_size=10", http.NoBody)
+		rr := httptest.NewRecorder()
+		h.ListMeSubscriptions(rr, withCaller(req, callerUserID))
+
+		require.Equal(t, http.StatusOK, rr.Code)
 		var body dto.MeSubscriptionsResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
-		require.Equal(t, int64(1), body.Total)
+
+		assert.Equal(t, int64(12), body.Total, "the total is the service's match count, not the page length")
+		assert.Equal(t, int64(2), body.Page)
+		assert.Equal(t, int64(10), body.PageSize)
 		require.Len(t, body.Items, 1)
 		assert.Equal(t, "src_a", body.Items[0].SourceName)
 		assert.Equal(t, "Source A", body.Items[0].SourceTitle)
+		assert.Equal(t, "USD", body.Items[0].BaseCurrency)
+		assert.Equal(t, "KZT", body.Items[0].QuoteCurrency)
+		assert.Equal(t, []string{"delta:5"}, body.Items[0].Conditions)
 		assert.InDelta(t, 470.5, body.Items[0].LatestPrice, 0.001)
-		assert.NotEmpty(t, body.Items[0].LatestAt)
+		assert.Equal(t, "2026-05-01T12:00:00Z", body.Items[0].LatestAt)
 	})
 
-	t.Run("search filters by source title", func(t *testing.T) {
+	t.Run("an uncollected source omits latest_at rather than rendering year one", func(t *testing.T) {
 		t.Parallel()
 
-		subRepo := &mockMeSubRepo{
-			subs: map[string][]domain.RateUserSubscription{
-				callerIDStr: {
-					{SourceName: "src_a", ConditionType: "delta", ConditionValue: "5"},
-					{SourceName: "src_b", ConditionType: "interval", ConditionValue: "1h"},
-				},
-			},
-		}
-		sourceRepo := &mockMeSourceRepo{
-			sources: map[string]*domain.RateSource{
-				"src_a": {Name: "src_a", Title: "Euro Bank", BaseCurrency: "EUR", QuoteCurrency: "KZT"},
-				"src_b": {Name: "src_b", Title: "Dollar Bank", BaseCurrency: "USD", QuoteCurrency: "KZT"},
-			},
-		}
-		rateRepo := &mockMeRateValueRepo{}
-
-		h := newTestHandler(t, Config{
-			MeSubRepo:       subRepo,
-			MeSourceRepo:    sourceRepo,
-			MeRateValueRepo: rateRepo,
-		})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions?q=euro", http.NoBody)
-		req.Header.Set("X-Telegram-Init-Data", "valid")
+		svc := &mockMeSubSvc{total: 1, rows: []appsub.SourceRow{{SourceName: "src_a", Conditions: []string{"delta:5"}}}}
+		h := newTestHandler(t, Config{MeSubSvc: svc})
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions", http.NoBody)
 		rr := httptest.NewRecorder()
 		h.ListMeSubscriptions(rr, withCaller(req, callerUserID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
-
-		var body dto.MeSubscriptionsResponse
-		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
-		require.Equal(t, int64(1), body.Total)
-		require.Len(t, body.Items, 1)
-		assert.Equal(t, "src_a", body.Items[0].SourceName)
+		assert.NotContains(t, rr.Body.String(), "latest_at")
 	})
 
-	t.Run("paginates correctly for 12 subscriptions on page 2", func(t *testing.T) {
+	t.Run("empty result renders a non-nil items array", func(t *testing.T) {
 		t.Parallel()
 
-		subs := make([]domain.RateUserSubscription, 12)
-		sources := make(map[string]*domain.RateSource, 12)
-		for i := range 12 {
-			name := "src_" + strconv.Itoa(i)
-			subs[i] = domain.RateUserSubscription{
-				SourceName:    name,
-				ConditionType: "delta", ConditionValue: "1",
-			}
-			sources[name] = &domain.RateSource{Name: name, Title: "Source " + strconv.Itoa(i), BaseCurrency: "USD", QuoteCurrency: "KZT"}
-		}
-		subRepo := &mockMeSubRepo{subs: map[string][]domain.RateUserSubscription{callerIDStr: subs}}
-		sourceRepo := &mockMeSourceRepo{sources: sources}
-		rateRepo := &mockMeRateValueRepo{}
-
-		h := newTestHandler(t, Config{
-			MeSubRepo:       subRepo,
-			MeSourceRepo:    sourceRepo,
-			MeRateValueRepo: rateRepo,
-		})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions?page=2&page_size=10", http.NoBody)
-		req.Header.Set("X-Telegram-Init-Data", "valid")
+		h := newTestHandler(t, Config{MeSubSvc: &mockMeSubSvc{}})
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions", http.NoBody)
 		rr := httptest.NewRecorder()
 		h.ListMeSubscriptions(rr, withCaller(req, callerUserID))
 
 		require.Equal(t, http.StatusOK, rr.Code)
-
 		var body dto.MeSubscriptionsResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
-		require.Equal(t, int64(12), body.Total)
-		require.Len(t, body.Items, 2, "page 2 of 10-per-page with 12 items should return 2")
-		assert.Equal(t, int64(2), body.Page)
-		assert.Equal(t, int64(10), body.PageSize)
+		require.NotNil(t, body.Items)
+		assert.Empty(t, body.Items)
+	})
+
+	t.Run("400 on a non-integer page_size", func(t *testing.T) {
+		t.Parallel()
+
+		svc := &mockMeSubSvc{}
+		h := newTestHandler(t, Config{MeSubSvc: svc})
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions?page_size=many", http.NoBody)
+		rr := httptest.NewRecorder()
+		h.ListMeSubscriptions(rr, withCaller(req, callerUserID))
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		assert.Empty(t, svc.gotUserID, "a request rejected on parsing must not reach the service")
+	})
+
+	t.Run("500 on service failure", func(t *testing.T) {
+		t.Parallel()
+
+		h := newTestHandler(t, Config{MeSubSvc: &mockMeSubSvc{err: errors.New("db down")}})
+		h.logger = log.New(io.Discard, "", 0)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions", http.NoBody)
+		rr := httptest.NewRecorder()
+		h.ListMeSubscriptions(rr, withCaller(req, callerUserID))
+
+		require.Equal(t, http.StatusInternalServerError, rr.Code)
+		assert.Contains(t, rr.Body.String(), "internal error")
 	})
 }
 
@@ -2269,34 +2263,22 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 	})
 }
 
+// TestHandler_ListMeSubscriptionsRaw covers the rendering half of the editor
+// endpoint. Ordering and source enrichment belong to the application service and
+// are exercised in internal/application/subscription.
 func TestHandler_ListMeSubscriptionsRaw(t *testing.T) {
 	t.Parallel()
 
 	const callerID = int64(555)
-	callerIDStr := strconv.FormatInt(callerID, 10)
-
-	srcA := &domain.RateSource{Name: "src_a", Title: "Alpha", BaseCurrency: "USD", QuoteCurrency: "KZT"}
-	srcB := &domain.RateSource{Name: "src_b", Title: "Beta", BaseCurrency: "EUR", QuoteCurrency: "KZT"}
 
 	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
 
-	makeSub := func(id, srcName, ct, cv string, updAt time.Time) domain.RateUserSubscription {
-		return domain.RateUserSubscription{
-			ID:             id,
-			UserType:       domain.UserTypeTelegram,
-			UserID:         callerIDStr,
-			SourceName:     srcName,
-			ConditionType:  domain.SubscriptionConditionType(ct),
-			ConditionValue: cv,
-			UpdatedAt:      updAt,
-		}
-	}
-
-	t.Run("200 empty items when user has no subscriptions", func(t *testing.T) {
+	t.Run("200 empty items when the caller has no subscriptions", func(t *testing.T) {
 		t.Parallel()
-		h := newTestHandler(t, Config{})
+
+		svc := &mockMeSubSvc{}
+		h := newTestHandler(t, Config{MeSubSvc: svc})
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions/raw", http.NoBody)
-		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.ListMeSubscriptionsRaw(rr, withCaller(req, callerID))
 
@@ -2305,28 +2287,27 @@ func TestHandler_ListMeSubscriptionsRaw(t *testing.T) {
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 		require.NotNil(t, body.Items)
 		assert.Empty(t, body.Items)
+		assert.Equal(t, "555", svc.gotUserID)
 	})
 
-	t.Run("200 happy path returns per-condition rows with source metadata", func(t *testing.T) {
+	t.Run("200 renders per-condition rows in the order the service returned them", func(t *testing.T) {
 		t.Parallel()
-		subRepo := &mockMeSubRepo{
-			subs: map[string][]domain.RateUserSubscription{
-				callerIDStr: {
-					makeSub("id-1", "src_a", "delta", "0.5", now),
-					makeSub("id-2", "src_b", "interval", "1h", now.Add(-time.Hour)),
-				},
-			},
-		}
-		sourceRepo := &mockMeSourceRepo{
-			sources: map[string]*domain.RateSource{"src_a": srcA, "src_b": srcB},
-		}
 
-		h := newTestHandler(t, Config{
-			MeSubRepo:    subRepo,
-			MeSourceRepo: sourceRepo,
-		})
+		svc := &mockMeSubSvc{rawRows: []appsub.ConditionRow{
+			{
+				ID: "id-1", SourceName: "src_a", SourceTitle: "Alpha",
+				BaseCurrency: "USD", QuoteCurrency: "KZT",
+				ConditionType: "delta", ConditionValue: "0.5", UpdatedAt: now,
+			},
+			{
+				ID: "id-2", SourceName: "src_b", SourceTitle: "Beta",
+				BaseCurrency: "EUR", QuoteCurrency: "KZT",
+				ConditionType: "interval", ConditionValue: "1h", UpdatedAt: now.Add(-time.Hour),
+			},
+		}}
+
+		h := newTestHandler(t, Config{MeSubSvc: svc})
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions/raw", http.NoBody)
-		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.ListMeSubscriptionsRaw(rr, withCaller(req, callerID))
 
@@ -2342,56 +2323,17 @@ func TestHandler_ListMeSubscriptionsRaw(t *testing.T) {
 		assert.Equal(t, "KZT", body.Items[0].QuoteCurrency)
 		assert.Equal(t, "delta", body.Items[0].ConditionType)
 		assert.Equal(t, "0.5", body.Items[0].ConditionValue)
-		assert.NotEmpty(t, body.Items[0].UpdatedAt)
+		assert.Equal(t, "2026-05-01T12:00:00Z", body.Items[0].UpdatedAt)
+		assert.Equal(t, "id-2", body.Items[1].ID, "the service owns the ordering; rendering must not reshuffle it")
 	})
 
-	t.Run("items sorted source_name ASC updated_at DESC", func(t *testing.T) {
+	t.Run("500 on service failure", func(t *testing.T) {
 		t.Parallel()
-		sub1 := makeSub("z1", "src_b", "delta", "1", now)
-		sub2 := makeSub("z2", "src_a", "delta", "2", now.Add(-time.Hour))
-		sub3 := makeSub("z3", "src_a", "interval", "1h", now) // newer within src_a
-		subRepo := &mockMeSubRepo{
-			subs: map[string][]domain.RateUserSubscription{
-				callerIDStr: {sub1, sub2, sub3},
-			},
-		}
-		sourceRepo := &mockMeSourceRepo{
-			sources: map[string]*domain.RateSource{"src_a": srcA, "src_b": srcB},
-		}
 
-		h := newTestHandler(t, Config{
-			MeSubRepo:    subRepo,
-			MeSourceRepo: sourceRepo,
-		})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions/raw", http.NoBody)
-		req.Header.Set("X-Telegram-Init-Data", "valid")
-		rr := httptest.NewRecorder()
-		h.ListMeSubscriptionsRaw(rr, withCaller(req, callerID))
-
-		require.Equal(t, http.StatusOK, rr.Code)
-		var body dto.MeSubscriptionsRawResponse
-		require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
-		require.Len(t, body.Items, 3)
-
-		// src_a rows come before src_b (ASC), and within src_a the newer row first (DESC).
-		assert.Equal(t, "src_a", body.Items[0].SourceName)
-		assert.Equal(t, "z3", body.Items[0].ID, "newer src_a row must come first")
-		assert.Equal(t, "src_a", body.Items[1].SourceName)
-		assert.Equal(t, "z2", body.Items[1].ID)
-		assert.Equal(t, "src_b", body.Items[2].SourceName)
-	})
-
-	t.Run("500 on repo failure", func(t *testing.T) {
-		t.Parallel()
-		subRepo := &mockMeSubRepo{err: errors.New("db down")}
-
-		h := newTestHandler(t, Config{
-			MeSubRepo: subRepo,
-		})
-		h.logger = log.New(log.Writer(), "", 0) // suppress output in test run
+		h := newTestHandler(t, Config{MeSubSvc: &mockMeSubSvc{rawErr: errors.New("db down")}})
+		h.logger = log.New(io.Discard, "", 0)
 
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/subscriptions/raw", http.NoBody)
-		req.Header.Set("X-Telegram-Init-Data", "valid")
 		rr := httptest.NewRecorder()
 		h.ListMeSubscriptionsRaw(rr, withCaller(req, callerID))
 
@@ -2857,13 +2799,13 @@ func TestNewHandler_Config(t *testing.T) {
 	complete := func() Config {
 		return Config{
 			RateService:     &mockRateService{},
+			MeSubSvc:        &mockMeSubSvc{},
 			MeSubRepo:       &mockMeSubRepo{},
 			MeSourceRepo:    &mockMeSourceRepo{},
-			MeRateValueRepo: &mockMeRateValueRepo{},
 			MeProfileRepo:   &mockMeProfileRepo{},
+			MeWeatherSvc:    &mockMeWeatherSvc{},
 			WeatherCityRepo: &mockWeatherCityRepo{},
 			WeatherGeocoder: &mockWeatherGeocoder{},
-			WeatherObsRepo:  &mockWeatherObsRepo{},
 		}
 	}
 
@@ -2878,13 +2820,13 @@ func TestNewHandler_Config(t *testing.T) {
 		t.Parallel()
 		clear := map[string]func(*Config){
 			"RateService":     func(c *Config) { c.RateService = nil },
+			"MeSubSvc":        func(c *Config) { c.MeSubSvc = nil },
 			"MeSubRepo":       func(c *Config) { c.MeSubRepo = nil },
 			"MeSourceRepo":    func(c *Config) { c.MeSourceRepo = nil },
-			"MeRateValueRepo": func(c *Config) { c.MeRateValueRepo = nil },
 			"MeProfileRepo":   func(c *Config) { c.MeProfileRepo = nil },
+			"MeWeatherSvc":    func(c *Config) { c.MeWeatherSvc = nil },
 			"WeatherCityRepo": func(c *Config) { c.WeatherCityRepo = nil },
 			"WeatherGeocoder": func(c *Config) { c.WeatherGeocoder = nil },
-			"WeatherObsRepo":  func(c *Config) { c.WeatherObsRepo = nil },
 		}
 		for name, drop := range clear {
 			t.Run(name, func(t *testing.T) {
@@ -2904,8 +2846,8 @@ func TestNewHandler_Config(t *testing.T) {
 		_, err := NewHandler(Config{})
 		require.Error(t, err)
 		for _, name := range []string{
-			"RateService", "MeSubRepo", "MeSourceRepo", "MeRateValueRepo",
-			"MeProfileRepo", "WeatherCityRepo", "WeatherGeocoder", "WeatherObsRepo",
+			"RateService", "MeSubSvc", "MeSubRepo", "MeSourceRepo",
+			"MeProfileRepo", "MeWeatherSvc", "WeatherCityRepo", "WeatherGeocoder",
 		} {
 			require.Contains(t, err.Error(), name)
 		}
@@ -2949,26 +2891,26 @@ func newTestHandler(t *testing.T, cfg Config) *Handler {
 	if cfg.RateService == nil {
 		cfg.RateService = &mockRateService{}
 	}
+	if cfg.MeSubSvc == nil {
+		cfg.MeSubSvc = &mockMeSubSvc{}
+	}
 	if cfg.MeSubRepo == nil {
 		cfg.MeSubRepo = &mockMeSubRepo{}
 	}
 	if cfg.MeSourceRepo == nil {
 		cfg.MeSourceRepo = &mockMeSourceRepo{}
 	}
-	if cfg.MeRateValueRepo == nil {
-		cfg.MeRateValueRepo = &mockMeRateValueRepo{}
-	}
 	if cfg.MeProfileRepo == nil {
 		cfg.MeProfileRepo = &mockMeProfileRepo{}
+	}
+	if cfg.MeWeatherSvc == nil {
+		cfg.MeWeatherSvc = &mockMeWeatherSvc{}
 	}
 	if cfg.WeatherCityRepo == nil {
 		cfg.WeatherCityRepo = &mockWeatherCityRepo{}
 	}
 	if cfg.WeatherGeocoder == nil {
 		cfg.WeatherGeocoder = &mockWeatherGeocoder{}
-	}
-	if cfg.WeatherObsRepo == nil {
-		cfg.WeatherObsRepo = &mockWeatherObsRepo{}
 	}
 
 	h, err := NewHandler(cfg)

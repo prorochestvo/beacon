@@ -12,6 +12,7 @@ import (
 
 	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
+	appweather "github.com/seilbekskindirov/beacon/internal/application/weather"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
 )
@@ -71,7 +72,7 @@ func (h *Handler) ListMeWeatherCities(w http.ResponseWriter, r *http.Request) {
 	}
 	tgUserID := strconv.FormatInt(userID, 10)
 
-	cities, err := h.meWeatherCityRepo.ObtainWeatherUserCitiesByUserID(r.Context(), domain.UserTypeTelegram, tgUserID)
+	cities, err := h.meWeatherSvc.ObtainMeCities(r.Context(), tgUserID)
 	if err != nil {
 		h.internalError(w, fmt.Errorf("ListMeWeatherCities: %w", err))
 		return
@@ -399,79 +400,68 @@ func (h *Handler) GetMeWeatherCurrent(w http.ResponseWriter, r *http.Request) {
 	}
 	tgUserID := strconv.FormatInt(userID, 10)
 
-	cities, err := h.meWeatherCityRepo.ObtainWeatherUserCitiesByUserID(r.Context(), domain.UserTypeTelegram, tgUserID)
+	current, err := h.meWeatherSvc.ObtainMeCurrent(r.Context(), tgUserID)
 	if err != nil {
-		h.internalError(w, fmt.Errorf("GetMeWeatherCurrent cities: %w", err))
+		h.internalError(w, fmt.Errorf("GetMeWeatherCurrent: %w", err))
 		return
 	}
 
-	// Dedup by location_id: each notify kind is its own row, but the endpoint
-	// returns one observation per physical city regardless of kind count.
-	seen := make(map[string]struct{}, len(cities))
-	order := make([]domain.WeatherUserCity, 0, len(cities))
-	for _, c := range cities {
-		if _, ok := seen[c.LocationID]; !ok {
-			seen[c.LocationID] = struct{}{}
-			order = append(order, c)
-		}
-	}
-
-	items := make([]dto.WeatherCurrentItem, 0, len(order))
-	for _, city := range order {
-		item := dto.WeatherCurrentItem{
-			LocationID:  city.LocationID,
-			DisplayName: city.DisplayName,
-			Timezone:    city.Timezone,
-		}
-
-		obs, err := h.meWeatherObsRepo.ObtainLatestObservation(r.Context(), city.LocationID, domain.ProviderOpenMeteo)
-		if err != nil {
-			if errors.Is(err, internal.ErrNotFound) {
-				// No observation yet — the collector hasn't run for this city.
-				// Return the row with HasData:false so the client can show a placeholder.
-				items = append(items, item)
-				continue
-			}
-			h.internalError(w, fmt.Errorf("GetMeWeatherCurrent obs %s: %w", city.LocationID, err))
-			return
-		}
-
-		item.HasData = true
-		item.TempCurrent = obs.TempCurrent
-		item.TempFeels = obs.TempFeels
-		item.Humidity = obs.Humidity
-		item.WindSpeed = obs.WindSpeed
-		item.WindDir = obs.WindDir
-		item.Precip = obs.Precip
-		item.CloudCover = obs.CloudCover
-		item.TempMax = obs.TempMax
-		item.TempMin = obs.TempMin
-		item.WeatherCode = obs.WeatherCode
-		if obs.WeatherCode != nil {
-			text, emoji := domain.WMOWeatherCode(*obs.WeatherCode)
-			item.ConditionText = text
-			item.ConditionEmoji = emoji
-		}
-		item.CapturedAt = obs.CapturedAt.UTC().Format(time.RFC3339)
-
-		// Convert sunrise/sunset to city-local "15:04" strings server-side so
-		// the WASM bundle needs no tzdata. A bad timezone skips only the sun
-		// times — numeric fields are still returned.
-		if city.Timezone != "" {
-			if loc, locErr := time.LoadLocation(city.Timezone); locErr == nil {
-				if obs.Sunrise != nil {
-					item.SunriseLocal = obs.Sunrise.In(loc).Format("15:04")
-				}
-				if obs.Sunset != nil {
-					item.SunsetLocal = obs.Sunset.In(loc).Format("15:04")
-				}
-			}
-		}
-
-		items = append(items, item)
+	items := make([]dto.WeatherCurrentItem, 0, len(current))
+	for _, c := range current {
+		items = append(items, weatherCurrentItem(c))
 	}
 
 	writeJSON(w, dto.WeatherCurrentResponse{Items: items})
+}
+
+// weatherCurrentItem renders one city and its latest observation for the wire.
+// A nil observation is the "collector has not run for this city yet" case and
+// renders as has_data:false with every reading absent, so a client never has to
+// read an omitted number as a zero.
+func weatherCurrentItem(c appweather.CurrentCity) dto.WeatherCurrentItem {
+	item := dto.WeatherCurrentItem{
+		LocationID:  c.City.LocationID,
+		DisplayName: c.City.DisplayName,
+		Timezone:    c.City.Timezone,
+	}
+	if c.Observation == nil {
+		return item
+	}
+	obs := c.Observation
+
+	item.HasData = true
+	item.TempCurrent = obs.TempCurrent
+	item.TempFeels = obs.TempFeels
+	item.Humidity = obs.Humidity
+	item.WindSpeed = obs.WindSpeed
+	item.WindDir = obs.WindDir
+	item.Precip = obs.Precip
+	item.CloudCover = obs.CloudCover
+	item.TempMax = obs.TempMax
+	item.TempMin = obs.TempMin
+	item.WeatherCode = obs.WeatherCode
+	if obs.WeatherCode != nil {
+		text, emoji := domain.WMOWeatherCode(*obs.WeatherCode)
+		item.ConditionText = text
+		item.ConditionEmoji = emoji
+	}
+	item.CapturedAt = obs.CapturedAt.UTC().Format(time.RFC3339)
+
+	// Convert sunrise/sunset to city-local "15:04" strings server-side so the
+	// WASM bundle needs no tzdata. A bad timezone skips only the sun times —
+	// numeric fields are still returned.
+	if c.City.Timezone != "" {
+		if loc, locErr := time.LoadLocation(c.City.Timezone); locErr == nil {
+			if obs.Sunrise != nil {
+				item.SunriseLocal = obs.Sunrise.In(loc).Format("15:04")
+			}
+			if obs.Sunset != nil {
+				item.SunsetLocal = obs.Sunset.In(loc).Format("15:04")
+			}
+		}
+	}
+
+	return item
 }
 
 // weatherKindExists reports whether the caller already owns a subscription of the given
@@ -545,11 +535,13 @@ type meWeatherCityRepository interface {
 	RemoveWeatherUserCitiesByLocation(ctx context.Context, userType domain.UserType, userID, locationID string) error
 }
 
-// meWeatherObsRepository is the read-only storage contract for weather
-// observations, used by GetMeWeatherCurrent. Returns internal.ErrNotFound when
-// no observation exists for the given (locationID, provider) pair.
-type meWeatherObsRepository interface {
-	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
+// meWeatherService is the application service behind the caller's own weather
+// reads, satisfied by *appweather.Service. Deduplicating a city tracked under
+// several notify kinds, and treating "not collected yet" as a state rather than
+// an error, both live there; this package renders what it returns.
+type meWeatherService interface {
+	ObtainMeCities(ctx context.Context, userID string) ([]domain.WeatherUserCity, error)
+	ObtainMeCurrent(ctx context.Context, userID string) ([]appweather.CurrentCity, error)
 }
 
 // weatherGeocoder is the geocoding contract used by SearchWeatherCities. It

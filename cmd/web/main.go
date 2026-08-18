@@ -28,6 +28,8 @@ import (
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
 	"github.com/seilbekskindirov/beacon/internal/application/inspector"
 	"github.com/seilbekskindirov/beacon/internal/application/service"
+	appsub "github.com/seilbekskindirov/beacon/internal/application/subscription"
+	appweather "github.com/seilbekskindirov/beacon/internal/application/weather"
 	"github.com/seilbekskindirov/beacon/internal/dto"
 	"github.com/seilbekskindirov/beacon/internal/gateway"
 	"github.com/seilbekskindirov/beacon/internal/gateway/middleware"
@@ -183,6 +185,8 @@ func main() {
 	// HistoryValuesLoader (ObtainMeHistory); sourceRepo also satisfies
 	// PublicSourcesLoader (ObtainPublicChart).
 	chartSvc := appchart.NewService(subscriptionRepo, sourceRepo, rateValueRepo, rateValueRepo, sourceRepo, time.Now)
+	subSvc := appsub.NewService(subscriptionRepo, sourceRepo, rateValueRepo)
+	weatherSvc := appweather.NewService(weatherCityRepo, weatherObsRepo)
 
 	// Open-Meteo geocoder for city search. cmd/web always uses a direct connection
 	// (no proxy) — Telegram traffic already bypasses the proxy, and geocoding calls
@@ -194,10 +198,10 @@ func main() {
 	}
 	geoAdapter := &openMeteoGeoAdapter{client: openMeteoClient}
 
-	mux, err := gateway.NewGateway(restAPI, botToken, subscriptionRepo, sourceRepo, rateValueRepo, profileRepo, chartSvc, healthAgent, BuildVersion, serviceStart, gateway.WeatherGatewayDeps{
+	mux, err := gateway.NewGateway(restAPI, botToken, subSvc, subscriptionRepo, sourceRepo, profileRepo, chartSvc, healthAgent, BuildVersion, serviceStart, gateway.WeatherGatewayDeps{
+		Service:  weatherSvc,
 		CityRepo: weatherCityRepo,
 		Geocoder: geoAdapter,
-		ObsRepo:  weatherObsRepo,
 	})
 	if err != nil {
 		log.Fatalf("services: mux api is failed, %s", err.Error())

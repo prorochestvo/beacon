@@ -13,15 +13,44 @@ import (
 	"time"
 
 	"github.com/seilbekskindirov/beacon/internal"
+	appweather "github.com/seilbekskindirov/beacon/internal/application/weather"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+var _ meWeatherService = (*mockMeWeatherSvc)(nil)
 var _ meWeatherCityRepository = (*mockWeatherCityRepo)(nil)
 var _ weatherGeocoder = (*mockWeatherGeocoder)(nil)
-var _ meWeatherObsRepository = (*mockWeatherObsRepo)(nil)
+
+// mockMeWeatherSvc is a test double for meWeatherService. It records the caller
+// id the handler derived and replays whatever the test staged.
+type mockMeWeatherSvc struct {
+	cities    []domain.WeatherUserCity
+	citiesErr error
+
+	current    []appweather.CurrentCity
+	currentErr error
+
+	gotUserID string
+}
+
+func (m *mockMeWeatherSvc) ObtainMeCities(_ context.Context, userID string) ([]domain.WeatherUserCity, error) {
+	m.gotUserID = userID
+	if m.citiesErr != nil {
+		return nil, m.citiesErr
+	}
+	return m.cities, nil
+}
+
+func (m *mockMeWeatherSvc) ObtainMeCurrent(_ context.Context, userID string) ([]appweather.CurrentCity, error) {
+	m.gotUserID = userID
+	if m.currentErr != nil {
+		return nil, m.currentErr
+	}
+	return m.current, nil
+}
 
 // mockWeatherCityRepo is a test double for meWeatherCityRepository.
 type mockWeatherCityRepo struct {
@@ -121,40 +150,21 @@ func (m *mockWeatherGeocoder) Geocode(_ context.Context, _ string, _ int) ([]dto
 	return m.items, nil
 }
 
-// mockWeatherObsRepo is a test double for meWeatherObsRepository.
-// When obsMap is non-nil and contains the locationID key, the stored obs is
-// returned. When the key is absent, internal.ErrNotFound is returned.
-// When obsErr is non-nil it is returned for every call regardless of the key.
-type mockWeatherObsRepo struct {
-	obsMap map[string]*domain.WeatherObservation // locationID → obs
-	obsErr error
-}
-
-func (m *mockWeatherObsRepo) ObtainLatestObservation(_ context.Context, locationID, _ string) (*domain.WeatherObservation, error) {
-	if m.obsErr != nil {
-		return nil, m.obsErr
-	}
-	if obs, ok := m.obsMap[locationID]; ok {
-		return obs, nil
-	}
-	return nil, internal.ErrNotFound
-}
-
 // newWeatherHandler builds a Handler wired with the given weather test doubles
 // and a silenced logger so test output stays clean.
 func newWeatherHandler(t *testing.T, cityRepo meWeatherCityRepository, geo weatherGeocoder) *Handler {
 	t.Helper()
-	return newWeatherHandlerWithObs(t, cityRepo, geo, &mockWeatherObsRepo{})
+	return newWeatherHandlerWithSvc(t, cityRepo, geo, &mockMeWeatherSvc{})
 }
 
-// newWeatherHandlerWithObs builds a Handler wired with city repo, geocoder, and
-// obs repo, for the tests of GetMeWeatherCurrent that care about the last one.
-func newWeatherHandlerWithObs(t *testing.T, cityRepo meWeatherCityRepository, geo weatherGeocoder, obsRepo meWeatherObsRepository) *Handler {
+// newWeatherHandlerWithSvc builds a Handler wired with city repo, geocoder, and
+// the read service, for the tests of the two read endpoints that drive it.
+func newWeatherHandlerWithSvc(t *testing.T, cityRepo meWeatherCityRepository, geo weatherGeocoder, svc meWeatherService) *Handler {
 	t.Helper()
 	return newTestHandler(t, Config{
+		MeWeatherSvc:    svc,
 		WeatherCityRepo: cityRepo,
 		WeatherGeocoder: geo,
-		WeatherObsRepo:  obsRepo,
 		Logger:          log.New(io.Discard, "", 0),
 	})
 }
@@ -238,10 +248,10 @@ func TestHandler_ListMeWeatherCities(t *testing.T) {
 	const callerUserID = int64(99)
 	const callerIDStr = "99"
 
-	t.Run("repo error returns 500", func(t *testing.T) {
+	t.Run("service error returns 500", func(t *testing.T) {
 		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{listErr: errors.New("db down")}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
+		svc := &mockMeWeatherSvc{citiesErr: errors.New("db down")}
+		h := newWeatherHandlerWithSvc(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{}, svc)
 		rr := httptest.NewRecorder()
 		h.ListMeWeatherCities(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities", http.NoBody), callerUserID))
 
@@ -263,9 +273,9 @@ func TestHandler_ListMeWeatherCities(t *testing.T) {
 		require.Empty(t, resp.Items)
 	})
 
-	t.Run("happy path returns caller cities", func(t *testing.T) {
+	t.Run("happy path renders the caller's cities", func(t *testing.T) {
 		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{byUser: []domain.WeatherUserCity{
+		svc := &mockMeWeatherSvc{cities: []domain.WeatherUserCity{
 			{
 				ID: "c1", UserType: domain.UserTypeTelegram, UserID: callerIDStr,
 				LocationID: "1234", DisplayName: "Almaty", Latitude: 43.25, Longitude: 76.94,
@@ -273,7 +283,7 @@ func TestHandler_ListMeWeatherCities(t *testing.T) {
 				NotifyKind: domain.WeatherNotifyMorningSummary, NotifyHour: 7,
 			},
 		}}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
+		h := newWeatherHandlerWithSvc(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{}, svc)
 		rr := httptest.NewRecorder()
 		h.ListMeWeatherCities(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities", http.NoBody), callerUserID))
 
@@ -285,7 +295,10 @@ func TestHandler_ListMeWeatherCities(t *testing.T) {
 		assert.Equal(t, "c1", resp.Items[0].ID)
 		assert.Equal(t, "1234", resp.Items[0].LocationID)
 		assert.Equal(t, "Almaty", resp.Items[0].DisplayName)
+		assert.Equal(t, "Asia/Almaty", resp.Items[0].Timezone)
+		assert.Equal(t, "morning_summary", resp.Items[0].NotifyKind)
 		assert.Equal(t, 7, resp.Items[0].NotifyHour)
+		assert.Equal(t, callerIDStr, svc.gotUserID, "the list is scoped to the authenticated caller")
 	})
 }
 
@@ -722,8 +735,8 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 
 	t.Run("list returns notify_kind and condition_value for alert rows", func(t *testing.T) {
 		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{
-			byUser: []domain.WeatherUserCity{
+		svc := &mockMeWeatherSvc{
+			cities: []domain.WeatherUserCity{
 				{
 					ID:             "city-id-1",
 					UserType:       domain.UserTypeTelegram,
@@ -736,7 +749,7 @@ func TestHandler_CreateMeWeatherCity(t *testing.T) {
 				},
 			},
 		}
-		h := newWeatherHandler(t, cityRepo, &mockWeatherGeocoder{})
+		h := newWeatherHandlerWithSvc(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{}, svc)
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/cities", http.NoBody)
 		rr := httptest.NewRecorder()
 		h.ListMeWeatherCities(rr, withCaller(req, callerUserID))
@@ -973,19 +986,24 @@ func TestHandler_DeleteMeWeatherLocation(t *testing.T) {
 	})
 }
 
+// TestHandler_GetMeWeatherCurrent covers the rendering the handler kept: the
+// wire shape of a city with and without a reading, and the city-local sunrise
+// and sunset strings that exist so the WASM client needs no tzdata.
+// Deduplicating locations and treating "not collected yet" as a state rather
+// than an error belong to internal/application/weather and are tested there.
 func TestHandler_GetMeWeatherCurrent(t *testing.T) {
 	t.Parallel()
 
 	const callerUserID = int64(42)
 
-	newCity := func(locationID, displayName string) domain.WeatherUserCity {
+	newCity := func(locationID, displayName, timezone string) domain.WeatherUserCity {
 		return domain.WeatherUserCity{
 			ID:          "city-" + locationID,
 			UserType:    domain.UserTypeTelegram,
 			UserID:      "42",
 			LocationID:  locationID,
 			DisplayName: displayName,
-			Timezone:    "Asia/Almaty",
+			Timezone:    timezone,
 			NotifyKind:  domain.WeatherNotifyMorningSummary,
 			NotifyHour:  7,
 		}
@@ -993,89 +1011,69 @@ func TestHandler_GetMeWeatherCurrent(t *testing.T) {
 
 	newObs := func(locationID string) *domain.WeatherObservation {
 		temp := 25.5
+		code := 0
+		sunrise := time.Date(2026, 6, 30, 0, 30, 0, 0, time.UTC)
+		sunset := time.Date(2026, 6, 30, 15, 45, 0, 0, time.UTC)
 		return &domain.WeatherObservation{
 			ID:          "obs-" + locationID,
 			LocationID:  locationID,
 			Provider:    domain.ProviderOpenMeteo,
 			TempCurrent: &temp,
-			WeatherCode: func() *int { c := 0; return &c }(),
+			WeatherCode: &code,
+			Sunrise:     &sunrise,
+			Sunset:      &sunset,
 			CapturedAt:  time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC),
 		}
 	}
 
-	t.Run("city repo error returns 500 with fallback message", func(t *testing.T) {
-		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{listErr: errors.New("db down")}
-		h := newWeatherHandlerWithObs(t, cityRepo, &mockWeatherGeocoder{}, &mockWeatherObsRepo{})
+	get := func(t *testing.T, svc meWeatherService) *httptest.ResponseRecorder {
+		t.Helper()
+		h := newWeatherHandlerWithSvc(t, &mockWeatherCityRepo{}, &mockWeatherGeocoder{}, svc)
 		rr := httptest.NewRecorder()
 		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/current", http.NoBody), callerUserID))
+		return rr
+	}
+
+	t.Run("service error returns 500 with fallback message", func(t *testing.T) {
+		t.Parallel()
+		rr := get(t, &mockMeWeatherSvc{currentErr: errors.New("db down")})
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		const errFallbackMessage = `{"error":"internal error"}`
 		assert.Contains(t, rr.Body.String(), errFallbackMessage)
 	})
 
-	t.Run("obs repo error returns 500 with fallback message", func(t *testing.T) {
+	t.Run("a city with no observation renders has_data false and no readings", func(t *testing.T) {
 		t.Parallel()
-		city := newCity("1234", "Almaty")
-		cityRepo := &mockWeatherCityRepo{byUser: []domain.WeatherUserCity{city}}
-		obsRepo := &mockWeatherObsRepo{obsErr: errors.New("obs db down")}
-		h := newWeatherHandlerWithObs(t, cityRepo, &mockWeatherGeocoder{}, obsRepo)
-		rr := httptest.NewRecorder()
-		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/current", http.NoBody), callerUserID))
-
-		require.Equal(t, http.StatusInternalServerError, rr.Code)
-		const errFallbackMessage = `{"error":"internal error"}`
-		assert.Contains(t, rr.Body.String(), errFallbackMessage)
-	})
-
-	t.Run("city with no observation returns has_data false", func(t *testing.T) {
-		t.Parallel()
-		city := newCity("1234", "Almaty")
-		cityRepo := &mockWeatherCityRepo{byUser: []domain.WeatherUserCity{city}}
-		obsRepo := &mockWeatherObsRepo{obsMap: map[string]*domain.WeatherObservation{}} // empty map → ErrNotFound
-		h := newWeatherHandlerWithObs(t, cityRepo, &mockWeatherGeocoder{}, obsRepo)
-		rr := httptest.NewRecorder()
-		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/current", http.NoBody), callerUserID))
+		svc := &mockMeWeatherSvc{current: []appweather.CurrentCity{
+			{City: newCity("1234", "Almaty", "Asia/Almaty")},
+		}}
+		rr := get(t, svc)
 
 		require.Equal(t, http.StatusOK, rr.Code)
-		var resp struct {
-			Items []struct {
-				LocationID string `json:"location_id"`
-				HasData    bool   `json:"has_data"`
-			} `json:"items"`
-		}
+		var resp dto.WeatherCurrentResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 		require.Len(t, resp.Items, 1)
 		assert.Equal(t, "1234", resp.Items[0].LocationID)
 		assert.False(t, resp.Items[0].HasData)
+		assert.NotContains(t, rr.Body.String(), "temp_current",
+			"absent readings must be omitted, never rendered as a zero the client would show")
+		assert.Equal(t, "42", svc.gotUserID)
 	})
 
-	t.Run("happy path returns items with data", func(t *testing.T) {
+	t.Run("a city with an observation renders every reading", func(t *testing.T) {
 		t.Parallel()
-		city := newCity("1234", "Almaty")
-		obs := newObs("1234")
-		cityRepo := &mockWeatherCityRepo{byUser: []domain.WeatherUserCity{city}}
-		obsRepo := &mockWeatherObsRepo{obsMap: map[string]*domain.WeatherObservation{"1234": obs}}
-		h := newWeatherHandlerWithObs(t, cityRepo, &mockWeatherGeocoder{}, obsRepo)
-		rr := httptest.NewRecorder()
-		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/current", http.NoBody), callerUserID))
+		svc := &mockMeWeatherSvc{current: []appweather.CurrentCity{
+			{City: newCity("1234", "Almaty", "Asia/Almaty"), Observation: newObs("1234")},
+		}}
+		rr := get(t, svc)
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
-		var resp struct {
-			Items []struct {
-				LocationID     string   `json:"location_id"`
-				DisplayName    string   `json:"display_name"`
-				HasData        bool     `json:"has_data"`
-				TempCurrent    *float64 `json:"temp_current"`
-				ConditionText  string   `json:"condition_text"`
-				ConditionEmoji string   `json:"condition_emoji"`
-				CapturedAt     string   `json:"captured_at"`
-			} `json:"items"`
-		}
+		var resp dto.WeatherCurrentResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 		require.Len(t, resp.Items, 1)
+
 		item := resp.Items[0]
 		assert.Equal(t, "1234", item.LocationID)
 		assert.Equal(t, "Almaty", item.DisplayName)
@@ -1083,40 +1081,45 @@ func TestHandler_GetMeWeatherCurrent(t *testing.T) {
 		require.NotNil(t, item.TempCurrent)
 		assert.InDelta(t, 25.5, *item.TempCurrent, 0.001)
 		assert.Equal(t, "Clear sky", item.ConditionText)
-		assert.NotEmpty(t, item.CapturedAt)
+		assert.NotEmpty(t, item.ConditionEmoji)
+		assert.Equal(t, "2026-06-30T12:00:00Z", item.CapturedAt)
 	})
 
-	t.Run("dedup: two rows with same location_id produce one item", func(t *testing.T) {
+	t.Run("sunrise and sunset render in the city's timezone", func(t *testing.T) {
 		t.Parallel()
-		// Simulate two notify-kind rows for the same physical city.
-		city1 := newCity("1234", "Almaty")
-		city2 := city1
-		city2.ID = "city-1234-b"
-		obs := newObs("1234")
-		cityRepo := &mockWeatherCityRepo{byUser: []domain.WeatherUserCity{city1, city2}}
-		obsRepo := &mockWeatherObsRepo{obsMap: map[string]*domain.WeatherObservation{"1234": obs}}
-		h := newWeatherHandlerWithObs(t, cityRepo, &mockWeatherGeocoder{}, obsRepo)
-		rr := httptest.NewRecorder()
-		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/current", http.NoBody), callerUserID))
+		svc := &mockMeWeatherSvc{current: []appweather.CurrentCity{
+			// Asia/Almaty is UTC+5, so 00:30Z is 05:30 and 15:45Z is 20:45 locally.
+			{City: newCity("1234", "Almaty", "Asia/Almaty"), Observation: newObs("1234")},
+		}}
+		rr := get(t, svc)
 
 		require.Equal(t, http.StatusOK, rr.Code)
-		var resp struct {
-			Items []struct {
-				LocationID string `json:"location_id"`
-			} `json:"items"`
-		}
+		var resp dto.WeatherCurrentResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
-		require.Len(t, resp.Items, 1, "two notify-kind rows for the same location_id must produce exactly one item")
-		assert.Equal(t, "1234", resp.Items[0].LocationID)
+		require.Len(t, resp.Items, 1)
+		assert.Equal(t, "05:30", resp.Items[0].SunriseLocal)
+		assert.Equal(t, "20:45", resp.Items[0].SunsetLocal)
 	})
 
-	t.Run("empty city list returns empty items array", func(t *testing.T) {
+	t.Run("an unloadable timezone drops only the sun times", func(t *testing.T) {
 		t.Parallel()
-		cityRepo := &mockWeatherCityRepo{} // ObtainWeatherUserCitiesByUserID returns []
-		obsRepo := &mockWeatherObsRepo{}
-		h := newWeatherHandlerWithObs(t, cityRepo, &mockWeatherGeocoder{}, obsRepo)
-		rr := httptest.NewRecorder()
-		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/current", http.NoBody), callerUserID))
+		svc := &mockMeWeatherSvc{current: []appweather.CurrentCity{
+			{City: newCity("1234", "Almaty", "Mars/Olympus"), Observation: newObs("1234")},
+		}}
+		rr := get(t, svc)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		var resp dto.WeatherCurrentResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		require.Len(t, resp.Items, 1)
+		assert.Empty(t, resp.Items[0].SunriseLocal)
+		assert.Empty(t, resp.Items[0].SunsetLocal)
+		require.NotNil(t, resp.Items[0].TempCurrent, "a bad timezone must not cost the numeric readings")
+	})
+
+	t.Run("no cities returns an empty items array", func(t *testing.T) {
+		t.Parallel()
+		rr := get(t, &mockMeWeatherSvc{})
 
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp struct {

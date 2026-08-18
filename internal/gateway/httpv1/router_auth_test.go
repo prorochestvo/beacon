@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	appsub "github.com/seilbekskindirov/beacon/internal/application/subscription"
+	appweather "github.com/seilbekskindirov/beacon/internal/application/weather"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
 	"github.com/seilbekskindirov/beacon/internal/gateway/httpv1/routes"
@@ -23,13 +25,16 @@ import (
 )
 
 var (
-	_ meSubscriptionRepo = (*stubMeSubRepo)(nil)
-	_ meSourceRepo       = (*stubMeSourceRepo)(nil)
-	_ meRateValueRepo    = (*stubMeRateValueRepo)(nil)
-	_ meProfileRepo      = (*stubMeProfileRepo)(nil)
-	_ meWeatherCityRepo  = (*stubWeatherCityRepo)(nil)
-	_ weatherGeocoder    = (*stubGeocoder)(nil)
-	_ meWeatherObsRepo   = (*stubWeatherObsRepo)(nil)
+	_ meSubscriptionRepo            = (*stubMeSubRepo)(nil)
+	_ meSourceRepo                  = (*stubMeSourceRepo)(nil)
+	_ meProfileRepo                 = (*stubMeProfileRepo)(nil)
+	_ meWeatherCityRepo             = (*stubWeatherCityRepo)(nil)
+	_ weatherGeocoder               = (*stubGeocoder)(nil)
+	_ appsub.SubscriptionsLoader    = (*stubMeSubRepo)(nil)
+	_ appsub.SourcesLoader          = (*stubMeSourceRepo)(nil)
+	_ appsub.ValuesLoader           = (*stubMeRateValueRepo)(nil)
+	_ appweather.CitiesLoader       = (*stubWeatherCityRepo)(nil)
+	_ appweather.ObservationsLoader = (*stubWeatherObsRepo)(nil)
 )
 
 // meRoutes is every method+path under /api/v1/me, the project's only authenticated
@@ -65,7 +70,8 @@ const authTestBotToken = "12345:AAH-test-token"
 // mounted behind the initData middleware, so an unauthenticated request must never
 // reach a repository. A request that gets through anyway panics on its first
 // repository call instead of quietly returning data — which the subtests below catch
-// and report as the auth failure it is.
+// and report as the auth failure it is. The application services are the real ones,
+// built over the same stubs, so the trap survives the layer they were moved behind.
 func newAuthTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 	mux, err := NewRouter(
@@ -75,18 +81,18 @@ func newAuthTestRouter(t *testing.T) http.Handler {
 		// whole rate-service surface here.
 		nil,              // rate service
 		authTestBotToken, // botToken
+		appsub.NewService(stubMeSubRepo{}, stubMeSourceRepo{}, stubMeRateValueRepo{}),
 		stubMeSubRepo{},
 		stubMeSourceRepo{},
-		stubMeRateValueRepo{},
 		stubMeProfileRepo{},
 		nil,        // chart service
 		nil,        // health agent
 		"test",     // server version
 		time.Now(), // server start
 		WeatherGatewayDeps{
+			Service:  appweather.NewService(stubWeatherCityRepo{}, stubWeatherObsRepo{}),
 			CityRepo: stubWeatherCityRepo{},
 			Geocoder: stubGeocoder{},
-			ObsRepo:  stubWeatherObsRepo{},
 		},
 	)
 	require.NoError(t, err)
