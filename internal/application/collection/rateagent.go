@@ -122,7 +122,7 @@ func (a *RateAgent) Run(ctx context.Context) (err error) {
 	}
 
 	if len(sources) == 0 {
-		return
+		return err
 	}
 
 	errs := a.execution(ctx, sources)

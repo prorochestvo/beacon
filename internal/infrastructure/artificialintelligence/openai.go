@@ -1,3 +1,5 @@
+package artificialintelligence
+
 // OpenAI client (thin wrapper over the OpenAI Responses API).
 //
 // DSN format:
@@ -15,7 +17,6 @@
 // format describing the rate_extraction_rule shape, so the model must return
 // that exact JSON. Only models in OpenAIModels (gpt-4o family and newer) are
 // accepted — others do not support strict structured output and produce HTTP 400.
-package artificialintelligence
 
 import (
 	"context"

@@ -1,5 +1,7 @@
-// Package ui provides HTML renderers for the WASM frontend. This file renders the
-// vertical section rail — the Mini App's top-level navigation.
+package ui
+
+// This file renders the vertical section rail — the Mini App's top-level
+// navigation.
 //
 // The Mini App is a 2×2 matrix of a section (what you are looking at) and a mode
 // (viewing it or managing it):
@@ -12,7 +14,6 @@
 // button (settings) switch the mode and never the section. Each cell is a separate
 // screen mount, so the active tab is implied by which screen rendered the rail —
 // there is no tab state to keep anywhere.
-package ui
 
 import (
 	"fmt"

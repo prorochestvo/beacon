@@ -522,6 +522,8 @@ func TestWriteTransactionsWaitInsteadOfFailing(t *testing.T) {
 		// its own while that BEGIN is already waiting.
 		released := make(chan error, 1)
 		go func() {
+			//nolint:forbidigo // the timer is the point: the lock has to fall away while
+			// the contending BEGIN is already waiting, which no handshake can express
 			time.Sleep(holdFor)
 			released <- release()
 		}()

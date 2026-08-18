@@ -271,6 +271,10 @@ var triggerOrder = map[domain.SubscriptionConditionType]int{
 	domain.ConditionTypeCron:     3,
 }
 
+// house pattern: the agents happen to need the same method today and are free to
+// diverge without touching each other.
+//
+//nolint:iface // consumer-side interfaces declared at the point of use, which is the
 type rateSourceRepository interface {
 	ObtainAllRateSources(context.Context) ([]domain.RateSource, error)
 }

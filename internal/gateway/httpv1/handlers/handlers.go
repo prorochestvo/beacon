@@ -1192,6 +1192,10 @@ const (
 // endpoints. Only these exact integers are valid; anything else returns 400.
 var allowedChartPeriods = []int64{7, 30, 90, 180, 360}
 
+// one-for-one. Splitting it is the open question about RateRestApi — whether a
+// facade that forwards to repositories earns a layer at all — not a rename.
+//
+//nolint:interfacebloat // fifteen methods because it mirrors the admin REST surface
 type rateService interface {
 	ObtainLastNExecutionHistoryBySourceName(ctx context.Context, name string, limit int64) ([]domain.ExecutionHistory, error)
 	ObtainLatestExecutionHistoryBySources(ctx context.Context, names []string) (map[string]domain.ExecutionHistory, error)

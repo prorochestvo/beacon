@@ -178,7 +178,7 @@ func TestOpenMeteo_Forecast(t *testing.T) {
 	t.Run("2-day fixture: daily[0] is the first day and ForecastDate reflects it", func(t *testing.T) {
 		t.Parallel()
 		fixture := loadFixture(t, "forecast_almaty_2day.json")
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(fixture)
 		}))
@@ -199,7 +199,7 @@ func TestOpenMeteo_Forecast(t *testing.T) {
 	t.Run("2-day fixture: first hourly point maps to correct UTC instant", func(t *testing.T) {
 		t.Parallel()
 		fixture := loadFixture(t, "forecast_almaty_2day.json")
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(fixture)
 		}))
@@ -535,6 +535,8 @@ func TestOpenMeteo_Retry(t *testing.T) {
 		// Cancel while the client is between attempts. The backoff must observe it
 		// rather than run its timer out, or a tick cut short by SIGTERM would hang.
 		go func() {
+			//nolint:forbidigo // cancellation has to land while the client is between
+			// attempts, which is a moment in time rather than an event to wait on
 			time.Sleep(20 * time.Millisecond)
 			cancel()
 		}()

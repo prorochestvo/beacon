@@ -59,7 +59,7 @@ func TestNewHTTPFetcher_FetchJSON(t *testing.T) {
 	t.Run("network error wraps with fetch prefix", func(t *testing.T) {
 		t.Parallel()
 		// Point at a server that is already closed so the TCP dial fails.
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 		srv.Close()
 
 		f := apiclient.NewHTTPFetcher(srv.URL, srv.Client())
@@ -155,7 +155,7 @@ func TestNewHTTPFetcher_FetchNoContent(t *testing.T) {
 
 	t.Run("network error wraps with fetch prefix", func(t *testing.T) {
 		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 		srv.Close()
 
 		f := apiclient.NewHTTPFetcher(srv.URL, srv.Client())

@@ -1,6 +1,7 @@
+package application
+
 // Package application contains page controllers for the WASM frontend.
 // This file implements the unauthenticated guest landing page.
-package application
 
 import (
 	"context"

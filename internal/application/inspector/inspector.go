@@ -140,12 +140,18 @@ type inspectorEntry struct {
 
 // dbPinger is the subset of *sqlitedb.SQLiteClient used by DBInspector.
 // Defined here so tests can substitute a fake without importing the concrete type.
+// must do and the other what a bot must, and merging them would make a change to
+// either one silently bind the other.
+//
+//nolint:iface // identical by coincidence, not by contract: one names what a database
 type dbPinger interface {
 	Ping(ctx context.Context) error
 }
 
 // botPinger is the subset of *telegrambot.TelegramBotClient used by TelegramInspector.
 // Defined here so tests can substitute a fake without importing the concrete type.
+//
+//nolint:iface // see dbPinger above
 type botPinger interface {
 	Ping(ctx context.Context) error
 }

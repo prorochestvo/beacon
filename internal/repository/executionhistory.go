@@ -36,7 +36,7 @@ func (r *ExecutionHistoryRepository) CheckUP(ctx context.Context) error {
 	}
 	defer printRollbackError(tx)
 
-	count, err := executionHistoryCount(tx, ctx, ";")
+	count, err := executionHistoryCount(ctx, tx, ";")
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return err
@@ -71,10 +71,9 @@ func (r *ExecutionHistoryRepository) ObtainLastNExecutionHistoryBySourceName(ctx
 	// same second, and the union of two tiers is sorted rather than walked in index order,
 	// so a bare timestamp sort leaves rows in an order the planner is free to change
 	// between calls.
-	rows, err := executionHistoryQueryContext(tx, ctx,
-		"WHERE "+whereClause+
-			" ORDER BY "+executionHistoryTimestampFieldName+" DESC, "+executionHistoryIdFieldName+" DESC"+
-			" LIMIT ?;",
+	rows, err := executionHistoryQueryContext(ctx, tx, "WHERE "+whereClause+
+		" ORDER BY "+executionHistoryTimestampFieldName+" DESC, "+executionHistoryIdFieldName+" DESC"+
+		" LIMIT ?;",
 		sourceName, limit)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
@@ -159,7 +158,7 @@ func (r *ExecutionHistoryRepository) ObtainExecutionHistoryErrorCount(ctx contex
 	}
 	defer printRollbackError(tx)
 
-	count, err := executionHistoryCount(tx, ctx, "WHERE "+executionHistorySuccessFieldName+" = 0;")
+	count, err := executionHistoryCount(ctx, tx, "WHERE "+executionHistorySuccessFieldName+" = 0;")
 	if err != nil {
 		return 0, errors.Join(err, loginjector.NewTraceError())
 	}
@@ -312,7 +311,7 @@ func (r *ExecutionHistoryRepository) RetainExecutionHistory(ctx context.Context,
 	// Hot-only on purpose: this decides INSERT versus UPDATE against the hot table, and the
 	// UPDATE below writes only there. Counting the union would send an id that lives solely
 	// in the archive down the UPDATE path, which would match nothing and lose the write.
-	count, err := executionHistoryCountHot(tx, ctx, "WHERE "+executionHistoryIdFieldName+" = ?;", record.ID)
+	count, err := executionHistoryCountHot(ctx, tx, "WHERE "+executionHistoryIdFieldName+" = ?;", record.ID)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return err
@@ -443,15 +442,15 @@ func executionHistorySqlFrom(alias string) string {
 
 // executionHistoryCountHot counts the hot table alone. Write paths use it: they decide what
 // to do to execution_history, so they must ask about execution_history.
-func executionHistoryCountHot(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
-	return executionHistoryCountIn(tx, ctx, "FROM "+executionHistoryTableName, condition, args...)
+func executionHistoryCountHot(ctx context.Context, tx *sql.Tx, condition string, args ...any) (int64, error) {
+	return executionHistoryCountIn(ctx, tx, "FROM "+executionHistoryTableName, condition, args...)
 }
 
-func executionHistoryCount(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
-	return executionHistoryCountIn(tx, ctx, executionHistorySqlFrom(executionHistoryTableName), condition, args...)
+func executionHistoryCount(ctx context.Context, tx *sql.Tx, condition string, args ...any) (int64, error) {
+	return executionHistoryCountIn(ctx, tx, executionHistorySqlFrom(executionHistoryTableName), condition, args...)
 }
 
-func executionHistoryCountIn(tx *sql.Tx, ctx context.Context, from, condition string, args ...any) (int64, error) {
+func executionHistoryCountIn(ctx context.Context, tx *sql.Tx, from, condition string, args ...any) (int64, error) {
 	query := "SELECT\n" +
 		" COUNT(*)\n" +
 		from + "\n" + condition
@@ -469,15 +468,15 @@ func executionHistoryCountIn(tx *sql.Tx, ctx context.Context, from, condition st
 	return count, nil
 }
 
-func executionHistoryQueryContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (items []domain.ExecutionHistory, err error) {
-	count, err := executionHistoryCount(tx, ctx, condition, args...)
+func executionHistoryQueryContext(ctx context.Context, tx *sql.Tx, condition string, args ...any) (items []domain.ExecutionHistory, err error) {
+	count, err := executionHistoryCount(ctx, tx, condition, args...)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
-		return
+		return items, err
 	}
 	if count == 0 {
 		items = []domain.ExecutionHistory{}
-		return
+		return items, err
 	}
 
 	query := executionHistorySqlSelect + "\n" + condition
@@ -486,7 +485,7 @@ func executionHistoryQueryContext(tx *sql.Tx, ctx context.Context, condition str
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
 		err = errors.Join(err, loginjector.NewTraceError())
-		return
+		return items, err
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 
@@ -505,7 +504,7 @@ func executionHistoryQueryContext(tx *sql.Tx, ctx context.Context, condition str
 		)
 		if err != nil {
 			err = errors.Join(err, loginjector.NewTraceError())
-			return
+			return items, err
 		}
 
 		item.Timestamp = time.Unix(timestamp, 0).UTC()
@@ -518,5 +517,5 @@ func executionHistoryQueryContext(tx *sql.Tx, ctx context.Context, condition str
 		return nil, err
 	}
 
-	return
+	return items, err
 }

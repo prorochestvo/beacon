@@ -254,6 +254,8 @@ type SourceHealthReport struct {
 }
 
 // sourceHealthSourceRepository supplies the sources to judge and their declared cadence.
+//
+//nolint:iface // see rateSourceRepository in ratecheckagent.go
 type sourceHealthSourceRepository interface {
 	ObtainAllRateSources(ctx context.Context) ([]domain.RateSource, error)
 }

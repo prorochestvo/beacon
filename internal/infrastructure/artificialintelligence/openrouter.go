@@ -1,3 +1,5 @@
+package artificialintelligence
+
 // OpenRouter client.
 //
 // DSN format:
@@ -16,7 +18,6 @@
 // (e.g. anthropic/claude-..., google/gemini-...) and the caller must supply a
 // model string the selected plan supports. Not all OpenRouter models support
 // response_format:json_schema — an unsupported one returns HTTP 400 at runtime.
-package artificialintelligence
 
 import (
 	"context"
