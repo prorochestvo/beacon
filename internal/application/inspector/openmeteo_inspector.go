@@ -42,7 +42,7 @@ func (o *OpenMeteoInspector) Name() string { return "open-meteo" }
 // CheckUP probes the Open-Meteo geocoding endpoint and asserts a 2xx response
 // with valid JSON. Returns nil on success or a descriptive error on failure.
 func (o *OpenMeteoInspector) CheckUP(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.probeURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.probeURL, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("open-meteo health: create request: %w", err)
 	}

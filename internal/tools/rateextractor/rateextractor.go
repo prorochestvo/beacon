@@ -254,7 +254,7 @@ func (extractor *RateExtractor) fetchHtmlPage(
 		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
 	if err != nil {
 		err = fmt.Errorf("create request: %w", err)
 		err = errors.Join(err, loginjector.NewTraceError())

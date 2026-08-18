@@ -121,7 +121,7 @@ func (a *RateAgent) Run(ctx context.Context) (err error) {
 		}
 	}
 
-	if sources == nil || len(sources) == 0 {
+	if len(sources) == 0 {
 		return
 	}
 

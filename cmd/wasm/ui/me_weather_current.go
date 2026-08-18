@@ -68,8 +68,8 @@ func renderWeatherCurrentCard(item dto.WeatherCurrentItem) string {
 	var b strings.Builder
 	b.WriteString(`<li class="weather-current-card">`)
 
-	b.WriteString(fmt.Sprintf(`<div class="weather-current-city">%s</div>`, dom.Escape(item.DisplayName)))
-	b.WriteString(fmt.Sprintf(`<div class="weather-current-tz">%s</div>`, dom.Escape(item.Timezone)))
+	fmt.Fprintf(&b, `<div class="weather-current-city">%s</div>`, dom.Escape(item.DisplayName))
+	fmt.Fprintf(&b, `<div class="weather-current-tz">%s</div>`, dom.Escape(item.Timezone))
 
 	if !item.HasData {
 		b.WriteString(`<p class="weather-current-nodata">Data not yet available.</p>`)
@@ -78,46 +78,42 @@ func renderWeatherCurrentCard(item dto.WeatherCurrentItem) string {
 	}
 
 	if item.ConditionEmoji != "" || item.ConditionText != "" {
-		b.WriteString(fmt.Sprintf(
-			`<div class="weather-current-condition">%s %s</div>`,
+		fmt.Fprintf(&b, `<div class="weather-current-condition">%s %s</div>`,
 			dom.Escape(item.ConditionEmoji),
-			dom.Escape(item.ConditionText),
-		))
+			dom.Escape(item.ConditionText))
 	}
 
 	if item.TempCurrent != nil {
-		b.WriteString(fmt.Sprintf(`<div class="weather-current-temp">%.1f °C`, *item.TempCurrent))
+		fmt.Fprintf(&b, `<div class="weather-current-temp">%.1f °C`, *item.TempCurrent)
 		if item.TempFeels != nil {
-			b.WriteString(fmt.Sprintf(` <span class="weather-current-feels">feels %.1f °C</span>`, *item.TempFeels))
+			fmt.Fprintf(&b, ` <span class="weather-current-feels">feels %.1f °C</span>`, *item.TempFeels)
 		}
 		b.WriteString(`</div>`)
 	}
 
 	if item.TempMax != nil && item.TempMin != nil {
-		b.WriteString(fmt.Sprintf(
-			`<div class="weather-current-minmax">▲ %.1f °C / ▼ %.1f °C</div>`,
-			*item.TempMax, *item.TempMin,
-		))
+		fmt.Fprintf(&b, `<div class="weather-current-minmax">▲ %.1f °C / ▼ %.1f °C</div>`,
+			*item.TempMax, *item.TempMin)
 	}
 
 	if item.Humidity != nil {
-		b.WriteString(fmt.Sprintf(`<div class="weather-current-humidity">💧 %d%%</div>`, *item.Humidity))
+		fmt.Fprintf(&b, `<div class="weather-current-humidity">💧 %d%%</div>`, *item.Humidity)
 	}
 
 	if item.WindSpeed != nil {
-		b.WriteString(fmt.Sprintf(`<div class="weather-current-wind">💨 %.1f m/s`, *item.WindSpeed))
+		fmt.Fprintf(&b, `<div class="weather-current-wind">💨 %.1f m/s`, *item.WindSpeed)
 		if item.WindDir != nil {
-			b.WriteString(fmt.Sprintf(` %d°`, *item.WindDir))
+			fmt.Fprintf(&b, ` %d°`, *item.WindDir)
 		}
 		b.WriteString(`</div>`)
 	}
 
 	if item.Precip != nil {
-		b.WriteString(fmt.Sprintf(`<div class="weather-current-precip">🌧 %.1f mm</div>`, *item.Precip))
+		fmt.Fprintf(&b, `<div class="weather-current-precip">🌧 %.1f mm</div>`, *item.Precip)
 	}
 
 	if item.CloudCover != nil {
-		b.WriteString(fmt.Sprintf(`<div class="weather-current-cloud">☁ %d%%</div>`, *item.CloudCover))
+		fmt.Fprintf(&b, `<div class="weather-current-cloud">☁ %d%%</div>`, *item.CloudCover)
 	}
 
 	if item.SunriseLocal != "" || item.SunsetLocal != "" {
@@ -135,7 +131,7 @@ func renderWeatherCurrentCard(item dto.WeatherCurrentItem) string {
 	}
 
 	if item.CapturedAt != "" {
-		b.WriteString(fmt.Sprintf(`<div class="weather-current-captured">Updated: %s</div>`, dom.Escape(item.CapturedAt)))
+		fmt.Fprintf(&b, `<div class="weather-current-captured">Updated: %s</div>`, dom.Escape(item.CapturedAt))
 	}
 
 	b.WriteString(`</li>`)

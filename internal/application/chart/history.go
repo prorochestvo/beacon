@@ -63,7 +63,7 @@ type MeHistoryRowResult struct {
 // the filtered grouped count and pagination stays correct. An unknown
 // sourceTitle returns 200 with Total=0 and empty Items — never 400.
 //
-// Load-bearing invariants (see plans/015-history-group-by-provider.md):
+// Load-bearing invariants, each of which the grouping below depends on:
 //
 //   - Invariant 1: each provider has at most one BID source and one ASK source
 //     per (base, quote) pair. If two BID sources share a title for one pair,
@@ -105,7 +105,7 @@ func (s *Service) ObtainMeHistory(ctx context.Context, userID, pair, sourceTitle
 			continue
 		}
 		label := pairGroupKey(src.BaseCurrency, src.QuoteCurrency)
-		if label != strings.ToUpper(pair) {
+		if !strings.EqualFold(label, pair) {
 			continue
 		}
 		// Dedup by source_name so each appears once in the tuple-IN clause. Do NOT
@@ -300,7 +300,7 @@ func (s *Service) ObtainMeHistory(ctx context.Context, userID, pair, sourceTitle
 // HistoryValuesLoader loads paginated rate_values for a bulk set of
 // (source, base, quote) keys, sorted newest first. Returning both counts from
 // one snapshot prevents a concurrent collector write from making them disagree
-// (see plans/015-history-group-by-provider.md, Risk 2).
+// — the page would then show rows the total does not account for.
 type HistoryValuesLoader interface {
 	// ObtainHistoryForPairsPaged returns paginated rate_values rows, the
 	// row-level total, and the grouped total of distinct (provider title,

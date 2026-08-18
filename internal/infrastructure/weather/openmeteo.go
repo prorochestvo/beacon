@@ -237,7 +237,7 @@ func (o *OpenMeteo) get(ctx context.Context, rawURL string) ([]byte, error) {
 // attempt performs exactly one request. Its errors are classified by retryableError so
 // get can tell an upstream hiccup from an answer that will not change.
 func (o *OpenMeteo) attempt(ctx context.Context, rawURL string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("open-meteo: create request: %w", err)
 	}

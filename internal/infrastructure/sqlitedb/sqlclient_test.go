@@ -308,7 +308,7 @@ func TestSQLiteClient_Close(t *testing.T) {
 // execAction is a minimal sqlAction for tests.
 type execAction struct{ sql string }
 
-func (a *execAction) Run(tx *sql.Tx, ctx context.Context) error {
+func (a *execAction) Run(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, a.sql)
 	return err
 }
@@ -316,7 +316,7 @@ func (a *execAction) Run(tx *sql.Tx, ctx context.Context) error {
 // errAction is a sqlAction that always returns the configured error.
 type errAction struct{ err error }
 
-func (a *errAction) Run(_ *sql.Tx, _ context.Context) error {
+func (a *errAction) Run(_ context.Context, _ *sql.Tx) error {
 	return a.err
 }
 

@@ -21,7 +21,7 @@ type Agent struct {
 // inspector slices. Critical inspector failures set healthy=false; advisory
 // inspector failures appear in the report but leave healthy unaffected.
 // When timeout is zero or negative, inspectorTimeout (3 s) is used.
-func NewAgentWithAdvisory(timeout time.Duration, critical []Inspector, advisory []Inspector) *Agent {
+func NewAgentWithAdvisory(timeout time.Duration, critical, advisory []Inspector) *Agent {
 	if timeout <= 0 {
 		timeout = inspectorTimeout
 	}

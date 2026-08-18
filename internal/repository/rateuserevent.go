@@ -85,7 +85,12 @@ func (r *RateUserEventRepository) ObtainLastNRateUserEvents(ctx context.Context,
 
 	// Full condition adds ORDER BY / LIMIT / OFFSET for the SELECT.
 	fullCondition := whereClause + "ORDER BY " + rateUserEventCreatedAtFieldName + " ASC\nLIMIT ?\nOFFSET ?;"
-	selectArgs := append(statusArgs, limit, offset)
+	// Copied rather than appended in place: statusArgs is also the count query's
+	// argument list, and appending into its spare capacity would rewrite what that
+	// caller sees. It happens to run first today, which is not a property to rely on.
+	selectArgs := make([]any, 0, len(statusArgs)+2)
+	selectArgs = append(selectArgs, statusArgs...)
+	selectArgs = append(selectArgs, limit, offset)
 
 	query := rateUserEventSqlSelect + "\n" + fullCondition
 	dbRows, err := tx.QueryContext(ctx, query, selectArgs...)

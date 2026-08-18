@@ -13,7 +13,8 @@ const urlMaxWidth = 72
 // results. When verbose, prints a per-source table plus summary; otherwise a
 // single OK line on full success, or a FAIL summary plus MISS DETAILS on any
 // failure.
-func WriteReport(w io.Writer, results []ProbeResult, verbose bool) (failures int, err error) {
+func WriteReport(w io.Writer, results []ProbeResult, verbose bool) (int, error) {
+	failures := 0
 	uniqueURLs := make(map[string]struct{})
 	for _, r := range results {
 		uniqueURLs[r.URL] = struct{}{}
@@ -26,31 +27,31 @@ func WriteReport(w io.Writer, results []ProbeResult, verbose bool) (failures int
 	if !verbose {
 		if failures == 0 {
 			line := fmt.Sprintf("OK: audited %d sources across %d URLs", len(results), len(uniqueURLs))
-			if _, err = fmt.Fprintln(w, line); err != nil {
+			if _, err := fmt.Fprintln(w, line); err != nil {
 				return 0, err
 			}
 			return 0, nil
 		}
 		summary := fmt.Sprintf("FAIL: %d/%d sources MISS across %d URLs", failures, len(results), len(uniqueURLs))
-		if _, err = fmt.Fprintln(w, summary); err != nil {
+		if _, err := fmt.Fprintln(w, summary); err != nil {
 			return failures, err
 		}
-		if err = writeMissDetails(w, results); err != nil {
+		if err := writeMissDetails(w, results); err != nil {
 			return failures, err
 		}
 		return failures, nil
 	}
 
-	if err = writeTable(w, results); err != nil {
+	if err := writeTable(w, results); err != nil {
 		return failures, err
 	}
 	summary := fmt.Sprintf("\naudited %d sources across %d URLs: %d OK, %d MISS",
 		len(results), len(uniqueURLs), okCount, failures)
-	if _, err = fmt.Fprintln(w, summary); err != nil {
+	if _, err := fmt.Fprintln(w, summary); err != nil {
 		return failures, err
 	}
 	if failures > 0 {
-		if err = writeMissDetails(w, results); err != nil {
+		if err := writeMissDetails(w, results); err != nil {
 			return failures, err
 		}
 	}

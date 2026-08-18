@@ -202,6 +202,14 @@ linters:
           - godoclint
           - funcorder
           - unused
+      # cmd/wasm/ui builds SVG and HTML by hand, and every interpolated value has
+      # already been through dom.Escape. %q would then apply Go quoting on top —
+      # backslash escapes and \u sequences inside an attribute — which is a
+      # different encoding from the one the markup needs, not a stricter one.
+      - path: cmd/wasm/ui/
+        linters:
+          - gocritic
+        text: sprintfQuotedString
     paths:
       - build
       - tmp

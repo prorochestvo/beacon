@@ -17,7 +17,7 @@ func RenderSourceDetail(state application.SourceDetailState) string {
 	var b strings.Builder
 
 	b.WriteString(`<div class="breadcrumb"><a href="#/">← All Sources</a></div>`)
-	b.WriteString(fmt.Sprintf("<h1>%s</h1>", dom.Escape(state.Title)))
+	fmt.Fprintf(&b, "<h1>%s</h1>", dom.Escape(state.Title))
 
 	b.WriteString("<h2>Rate History</h2>")
 	b.WriteString(`<div class="filters">`)

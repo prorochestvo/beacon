@@ -152,14 +152,14 @@ func (sqlite *SQLiteClient) Commit(ctx context.Context, action sqlAction, extraA
 	}
 	defer func(tx interface{ Rollback() error }) { _ = tx.Rollback() }(tx)
 
-	err = action.Run(tx, ctx)
+	err = action.Run(ctx, tx)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	for _, a := range extraActions {
-		if err = a.Run(tx, ctx); err != nil {
+		if err = a.Run(ctx, tx); err != nil {
 			err = errors.Join(err, loginjector.NewTraceError())
 			return err
 		}
@@ -192,14 +192,14 @@ func (sqlite *SQLiteClient) Rollback(ctx context.Context, action sqlAction, extr
 	}
 	defer func(tx interface{ Rollback() error }) { _ = tx.Rollback() }(tx)
 
-	err = action.Run(tx, ctx)
+	err = action.Run(ctx, tx)
 	if err != nil {
 		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	for _, a := range extraActions {
-		if err = a.Run(tx, ctx); err != nil {
+		if err = a.Run(ctx, tx); err != nil {
 			err = errors.Join(err, loginjector.NewTraceError())
 			return err
 		}
@@ -228,7 +228,7 @@ func (sqlite *SQLiteClient) Close() error {
 // table row count. It is used internally by SQLiteClient.Ping.
 type Ping struct{}
 
-func (_ *Ping) Run(tx *sql.Tx, ctx context.Context) error {
+func (*Ping) Run(ctx context.Context, tx *sql.Tx) error {
 	var count int
 
 	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM"+" "+migrationTableName).Scan(&count); err != nil {
@@ -247,5 +247,5 @@ func (_ *Ping) Run(tx *sql.Tx, ctx context.Context) error {
 
 // sqlAction is implemented by types that can execute SQL inside an open transaction.
 type sqlAction interface {
-	Run(*sql.Tx, context.Context) error
+	Run(context.Context, *sql.Tx) error
 }

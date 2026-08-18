@@ -154,7 +154,7 @@ type wmoEntry struct {
 // given WMO Weather Interpretation Code. For unrecognised codes it returns
 // ("Unknown", "❓") so callers can always render something safe rather than an
 // empty string.
-func WMOWeatherCode(code int) (text string, emoji string) {
+func WMOWeatherCode(code int) (text, emoji string) {
 	if e, ok := wmoTable[code]; ok {
 		return e.text, e.emoji
 	}

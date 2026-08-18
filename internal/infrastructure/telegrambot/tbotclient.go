@@ -322,6 +322,10 @@ func (tbot *TelegramBotClient) emit(_ context.Context, m tgbotapi.Chattable, cha
 // Telegram-assigned message so callers (e.g. SendHTMLMessageReturning) can
 // recover the message id. The log line mirrors the inbound update format
 // emitted by service.TelegramApi.Handle: "telegram: send chat=X kind=Y ...".
+// records every send and its outcome symmetrically, and the caller still gets
+// the error. Dropping either half loses a different thing.
+//
+//nolint:gocritic // the log line here is the access log, not error handling: it
 func (tbot *TelegramBotClient) dispatch(m tgbotapi.Chattable, chatID int64, kind string) (tgbotapi.Message, error) {
 	msg, err := tbot.bot.Send(m)
 	if err != nil {
