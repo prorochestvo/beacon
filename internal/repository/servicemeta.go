@@ -9,15 +9,15 @@ import (
 	"github.com/prorochestvo/loginjector"
 )
 
-// NewServiceMetaRepository returns a repository for the service_meta key/value table.
-func NewServiceMetaRepository(db db) (*ServiceMetaRepository, error) {
-	return &ServiceMetaRepository{db: db}, nil
-}
-
 // ServiceMetaRepository stores small pieces of service state that belong to no domain
 // entity — currently only when the database was last vacuumed.
 type ServiceMetaRepository struct {
 	db db
+}
+
+// NewServiceMetaRepository returns a repository for the service_meta key/value table.
+func NewServiceMetaRepository(db db) (*ServiceMetaRepository, error) {
+	return &ServiceMetaRepository{db: db}, nil
 }
 
 // Name returns the name of the underlying database table.

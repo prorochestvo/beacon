@@ -14,14 +14,14 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain/identity"
 )
 
-// NewRateUserSubscriptionRepository returns a repository for the rate_user_subscriptions table.
-func NewRateUserSubscriptionRepository(db db) (*RateUserSubscriptionRepository, error) {
-	return &RateUserSubscriptionRepository{db: db}, nil
-}
-
 // RateUserSubscriptionRepository persists and retrieves domain.RateUserSubscription records.
 type RateUserSubscriptionRepository struct {
 	db db
+}
+
+// NewRateUserSubscriptionRepository returns a repository for the rate_user_subscriptions table.
+func NewRateUserSubscriptionRepository(db db) (*RateUserSubscriptionRepository, error) {
+	return &RateUserSubscriptionRepository{db: db}, nil
 }
 
 // Name returns the name of the underlying database table.

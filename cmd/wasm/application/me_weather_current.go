@@ -23,6 +23,14 @@ type WeatherCurrentState struct {
 	AuthFailure bool
 }
 
+// MeWeatherCurrentPage is the page controller for the on-demand current-weather
+// screen. Pure Go, no syscall/js dependencies, testable under the host toolchain.
+type MeWeatherCurrentPage struct {
+	client   *apiclient.Client
+	initData string
+	state    WeatherCurrentState
+}
+
 // NewMeWeatherCurrentPage constructs a controller. initData is forwarded
 // unchanged on every authenticated API call.
 func NewMeWeatherCurrentPage(client *apiclient.Client, initData string) *MeWeatherCurrentPage {
@@ -30,14 +38,6 @@ func NewMeWeatherCurrentPage(client *apiclient.Client, initData string) *MeWeath
 		client:   client,
 		initData: initData,
 	}
-}
-
-// MeWeatherCurrentPage is the page controller for the on-demand current-weather
-// screen. Pure Go, no syscall/js dependencies, testable under the host toolchain.
-type MeWeatherCurrentPage struct {
-	client   *apiclient.Client
-	initData string
-	state    WeatherCurrentState
 }
 
 // State returns a snapshot of the current controller state.

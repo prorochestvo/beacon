@@ -15,6 +15,22 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
+// RateCheckAgent reads all sources and subscriptions from the DB, evaluates which
+// notifications are due, builds alert messages, and queues them as RateUserEvents.
+// One-shot: runs to completion per invocation, decoupled from data collection.
+//
+// rateUserProfileRepository is nil-safe: when not injected, timestamps render in
+// UTC; when injected, each user's notifications use their stored IANA timezone,
+// with UTC fallback on lookup failure / unknown zone.
+type RateCheckAgent struct {
+	rateSourceRepository           rateSourceRepository
+	rateValueRepository            rateValueRepository
+	rateUserSubscriptionRepository rateUserSubscriptionRepository
+	rateUserEventRepository        rateCheckEventRepository
+	rateUserProfileRepository      rateUserProfileRepository
+	logger                         io.Writer
+}
+
 // NewRateCheckAgent constructs a RateCheckAgent. All repository arguments are required
 // except rRateUserProfile, which is optional — when nil, every notification renders in
 // UTC. The optional shape lets tests that only exercise the alert pipeline skip the fake.
@@ -40,22 +56,6 @@ func NewRateCheckAgent(
 		rateUserProfileRepository:      rRateUserProfile,
 		logger:                         logger,
 	}, nil
-}
-
-// RateCheckAgent reads all sources and subscriptions from the DB, evaluates which
-// notifications are due, builds alert messages, and queues them as RateUserEvents.
-// One-shot: runs to completion per invocation, decoupled from data collection.
-//
-// rateUserProfileRepository is nil-safe: when not injected, timestamps render in
-// UTC; when injected, each user's notifications use their stored IANA timezone,
-// with UTC fallback on lookup failure / unknown zone.
-type RateCheckAgent struct {
-	rateSourceRepository           rateSourceRepository
-	rateValueRepository            rateValueRepository
-	rateUserSubscriptionRepository rateUserSubscriptionRepository
-	rateUserEventRepository        rateCheckEventRepository
-	rateUserProfileRepository      rateUserProfileRepository
-	logger                         io.Writer
 }
 
 // Run iterates every rate source, checks active subscriptions, and queues alert events

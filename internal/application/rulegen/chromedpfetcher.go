@@ -12,6 +12,22 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/tools/rateextractor"
 )
 
+// ChromedpFetcher renders pages with headless Chrome and returns the
+// post-hydration outer HTML of the <html> element. Implements rulegen.Fetcher.
+//
+// Lifecycle: each Fetch call spawns a fresh browser, intended for the
+// cmd/doctor rulegen single-source-per-invocation use case. When cmd/collector
+// integrates the fetcher (future plan), reuse a long-lived allocator via a
+// browser pool.
+type ChromedpFetcher struct {
+	timeout       time.Duration
+	chromiumPath  string
+	proxyURL      string
+	networkIdleMs int
+	waitSelector  string // empty means "wait for body only"
+	logger        io.Writer
+}
+
 // NewChromedpFetcher constructs a ChromedpFetcher with the given options, applying
 // defaults for any zero-valued numeric fields.
 func NewChromedpFetcher(opts ChromedpFetcherOptions) *ChromedpFetcher {
@@ -32,22 +48,6 @@ func NewChromedpFetcher(opts ChromedpFetcherOptions) *ChromedpFetcher {
 		waitSelector:  strings.TrimSpace(opts.WaitSelector),
 		logger:        opts.Logger,
 	}
-}
-
-// ChromedpFetcher renders pages with headless Chrome and returns the
-// post-hydration outer HTML of the <html> element. Implements rulegen.Fetcher.
-//
-// Lifecycle: each Fetch call spawns a fresh browser, intended for the
-// cmd/doctor rulegen single-source-per-invocation use case. When cmd/collector
-// integrates the fetcher (future plan), reuse a long-lived allocator via a
-// browser pool.
-type ChromedpFetcher struct {
-	timeout       time.Duration
-	chromiumPath  string
-	proxyURL      string
-	networkIdleMs int
-	waitSelector  string // empty means "wait for body only"
-	logger        io.Writer
 }
 
 // Fetch navigates to url with a headless Chrome instance and returns the

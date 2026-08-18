@@ -27,69 +27,25 @@ const MinPlausibleRateValue = 0.0
 // MaxPlausibleRateValue rejects values larger than any plausible exchange rate.
 const MaxPlausibleRateValue = math.MaxInt32
 
-// NewRateExtractor creates a RateExtractor with HTTP clients configured for the
-// given timeout.
+// RateExtractor fetches a URL, applies the source's rule pipeline, and persists
+// the extracted rate value. Responses are cached in memory for 30 minutes to avoid
+// redundant fetches when multiple sources share the same URL.
 //
-// It always builds a direct client, and additionally a proxied one when proxyURL is
-// non-empty. Which of the two a fetch uses is decided per source by
-// RateSourceOptions.UseProxy, so proxyURL alone re-routes nothing — see fetchHtmlPage.
-// The Go proxy env triplet (HTTPS_PROXY, HTTP_PROXY, NO_PROXY) is intentionally NOT
-// consulted; proxy config is injected explicitly via BEACON_PROXY_URL.
-//
-// The extractor keeps a per-process negative URL cache (tombstone): once a URL
-// fails, later fetches in the same process short-circuit. Built for short-lived
-// one-shot processes; do not reuse an instance across cron invocations in a daemon.
-func NewRateExtractor(
-	rateValueRepository rateValueRepository,
-	proxyURL string,
-	timeout time.Duration,
-	logger io.Writer,
-	userAgent string,
-) (*RateExtractor, error) {
-	directClient := &http.Client{
-		Timeout:   timeout,
-		Transport: &http.Transport{},
-	}
-
-	var proxyClient *http.Client
-	if proxyURL != "" {
-		parsed, err := url.Parse(proxyURL)
-		if err != nil {
-			// Do not wrap %w — url.Error.Error() includes the raw URL, which may
-			// carry userinfo credentials. The operator has the value in the env
-			// file; flag only the parse failure.
-			return nil, errors.New("parse proxy URL: invalid format (value redacted from log; check the configured proxy URL)")
-		}
-		proxyClient = &http.Client{
-			Timeout:   timeout,
-			Transport: &http.Transport{Proxy: http.ProxyURL(parsed)},
-		}
-	}
-
-	extractor, err := NewRateExtractorWithHTTPClients(rateValueRepository, directClient, proxyClient, logger, userAgent)
-	if err != nil {
-		err = errors.Join(err, loginjector.NewTraceError())
-		return nil, err
-	}
-
-	return extractor, nil
-}
-
-// NewRateExtractorWithHTTPClient creates a RateExtractor with a caller-supplied HTTP
-// client and no proxied client, so every source fetches through it regardless of
-// UseProxy. Use this in tests that do not exercise routing.
-//
-// Like NewRateExtractor, the extractor keeps a per-process negative URL cache
-// (tombstone): once a URL fails, later fetches in the same process short-circuit.
-// Built for short-lived one-shot processes; do not reuse an instance across cron
-// invocations in a daemon.
-func NewRateExtractorWithHTTPClient(
-	rateValueRepository rateValueRepository,
-	httpClient *http.Client,
-	logger io.Writer,
-	userAgent string,
-) (*RateExtractor, error) {
-	return NewRateExtractorWithHTTPClients(rateValueRepository, httpClient, nil, logger, userAgent)
+// httpClient is the direct route and is always set. proxyClient is set only when a
+// proxy URL was configured; sources choose between them via RateSourceOptions.UseProxy.
+type RateExtractor struct {
+	RateValueRepository rateValueRepository
+	cache               *threadsafe.Cache
+	httpClient          *http.Client
+	proxyClient         *http.Client
+	logger              io.Writer
+	// userAgent is supplied by the caller. A generic extractor has no business
+	// knowing whose project it serves, so the brand arrives from the composition
+	// root rather than being spelled here (#65). Per-source headers still win: the
+	// default is set first and overridden after.
+	userAgent    string
+	failedURLs   map[string]error
+	failedURLsMu sync.Mutex
 }
 
 // NewRateExtractorWithHTTPClients creates a RateExtractor with caller-supplied direct
@@ -140,25 +96,69 @@ func NewRateExtractorWithHTTPClients(
 	return p, nil
 }
 
-// RateExtractor fetches a URL, applies the source's rule pipeline, and persists
-// the extracted rate value. Responses are cached in memory for 30 minutes to avoid
-// redundant fetches when multiple sources share the same URL.
+// NewRateExtractorWithHTTPClient creates a RateExtractor with a caller-supplied HTTP
+// client and no proxied client, so every source fetches through it regardless of
+// UseProxy. Use this in tests that do not exercise routing.
 //
-// httpClient is the direct route and is always set. proxyClient is set only when a
-// proxy URL was configured; sources choose between them via RateSourceOptions.UseProxy.
-type RateExtractor struct {
-	RateValueRepository rateValueRepository
-	cache               *threadsafe.Cache
-	httpClient          *http.Client
-	proxyClient         *http.Client
-	logger              io.Writer
-	// userAgent is supplied by the caller. A generic extractor has no business
-	// knowing whose project it serves, so the brand arrives from the composition
-	// root rather than being spelled here (#65). Per-source headers still win: the
-	// default is set first and overridden after.
-	userAgent    string
-	failedURLs   map[string]error
-	failedURLsMu sync.Mutex
+// Like NewRateExtractor, the extractor keeps a per-process negative URL cache
+// (tombstone): once a URL fails, later fetches in the same process short-circuit.
+// Built for short-lived one-shot processes; do not reuse an instance across cron
+// invocations in a daemon.
+func NewRateExtractorWithHTTPClient(
+	rateValueRepository rateValueRepository,
+	httpClient *http.Client,
+	logger io.Writer,
+	userAgent string,
+) (*RateExtractor, error) {
+	return NewRateExtractorWithHTTPClients(rateValueRepository, httpClient, nil, logger, userAgent)
+}
+
+// NewRateExtractor creates a RateExtractor with HTTP clients configured for the
+// given timeout.
+//
+// It always builds a direct client, and additionally a proxied one when proxyURL is
+// non-empty. Which of the two a fetch uses is decided per source by
+// RateSourceOptions.UseProxy, so proxyURL alone re-routes nothing — see fetchHtmlPage.
+// The Go proxy env triplet (HTTPS_PROXY, HTTP_PROXY, NO_PROXY) is intentionally NOT
+// consulted; proxy config is injected explicitly via BEACON_PROXY_URL.
+//
+// The extractor keeps a per-process negative URL cache (tombstone): once a URL
+// fails, later fetches in the same process short-circuit. Built for short-lived
+// one-shot processes; do not reuse an instance across cron invocations in a daemon.
+func NewRateExtractor(
+	rateValueRepository rateValueRepository,
+	proxyURL string,
+	timeout time.Duration,
+	logger io.Writer,
+	userAgent string,
+) (*RateExtractor, error) {
+	directClient := &http.Client{
+		Timeout:   timeout,
+		Transport: &http.Transport{},
+	}
+
+	var proxyClient *http.Client
+	if proxyURL != "" {
+		parsed, err := url.Parse(proxyURL)
+		if err != nil {
+			// Do not wrap %w — url.Error.Error() includes the raw URL, which may
+			// carry userinfo credentials. The operator has the value in the env
+			// file; flag only the parse failure.
+			return nil, errors.New("parse proxy URL: invalid format (value redacted from log; check the configured proxy URL)")
+		}
+		proxyClient = &http.Client{
+			Timeout:   timeout,
+			Transport: &http.Transport{Proxy: http.ProxyURL(parsed)},
+		}
+	}
+
+	extractor, err := NewRateExtractorWithHTTPClients(rateValueRepository, directClient, proxyClient, logger, userAgent)
+	if err != nil {
+		err = errors.Join(err, loginjector.NewTraceError())
+		return nil, err
+	}
+
+	return extractor, nil
 }
 
 // Name returns the identifier used in scheduler and log output.

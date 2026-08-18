@@ -7,11 +7,11 @@ import (
 	"sync"
 )
 
-// NewBuffer creates a thread-safe Buffer initialised with the given byte slice.
-func NewBuffer(b []byte) *Buffer {
-	return &Buffer{
-		buf: bytes.NewBuffer(b),
-	}
+// Buffer is a goroutine-safe wrapper around bytes.Buffer. All operations are
+// serialised with a mutex.
+type Buffer struct {
+	buf *bytes.Buffer
+	m   sync.Mutex
 }
 
 // NewBufferString creates a thread-safe Buffer initialised with the given string.
@@ -21,11 +21,11 @@ func NewBufferString(s string) *Buffer {
 	}
 }
 
-// Buffer is a goroutine-safe wrapper around bytes.Buffer. All operations are
-// serialised with a mutex.
-type Buffer struct {
-	buf *bytes.Buffer
-	m   sync.Mutex
+// NewBuffer creates a thread-safe Buffer initialised with the given byte slice.
+func NewBuffer(b []byte) *Buffer {
+	return &Buffer{
+		buf: bytes.NewBuffer(b),
+	}
 }
 
 // Read reads from the underlying buffer under the mutex.

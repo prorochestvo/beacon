@@ -11,14 +11,6 @@ import (
 	"github.com/seilbekskindirov/beacon/internal"
 )
 
-// NewOpenMeteoInspector returns an advisory Inspector for the Open-Meteo API.
-func NewOpenMeteoInspector() *OpenMeteoInspector {
-	return &OpenMeteoInspector{
-		client:   &http.Client{Timeout: openMeteoProbeTimeout},
-		probeURL: openMeteoProbeURL,
-	}
-}
-
 // OpenMeteoInspector is an advisory health inspector for the Open-Meteo API.
 // It probes the geocoding endpoint with a known city name and asserts a 2xx
 // response with parseable JSON.
@@ -34,6 +26,14 @@ func NewOpenMeteoInspector() *OpenMeteoInspector {
 type OpenMeteoInspector struct {
 	client   *http.Client
 	probeURL string
+}
+
+// NewOpenMeteoInspector returns an advisory Inspector for the Open-Meteo API.
+func NewOpenMeteoInspector() *OpenMeteoInspector {
+	return &OpenMeteoInspector{
+		client:   &http.Client{Timeout: openMeteoProbeTimeout},
+		probeURL: openMeteoProbeURL,
+	}
 }
 
 // Name returns the label used in the /health/check report.

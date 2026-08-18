@@ -8,12 +8,6 @@ import (
 	"github.com/patrickmn/go-cache"
 )
 
-// NewCache creates a Cache with the given default expiration. The internal
-// cleanup interval is set to one quarter of defaultExpiration.
-func NewCache(defaultExpiration time.Duration) *Cache {
-	return &Cache{c: cache.New(defaultExpiration, defaultExpiration>>2)}
-}
-
 // Cache is a goroutine-safe in-memory key-value store with TTL expiration.
 //
 // Safety comes from go-cache's own RWMutex, so reads of different keys proceed
@@ -35,6 +29,12 @@ type Cache struct {
 	// serialising those buys nothing the library does not already provide, and costs
 	// the concurrency it does.
 	pullMu sync.Mutex
+}
+
+// NewCache creates a Cache with the given default expiration. The internal
+// cleanup interval is set to one quarter of defaultExpiration.
+func NewCache(defaultExpiration time.Duration) *Cache {
+	return &Cache{c: cache.New(defaultExpiration, defaultExpiration>>2)}
 }
 
 // Fetch returns the value stored under key, or an error if the key is absent or expired.

@@ -23,6 +23,26 @@ type RateRestApi struct {
 	rateUserEventRepository        rateUserEventRepository
 }
 
+// NewRateRestAPI returns a RateRestApi wired to the given repository implementations.
+func NewRateRestAPI(
+	rExecutionHistory executionHistoryRepository,
+	rRateSource rateSourceRepository,
+	rRateValue rateValueRepository,
+	rRateUserSubscription rateUserSubscriptionRepository,
+	rRateUserEvent rateUserEventRepository,
+) (*RateRestApi, error) {
+
+	h := &RateRestApi{
+		executionHistoryRepository:     rExecutionHistory,
+		rateSourceRepository:           rRateSource,
+		rateValueRepository:            rRateValue,
+		rateUserSubscriptionRepository: rRateUserSubscription,
+		rateUserEventRepository:        rRateUserEvent,
+	}
+
+	return h, nil
+}
+
 // ObtainLastNExecutionHistoryBySourceName returns the most recent limit execution history records
 // for the given source name, ordered newest-first.
 func (h *RateRestApi) ObtainLastNExecutionHistoryBySourceName(ctx context.Context, name string, limit int64) ([]domain.ExecutionHistory, error) {
@@ -258,24 +278,4 @@ type rateUserEventRepository interface {
 	ObtainLastNRateUserEvents(context.Context, int64, int64, ...domain.RateUserEventStatus) ([]domain.RateUserEvent, error)
 	ObtainRateUserEventsBySourceName(context.Context, string, int64, int64, ...domain.RateUserEventStatus) ([]domain.RateUserEvent, error)
 	ObtainDailyEventSummaryBySource(context.Context, string, int64, int64) ([]domain.RateUserEventDailySummary, error)
-}
-
-// NewRateRestAPI returns a RateRestApi wired to the given repository implementations.
-func NewRateRestAPI(
-	rExecutionHistory executionHistoryRepository,
-	rRateSource rateSourceRepository,
-	rRateValue rateValueRepository,
-	rRateUserSubscription rateUserSubscriptionRepository,
-	rRateUserEvent rateUserEventRepository,
-) (*RateRestApi, error) {
-
-	h := &RateRestApi{
-		executionHistoryRepository:     rExecutionHistory,
-		rateSourceRepository:           rRateSource,
-		rateValueRepository:            rRateValue,
-		rateUserSubscriptionRepository: rRateUserSubscription,
-		rateUserEventRepository:        rRateUserEvent,
-	}
-
-	return h, nil
 }

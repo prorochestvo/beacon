@@ -16,6 +16,22 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
+// ChromedpRateExtractor renders pages using a headless Chrome instance, then
+// applies the source's extraction rule pipeline and persists the resulting rate
+// value. RunBatch shares one Chromium subprocess across every source in the
+// batch; Run delegates to RunBatch with a single-element slice.
+//
+// The constructor is lazy-friendly: pass an empty chromiumPath to let chromedp
+// fall back to its own PATH lookup (chromium, chromium-browser, google-chrome, chrome).
+type ChromedpRateExtractor struct {
+	chromiumPath string
+	proxyURL     string
+	logger       io.Writer
+	repo         rateValueRepository
+	failedURLs   map[string]error
+	failedURLsMu sync.Mutex
+}
+
 // NewChromedpRateExtractor constructs a ChromedpRateExtractor. Empty chromiumPath
 // lets chromedp search PATH. proxyURL is an optional HTTP proxy URL (e.g.
 // "http://127.0.0.1:7788"); "" runs Chromium without a proxy. logger receives a
@@ -35,22 +51,6 @@ func NewChromedpRateExtractor(chromiumPath string, proxyURL string, logger io.Wr
 		repo:         repo,
 		failedURLs:   make(map[string]error),
 	}
-}
-
-// ChromedpRateExtractor renders pages using a headless Chrome instance, then
-// applies the source's extraction rule pipeline and persists the resulting rate
-// value. RunBatch shares one Chromium subprocess across every source in the
-// batch; Run delegates to RunBatch with a single-element slice.
-//
-// The constructor is lazy-friendly: pass an empty chromiumPath to let chromedp
-// fall back to its own PATH lookup (chromium, chromium-browser, google-chrome, chrome).
-type ChromedpRateExtractor struct {
-	chromiumPath string
-	proxyURL     string
-	logger       io.Writer
-	repo         rateValueRepository
-	failedURLs   map[string]error
-	failedURLsMu sync.Mutex
 }
 
 // Run renders source.URL via headless Chrome with a one-shot allocator and

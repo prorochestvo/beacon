@@ -44,6 +44,20 @@ type Result struct {
 	Escalated bool
 }
 
+// Generator orchestrates the LLM audit loop that produces an extraction rule
+// for a given rate source.
+type Generator struct {
+	primary            artificialintelligence.AIClient
+	fallback           artificialintelligence.AIClient
+	plainFetcher       Fetcher
+	chromedpFetcherFor func(waitSelector string) Fetcher
+	executor           RuleExecutor
+	sourceRepo         rateSourceRepository
+	maxPrimary         int
+	maxFallback        int
+	logger             io.Writer
+}
+
 // NewGenerator constructs a Generator. maxPrimaryAttempts and
 // maxFallbackAttempts must each be >= 1; primary must not be nil. A nil fallback
 // gets NewStubClient() so the loop logic stays uniform.
@@ -89,20 +103,6 @@ func NewGenerator(
 		maxFallback:        maxFallbackAttempts,
 		logger:             logger,
 	}, nil
-}
-
-// Generator orchestrates the LLM audit loop that produces an extraction rule
-// for a given rate source.
-type Generator struct {
-	primary            artificialintelligence.AIClient
-	fallback           artificialintelligence.AIClient
-	plainFetcher       Fetcher
-	chromedpFetcherFor func(waitSelector string) Fetcher
-	executor           RuleExecutor
-	sourceRepo         rateSourceRepository
-	maxPrimary         int
-	maxFallback        int
-	logger             io.Writer
 }
 
 // Generate runs the audit loop for the named source. forceFallback skips

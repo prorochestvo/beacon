@@ -13,14 +13,14 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
-// NewRateSourceRepository returns a repository for the rate_sources table.
-func NewRateSourceRepository(db db) (*RateSourceRepository, error) {
-	return &RateSourceRepository{db: db}, nil
-}
-
 // RateSourceRepository persists and retrieves domain.RateSource records from the rate_sources table.
 type RateSourceRepository struct {
 	db db
+}
+
+// NewRateSourceRepository returns a repository for the rate_sources table.
+func NewRateSourceRepository(db db) (*RateSourceRepository, error) {
+	return &RateSourceRepository{db: db}, nil
 }
 
 // Name returns the name of the underlying database table.

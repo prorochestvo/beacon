@@ -9,17 +9,12 @@ import (
 	"time"
 )
 
-// NewAgent constructs an Agent where all inspectors are critical.
-// When timeout is zero or negative, inspectorTimeout (3 s) is used.
-func NewAgent(timeout time.Duration, inspectors ...Inspector) *Agent {
-	if timeout <= 0 {
-		timeout = inspectorTimeout
-	}
-	entries := make([]inspectorEntry, len(inspectors))
-	for i, insp := range inspectors {
-		entries[i] = inspectorEntry{inspector: insp, advisory: false}
-	}
-	return &Agent{entries: entries, timeout: timeout}
+// Agent runs all registered inspectors under a single bounded context timeout.
+// Inspectors registered as critical (the default) flip the aggregate healthy flag
+// on failure; advisory inspectors are reported but do not affect the aggregate.
+type Agent struct {
+	entries []inspectorEntry
+	timeout time.Duration
 }
 
 // NewAgentWithAdvisory constructs an Agent with separate critical and advisory
@@ -40,12 +35,17 @@ func NewAgentWithAdvisory(timeout time.Duration, critical []Inspector, advisory 
 	return &Agent{entries: entries, timeout: timeout}
 }
 
-// Agent runs all registered inspectors under a single bounded context timeout.
-// Inspectors registered as critical (the default) flip the aggregate healthy flag
-// on failure; advisory inspectors are reported but do not affect the aggregate.
-type Agent struct {
-	entries []inspectorEntry
-	timeout time.Duration
+// NewAgent constructs an Agent where all inspectors are critical.
+// When timeout is zero or negative, inspectorTimeout (3 s) is used.
+func NewAgent(timeout time.Duration, inspectors ...Inspector) *Agent {
+	if timeout <= 0 {
+		timeout = inspectorTimeout
+	}
+	entries := make([]inspectorEntry, len(inspectors))
+	for i, insp := range inspectors {
+		entries[i] = inspectorEntry{inspector: insp, advisory: false}
+	}
+	return &Agent{entries: entries, timeout: timeout}
 }
 
 // CheckUp probes every registered inspector under a single deadline and returns a
@@ -76,16 +76,16 @@ func (a *Agent) CheckUp(ctx context.Context) (healthy bool, report map[string]st
 	return healthy, report
 }
 
-// NewDBInspector returns an Inspector backed by the given SQLite client.
-func NewDBInspector(client dbPinger) *DBInspector {
-	return &DBInspector{client: client}
-}
-
 // DBInspector wraps a SQLite client and adapts it to the Inspector interface.
 // It delegates to the client's Ping method, which performs a PingContext followed
 // by a SELECT 1 inside a rolled-back transaction.
 type DBInspector struct {
 	client dbPinger
+}
+
+// NewDBInspector returns an Inspector backed by the given SQLite client.
+func NewDBInspector(client dbPinger) *DBInspector {
+	return &DBInspector{client: client}
 }
 
 // Name returns the label used in the /health/check report.
@@ -96,17 +96,17 @@ func (d *DBInspector) CheckUP(ctx context.Context) error {
 	return d.client.Ping(ctx)
 }
 
-// NewTelegramInspector returns an Inspector backed by the given Telegram bot client.
-func NewTelegramInspector(client botPinger) *TelegramInspector {
-	return &TelegramInspector{client: client}
-}
-
 // TelegramInspector wraps a Telegram bot client and adapts it to the Inspector interface.
 // It delegates to the client's Ping method, which calls GetMe and asserts a non-zero
 // bot ID. Note: the underlying tgbotapi.BotAPI call does not honour the context, so
 // the probe is bounded at the Agent sweep level rather than the individual HTTP call.
 type TelegramInspector struct {
 	client botPinger
+}
+
+// NewTelegramInspector returns an Inspector backed by the given Telegram bot client.
+func NewTelegramInspector(client botPinger) *TelegramInspector {
+	return &TelegramInspector{client: client}
 }
 
 // Name returns the label used in the /health/check report.

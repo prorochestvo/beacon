@@ -34,6 +34,23 @@ type GeoResult struct {
 	Population  int64
 }
 
+// OpenMeteo is a proxy-aware HTTP client for the Open-Meteo API (keyless).
+// Construct with NewOpenMeteo; do not copy after first use.
+type OpenMeteo struct {
+	httpClient *http.Client
+	logger     io.Writer
+}
+
+// NewOpenMeteoWithClient creates an OpenMeteo client with a caller-supplied HTTP
+// client. Use this in tests to inject a custom transport or an httptest server.
+// A nil logger discards.
+func NewOpenMeteoWithClient(client *http.Client, logger io.Writer) *OpenMeteo {
+	if logger == nil {
+		logger = io.Discard
+	}
+	return &OpenMeteo{httpClient: client, logger: logger}
+}
+
 // NewOpenMeteo creates an OpenMeteo client whose outbound requests are routed
 // through proxyURL when non-empty (direct connection otherwise).
 //
@@ -68,23 +85,6 @@ func NewOpenMeteo(proxyURL string, logger io.Writer) (*OpenMeteo, error) {
 		},
 		logger: logger,
 	}, nil
-}
-
-// NewOpenMeteoWithClient creates an OpenMeteo client with a caller-supplied HTTP
-// client. Use this in tests to inject a custom transport or an httptest server.
-// A nil logger discards.
-func NewOpenMeteoWithClient(client *http.Client, logger io.Writer) *OpenMeteo {
-	if logger == nil {
-		logger = io.Discard
-	}
-	return &OpenMeteo{httpClient: client, logger: logger}
-}
-
-// OpenMeteo is a proxy-aware HTTP client for the Open-Meteo API (keyless).
-// Construct with NewOpenMeteo; do not copy after first use.
-type OpenMeteo struct {
-	httpClient *http.Client
-	logger     io.Writer
 }
 
 // Geocode queries the Open-Meteo geocoding API for cities matching name and

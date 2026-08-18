@@ -34,6 +34,14 @@ import (
 // side of the pair able to destroy data.
 const defaultEventRetention = 180 * 24 * time.Hour
 
+// RateDispatchAgent delivers pending and failed notification events and cancels
+// events past the 24-hour TTL. One-shot: runs to completion per invocation.
+type RateDispatchAgent struct {
+	telegramClient          telegramClient
+	rateUserEventRepository rateUserEventRepository
+	ttl                     time.Duration
+}
+
 // NewRateDispatchAgent constructs a RateDispatchAgent wired to the given transport and event repository.
 func NewRateDispatchAgent(
 	cltTelegram telegramClient,
@@ -47,14 +55,6 @@ func NewRateDispatchAgent(
 	}
 
 	return a, nil
-}
-
-// RateDispatchAgent delivers pending and failed notification events and cancels
-// events past the 24-hour TTL. One-shot: runs to completion per invocation.
-type RateDispatchAgent struct {
-	telegramClient          telegramClient
-	rateUserEventRepository rateUserEventRepository
-	ttl                     time.Duration
 }
 
 // Run fetches all unprocessed events and attempts delivery, updating each

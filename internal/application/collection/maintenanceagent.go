@@ -40,6 +40,23 @@ const (
 	DefaultVacuumInterval = 7 * 24 * time.Hour
 )
 
+// MaintenanceAgent bounds the hot tables and reclaims the space that frees.
+//
+// It runs after collection on each tick, in three ordered steps: move aged rows into the
+// archive twins, apply archive retention if any is configured, then vacuum on a cadence.
+// The order is what makes the third step worth anything — VACUUM reclaims what the first
+// two freed, so running it first would compact a file that is about to be perforated again.
+type MaintenanceAgent struct {
+	meta           metaRepository
+	db             vacuumer
+	tables         []tieredRepository
+	hotWindow      time.Duration
+	retention      time.Duration
+	vacuumInterval time.Duration
+	now            func() time.Time
+	logger         io.Writer
+}
+
 // NewMaintenanceAgent constructs a MaintenanceAgent. meta and db are required and at least
 // one tiered repository must be given; zero values for the three durations fall back to
 // the defaults above, except retention, where zero is a meaningful value (keep forever)
@@ -84,23 +101,6 @@ func NewMaintenanceAgent(
 		now:            time.Now,
 		logger:         logger,
 	}, nil
-}
-
-// MaintenanceAgent bounds the hot tables and reclaims the space that frees.
-//
-// It runs after collection on each tick, in three ordered steps: move aged rows into the
-// archive twins, apply archive retention if any is configured, then vacuum on a cadence.
-// The order is what makes the third step worth anything — VACUUM reclaims what the first
-// two freed, so running it first would compact a file that is about to be perforated again.
-type MaintenanceAgent struct {
-	meta           metaRepository
-	db             vacuumer
-	tables         []tieredRepository
-	hotWindow      time.Duration
-	retention      time.Duration
-	vacuumInterval time.Duration
-	now            func() time.Time
-	logger         io.Writer
 }
 
 // Run performs one maintenance pass.

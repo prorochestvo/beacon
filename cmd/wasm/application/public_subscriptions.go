@@ -50,18 +50,6 @@ type PublicSubscriptionsState struct {
 	Period int
 }
 
-// NewPublicSubscriptionsPage constructs a controller backed by the given client.
-func NewPublicSubscriptionsPage(client *apiclient.Client) *PublicSubscriptionsPage {
-	return &PublicSubscriptionsPage{
-		client: client,
-		state: PublicSubscriptionsState{
-			Limit:  PublicChartDefaultLimit,
-			Page:   1,
-			Period: PublicChartDefaultPeriod,
-		},
-	}
-}
-
 // PublicSubscriptionsPage is the page controller for the unauthenticated guest
 // landing page. Pure Go, no syscall/js dependencies, testable under the host
 // toolchain via make test.
@@ -72,6 +60,18 @@ func NewPublicSubscriptionsPage(client *apiclient.Client) *PublicSubscriptionsPa
 type PublicSubscriptionsPage struct {
 	client *apiclient.Client
 	state  PublicSubscriptionsState
+}
+
+// NewPublicSubscriptionsPage constructs a controller backed by the given client.
+func NewPublicSubscriptionsPage(client *apiclient.Client) *PublicSubscriptionsPage {
+	return &PublicSubscriptionsPage{
+		client: client,
+		state: PublicSubscriptionsState{
+			Limit:  PublicChartDefaultLimit,
+			Page:   1,
+			Period: PublicChartDefaultPeriod,
+		},
+	}
 }
 
 // State returns a snapshot of the current controller state. The caller must

@@ -81,15 +81,6 @@ type SparkPoint struct {
 	Value float64
 }
 
-// NewService constructs a Service. now is injected for deterministic tests;
-// pass time.Now in production. history is the loader used by ObtainMeHistory;
-// the same *repository.RateValueRepository instance satisfies both ValuesLoader
-// and HistoryValuesLoader. publicSources is the loader used by ObtainPublicChart;
-// pass the same *repository.RateSourceRepository used for sources.
-func NewService(subs SubscriptionsLoader, sources SourcesLoader, values ValuesLoader, history HistoryValuesLoader, publicSources PublicSourcesLoader, now func() time.Time) *Service {
-	return &Service{subs: subs, sources: sources, values: values, history: history, publicSources: publicSources, now: now}
-}
-
 // Service builds sparkline charts and per-pair history from a user's
 // subscriptions, and the system-wide public sparkline list. Construct with
 // NewService; it has no mutable state and is safe for concurrent use.
@@ -100,6 +91,15 @@ type Service struct {
 	history       HistoryValuesLoader
 	publicSources PublicSourcesLoader
 	now           func() time.Time
+}
+
+// NewService constructs a Service. now is injected for deterministic tests;
+// pass time.Now in production. history is the loader used by ObtainMeHistory;
+// the same *repository.RateValueRepository instance satisfies both ValuesLoader
+// and HistoryValuesLoader. publicSources is the loader used by ObtainPublicChart;
+// pass the same *repository.RateSourceRepository used for sources.
+func NewService(subs SubscriptionsLoader, sources SourcesLoader, values ValuesLoader, history HistoryValuesLoader, publicSources PublicSourcesLoader, now func() time.Time) *Service {
+	return &Service{subs: subs, sources: sources, values: values, history: history, publicSources: publicSources, now: now}
 }
 
 // ObtainMeChart loads the calling user's subscriptions and builds a sparkline

@@ -28,6 +28,17 @@ import (
 // the same forecast_date. Its dead band lives in the domain evaluator instead
 // (domain.WeatherNotifyKind.UsesForecastDateCap gates the cap here).
 
+// WeatherCheckAgent evaluates due weather city subscriptions, renders morning-weather
+// summaries, and queues them as RateUserEvents for delivery by RateDispatchAgent.
+// It reuses the existing FX notification queue (rate_user_events) with an empty
+// SourceName → NULL so there is no FK dependency on rate_sources.
+type WeatherCheckAgent struct {
+	cityRepo  weatherCheckCityRepository
+	obsRepo   weatherCheckObsRepository
+	eventRepo rateCheckEventRepository // reuse the same narrow interface as RateCheckAgent
+	logger    io.Writer
+}
+
 // NewWeatherCheckAgent constructs a WeatherCheckAgent. All arguments are required.
 func NewWeatherCheckAgent(
 	cityRepo weatherCheckCityRepository,
@@ -47,17 +58,6 @@ func NewWeatherCheckAgent(
 		eventRepo: eventRepo,
 		logger:    logger,
 	}, nil
-}
-
-// WeatherCheckAgent evaluates due weather city subscriptions, renders morning-weather
-// summaries, and queues them as RateUserEvents for delivery by RateDispatchAgent.
-// It reuses the existing FX notification queue (rate_user_events) with an empty
-// SourceName → NULL so there is no FK dependency on rate_sources.
-type WeatherCheckAgent struct {
-	cityRepo  weatherCheckCityRepository
-	obsRepo   weatherCheckObsRepository
-	eventRepo rateCheckEventRepository // reuse the same narrow interface as RateCheckAgent
-	logger    io.Writer
 }
 
 // Run loads all morning-summary city subscriptions, evaluates which are due in

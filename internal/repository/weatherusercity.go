@@ -13,14 +13,14 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain/identity"
 )
 
-// NewWeatherUserCityRepository returns a repository for the weather_user_cities table.
-func NewWeatherUserCityRepository(db db) (*WeatherUserCityRepository, error) {
-	return &WeatherUserCityRepository{db: db}, nil
-}
-
 // WeatherUserCityRepository persists and retrieves domain.WeatherUserCity records.
 type WeatherUserCityRepository struct {
 	db db
+}
+
+// NewWeatherUserCityRepository returns a repository for the weather_user_cities table.
+func NewWeatherUserCityRepository(db db) (*WeatherUserCityRepository, error) {
+	return &WeatherUserCityRepository{db: db}, nil
 }
 
 // Name returns the name of the underlying database table.
