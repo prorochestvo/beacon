@@ -21,12 +21,13 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	_ "time/tzdata" // embedded IANA tzdata for time.LoadLocation in profile-upsert
+	_ "time/tzdata" // embedded IANA tzdata for time.LoadLocation in profile and weather-city validation
 
 	"github.com/prorochestvo/dsninjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
 	"github.com/seilbekskindirov/beacon/internal/application/inspector"
+	appprofile "github.com/seilbekskindirov/beacon/internal/application/profile"
 	"github.com/seilbekskindirov/beacon/internal/application/service"
 	appsub "github.com/seilbekskindirov/beacon/internal/application/subscription"
 	appweather "github.com/seilbekskindirov/beacon/internal/application/weather"
@@ -187,6 +188,7 @@ func main() {
 	chartSvc := appchart.NewService(subscriptionRepo, sourceRepo, rateValueRepo, rateValueRepo, sourceRepo, time.Now)
 	subSvc := appsub.NewService(subscriptionRepo, sourceRepo, rateValueRepo)
 	weatherSvc := appweather.NewService(weatherCityRepo, weatherObsRepo)
+	profileSvc := appprofile.NewService(profileRepo)
 
 	// Open-Meteo geocoder for city search. cmd/web always uses a direct connection
 	// (no proxy) — Telegram traffic already bypasses the proxy, and geocoding calls
@@ -198,9 +200,8 @@ func main() {
 	}
 	geoAdapter := &openMeteoGeoAdapter{client: openMeteoClient}
 
-	mux, err := gateway.NewGateway(restAPI, botToken, subSvc, profileRepo, chartSvc, healthAgent, BuildVersion, serviceStart, gateway.WeatherGatewayDeps{
+	mux, err := gateway.NewGateway(restAPI, botToken, subSvc, profileSvc, chartSvc, healthAgent, BuildVersion, serviceStart, gateway.WeatherGatewayDeps{
 		Service:  weatherSvc,
-		CityRepo: weatherCityRepo,
 		Geocoder: geoAdapter,
 	})
 	if err != nil {

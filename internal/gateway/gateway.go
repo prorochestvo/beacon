@@ -10,28 +10,20 @@ import (
 
 	"github.com/prorochestvo/loginjector"
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
+	appprofile "github.com/seilbekskindirov/beacon/internal/application/profile"
 	"github.com/seilbekskindirov/beacon/internal/application/service"
 	appsub "github.com/seilbekskindirov/beacon/internal/application/subscription"
 	appweather "github.com/seilbekskindirov/beacon/internal/application/weather"
-	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
 	"github.com/seilbekskindirov/beacon/internal/gateway/httpv1"
 )
 
 // WeatherGatewayDeps groups the weather-specific dependencies passed to NewGateway.
 type WeatherGatewayDeps struct {
-	// Service backs the caller's own weather reads: GET /api/v1/me/weather/cities
-	// and GET /api/v1/me/weather/current.
+	// Service backs every /api/v1/me/weather endpoint bar the city search.
 	Service *appweather.Service
-	// CityRepo is the weather city subscription repository.
-	CityRepo meWeatherCityRepo
 	// Geocoder is the geocoding provider for the city-search endpoint.
 	Geocoder meWeatherGeocoder
-}
-
-// meProfileRepo is a pass-through interface for user-profile upserts.
-type meProfileRepo interface {
-	UpsertRateUserProfile(ctx context.Context, record *domain.RateUserProfile) error
 }
 
 // healthCheckAgent is a pass-through interface for the dependency-health aggregator.
@@ -39,15 +31,6 @@ type meProfileRepo interface {
 // HealthCheck handler. The handler returns 503 when the agent is not wired.
 type healthCheckAgent interface {
 	CheckUp(ctx context.Context) (healthy bool, report map[string]string)
-}
-
-// meWeatherCityRepo is a pass-through interface for the weather city subscription repository.
-type meWeatherCityRepo interface {
-	RetainWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
-	ObtainWeatherUserCitiesByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.WeatherUserCity, error)
-	ObtainWeatherUserCityByID(ctx context.Context, id string) (*domain.WeatherUserCity, error)
-	RemoveWeatherUserCity(ctx context.Context, record *domain.WeatherUserCity) error
-	RemoveWeatherUserCitiesByLocation(ctx context.Context, userType domain.UserType, userID, locationID string) error
 }
 
 // meWeatherGeocoder is a pass-through interface for the geocoding provider used
@@ -67,7 +50,7 @@ func NewGateway(
 	srvRateRestApi *service.RateRestApi,
 	botToken string,
 	subSvc *appsub.Service,
-	profileRepo meProfileRepo,
+	profileSvc *appprofile.Service,
 	chartSvc *appchart.Service,
 	healthAgent healthCheckAgent,
 	serverVersion string,
@@ -76,11 +59,10 @@ func NewGateway(
 ) (*http.ServeMux, error) {
 	mux := http.NewServeMux()
 	mux, err := httpv1.NewRouter(
-		mux, srvRateRestApi, botToken, subSvc, profileRepo,
+		mux, srvRateRestApi, botToken, subSvc, profileSvc,
 		chartSvc, healthAgent, serverVersion, serverStart,
 		httpv1.WeatherGatewayDeps{
 			Service:  weather.Service,
-			CityRepo: weather.CityRepo,
 			Geocoder: weather.Geocoder,
 		},
 	)

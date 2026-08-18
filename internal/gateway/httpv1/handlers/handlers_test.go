@@ -15,6 +15,7 @@ import (
 
 	"github.com/seilbekskindirov/beacon/internal"
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
+	appprofile "github.com/seilbekskindirov/beacon/internal/application/profile"
 	appsub "github.com/seilbekskindirov/beacon/internal/application/subscription"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/domain/ratepair"
@@ -25,21 +26,23 @@ import (
 )
 
 var _ meSubscriptionService = (*mockMeSubSvc)(nil)
-var _ meProfileRepository = (*mockMeProfileRepo)(nil)
+var _ meProfileService = (*mockMeProfileSvc)(nil)
 var _ rateService = (*mockRateService)(nil)
 var _ meChartService = (*mockMeChartService)(nil)
 var _ healthCheckAgent = (*mockHealthAgent)(nil)
 
-// mockMeProfileRepo captures the last RateUserProfile upsert and lets a test
-// inject an error from UpsertRateUserProfile to exercise the failure path.
-type mockMeProfileRepo struct {
-	upsertErr  error
-	upsertCall *domain.RateUserProfile
+// mockMeProfileSvc is a test double for meProfileService. It records what the
+// handler derived from the request and can fail the write.
+type mockMeProfileSvc struct {
+	err error
+
+	gotUserID  string
+	gotProfile *appprofile.Profile
 }
 
-func (m *mockMeProfileRepo) UpsertRateUserProfile(_ context.Context, record *domain.RateUserProfile) error {
-	m.upsertCall = record
-	return m.upsertErr
+func (m *mockMeProfileSvc) UpsertMeProfile(_ context.Context, userID string, p appprofile.Profile) error {
+	m.gotUserID, m.gotProfile = userID, &p
+	return m.err
 }
 
 // mockHealthAgent is a test double for healthCheckAgent. healthy and report are
@@ -1233,118 +1236,75 @@ func TestHandler_ListMeSubscriptions(t *testing.T) {
 	})
 }
 
+// TestHandler_UpsertMeProfile covers the handler's half: reading a bounded body
+// and mapping the answer onto a status. Trimming, the required timezone and the
+// locale cap are exercised in internal/application/profile.
 func TestHandler_UpsertMeProfile(t *testing.T) {
 	t.Parallel()
 
-	const callerUserID = int64(424242)
+	const callerUserID = int64(4242)
 
-	t.Run("400 on empty timezone", func(t *testing.T) {
-		t.Parallel()
-		profileRepo := &mockMeProfileRepo{}
-		h := newTestHandler(t, Config{
-			MeProfileRepo: profileRepo,
-		})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/profile",
-			strings.NewReader(`{"timezone":""}`))
-		req.Header.Set("X-Telegram-Init-Data", "fake-but-allowed")
-		rr := httptest.NewRecorder()
-		h.UpsertMeProfile(rr, withCaller(req, callerUserID))
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-		require.Nil(t, profileRepo.upsertCall)
-	})
-
-	t.Run("400 on malformed JSON", func(t *testing.T) {
-		t.Parallel()
-		profileRepo := &mockMeProfileRepo{}
-		h := newTestHandler(t, Config{
-			MeProfileRepo: profileRepo,
-		})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/profile",
-			strings.NewReader(`{not json`))
-		req.Header.Set("X-Telegram-Init-Data", "fake")
-		rr := httptest.NewRecorder()
-		h.UpsertMeProfile(rr, withCaller(req, callerUserID))
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-	})
-
-	t.Run("400 surfaces PublicError from repo", func(t *testing.T) {
-		t.Parallel()
-		profileRepo := &mockMeProfileRepo{upsertErr: internal.NewPublicError("Invalid timezone.")}
-		h := newTestHandler(t, Config{
-			MeProfileRepo: profileRepo,
-		})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/profile",
-			strings.NewReader(`{"timezone":"Atlantis/Atlantis"}`))
-		req.Header.Set("X-Telegram-Init-Data", "fake")
-		rr := httptest.NewRecorder()
-		h.UpsertMeProfile(rr, withCaller(req, callerUserID))
-		require.Equal(t, http.StatusBadRequest, rr.Code)
-		require.Contains(t, rr.Body.String(), "Invalid timezone.")
-	})
-
-	t.Run("500 on infrastructure error from repo", func(t *testing.T) {
-		t.Parallel()
-		profileRepo := &mockMeProfileRepo{upsertErr: errors.New("db dead")}
-		h := newTestHandler(t, Config{
-			MeProfileRepo: profileRepo,
-		})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/profile",
-			strings.NewReader(`{"timezone":"UTC"}`))
-		req.Header.Set("X-Telegram-Init-Data", "fake")
-		rr := httptest.NewRecorder()
-		h.UpsertMeProfile(rr, withCaller(req, callerUserID))
-		require.Equal(t, http.StatusInternalServerError, rr.Code)
-	})
-
-	t.Run("204 on success and persisted record carries the right identity", func(t *testing.T) {
-		t.Parallel()
-		profileRepo := &mockMeProfileRepo{}
-		h := newTestHandler(t, Config{
-			MeProfileRepo: profileRepo,
-		})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/profile",
-			strings.NewReader(`{"timezone":"Asia/Almaty","locale":"kk-KZ"}`))
-		req.Header.Set("X-Telegram-Init-Data", "fake")
-		rr := httptest.NewRecorder()
-		h.UpsertMeProfile(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusNoContent, rr.Code)
-		require.NotNil(t, profileRepo.upsertCall)
-		require.Equal(t, domain.UserTypeTelegram, profileRepo.upsertCall.UserType)
-		require.Equal(t, strconv.FormatInt(callerUserID, 10), profileRepo.upsertCall.UserID)
-		require.Equal(t, "Asia/Almaty", profileRepo.upsertCall.Timezone)
-		require.Equal(t, "kk-KZ", profileRepo.upsertCall.Locale)
-	})
-
-	t.Run("204 when locale is omitted — timezone alone is sufficient", func(t *testing.T) {
-		t.Parallel()
-		profileRepo := &mockMeProfileRepo{}
-		h := newTestHandler(t, Config{
-			MeProfileRepo: profileRepo,
-		})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/profile",
-			strings.NewReader(`{"timezone":"UTC"}`))
-		req.Header.Set("X-Telegram-Init-Data", "fake")
-		rr := httptest.NewRecorder()
-		h.UpsertMeProfile(rr, withCaller(req, callerUserID))
-
-		require.Equal(t, http.StatusNoContent, rr.Code)
-		require.Equal(t, "", profileRepo.upsertCall.Locale)
-	})
-
-	t.Run("400 when locale exceeds 64 chars", func(t *testing.T) {
-		t.Parallel()
-		profileRepo := &mockMeProfileRepo{}
-		h := newTestHandler(t, Config{
-			MeProfileRepo: profileRepo,
-		})
-		body := `{"timezone":"UTC","locale":"` + strings.Repeat("a", 65) + `"}`
+	post := func(t *testing.T, svc meProfileService, body string) (*httptest.ResponseRecorder, *Handler) {
+		t.Helper()
+		h := newTestHandler(t, Config{MeProfileSvc: svc, Logger: log.New(io.Discard, "", 0)})
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/me/profile", strings.NewReader(body))
-		req.Header.Set("X-Telegram-Init-Data", "fake")
 		rr := httptest.NewRecorder()
 		h.UpsertMeProfile(rr, withCaller(req, callerUserID))
+		return rr, h
+	}
+
+	t.Run("204 on success, forwarding the caller and both fields", func(t *testing.T) {
+		t.Parallel()
+
+		svc := &mockMeProfileSvc{}
+		rr, _ := post(t, svc, `{"timezone":"Asia/Almaty","locale":"kk-KZ"}`)
+
+		require.Equal(t, http.StatusNoContent, rr.Code)
+		assert.Equal(t, strconv.FormatInt(callerUserID, 10), svc.gotUserID,
+			"the profile is written for the authenticated caller, never for a value in the body")
+		require.NotNil(t, svc.gotProfile)
+		assert.Equal(t, "Asia/Almaty", svc.gotProfile.Timezone)
+		assert.Equal(t, "kk-KZ", svc.gotProfile.Locale)
+	})
+
+	t.Run("400 on a malformed body, before the service is reached", func(t *testing.T) {
+		t.Parallel()
+
+		svc := &mockMeProfileSvc{}
+		rr, _ := post(t, svc, `not-json`)
+
 		require.Equal(t, http.StatusBadRequest, rr.Code)
-		require.Nil(t, profileRepo.upsertCall, "upsert must not run when length check fails")
+		require.Contains(t, rr.Body.String(), "invalid request body")
+		assert.Nil(t, svc.gotProfile)
+	})
+
+	t.Run("400 on a body exceeding 1 KiB", func(t *testing.T) {
+		t.Parallel()
+
+		svc := &mockMeProfileSvc{}
+		rr, _ := post(t, svc, `{"timezone":"UTC","locale":"`+strings.Repeat("a", 2<<10)+`"}`)
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		assert.Nil(t, svc.gotProfile)
+	})
+
+	t.Run("a PublicError from the service becomes a 400 carrying its message", func(t *testing.T) {
+		t.Parallel()
+
+		rr, _ := post(t, &mockMeProfileSvc{err: internal.NewPublicError("timezone is required")}, `{"timezone":""}`)
+
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+		require.Contains(t, rr.Body.String(), "timezone is required")
+	})
+
+	t.Run("500 on any other service failure", func(t *testing.T) {
+		t.Parallel()
+
+		rr, _ := post(t, &mockMeProfileSvc{err: errors.New("db down")}, `{"timezone":"UTC"}`)
+
+		require.Equal(t, http.StatusInternalServerError, rr.Code)
+		require.Contains(t, rr.Body.String(), "internal error")
+		assert.NotContains(t, rr.Body.String(), "db down")
 	})
 }
 
@@ -2561,9 +2521,8 @@ func TestNewHandler_Config(t *testing.T) {
 		return Config{
 			RateService:     &mockRateService{},
 			MeSubSvc:        &mockMeSubSvc{},
-			MeProfileRepo:   &mockMeProfileRepo{},
+			MeProfileSvc:    &mockMeProfileSvc{},
 			MeWeatherSvc:    &mockMeWeatherSvc{},
-			WeatherCityRepo: &mockWeatherCityRepo{},
 			WeatherGeocoder: &mockWeatherGeocoder{},
 		}
 	}
@@ -2580,9 +2539,8 @@ func TestNewHandler_Config(t *testing.T) {
 		clear := map[string]func(*Config){
 			"RateService":     func(c *Config) { c.RateService = nil },
 			"MeSubSvc":        func(c *Config) { c.MeSubSvc = nil },
-			"MeProfileRepo":   func(c *Config) { c.MeProfileRepo = nil },
+			"MeProfileSvc":    func(c *Config) { c.MeProfileSvc = nil },
 			"MeWeatherSvc":    func(c *Config) { c.MeWeatherSvc = nil },
-			"WeatherCityRepo": func(c *Config) { c.WeatherCityRepo = nil },
 			"WeatherGeocoder": func(c *Config) { c.WeatherGeocoder = nil },
 		}
 		for name, drop := range clear {
@@ -2603,8 +2561,8 @@ func TestNewHandler_Config(t *testing.T) {
 		_, err := NewHandler(Config{})
 		require.Error(t, err)
 		for _, name := range []string{
-			"RateService", "MeSubSvc", "MeProfileRepo",
-			"MeWeatherSvc", "WeatherCityRepo", "WeatherGeocoder",
+			"RateService", "MeSubSvc", "MeProfileSvc",
+			"MeWeatherSvc", "WeatherGeocoder",
 		} {
 			require.Contains(t, err.Error(), name)
 		}
@@ -2651,14 +2609,11 @@ func newTestHandler(t *testing.T, cfg Config) *Handler {
 	if cfg.MeSubSvc == nil {
 		cfg.MeSubSvc = &mockMeSubSvc{}
 	}
-	if cfg.MeProfileRepo == nil {
-		cfg.MeProfileRepo = &mockMeProfileRepo{}
+	if cfg.MeProfileSvc == nil {
+		cfg.MeProfileSvc = &mockMeProfileSvc{}
 	}
 	if cfg.MeWeatherSvc == nil {
 		cfg.MeWeatherSvc = &mockMeWeatherSvc{}
-	}
-	if cfg.WeatherCityRepo == nil {
-		cfg.WeatherCityRepo = &mockWeatherCityRepo{}
 	}
 	if cfg.WeatherGeocoder == nil {
 		cfg.WeatherGeocoder = &mockWeatherGeocoder{}
