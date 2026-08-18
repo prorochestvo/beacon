@@ -185,22 +185,21 @@ func (o *OpenMeteo) Forecast(ctx context.Context, lat, lng float64) (*domain.Wea
 
 // get fetches rawURL, re-sending the request when the failure looks transient.
 //
-// Open-Meteo intermittently answers 5xx — one production log carried 167 of them across
-// two locations — and without a retry each one dropped that location for the whole run.
-// The request is a GET, so re-sending is safe by construction.
+// Open-Meteo intermittently answers 5xx — 59% of forecast fetches met one over five days
+// of production ticks — and without a retry each one dropped that location for the whole
+// run. The request is a GET, so re-sending is safe by construction.
 //
 // Attempts are bounded by openMeteoMaxAttempts and the wait between them respects ctx, so
 // a tick cancelled mid-backoff stops immediately instead of sleeping out its schedule.
 func (o *OpenMeteo) get(ctx context.Context, rawURL string) ([]byte, error) {
 	var lastErr error
 
-	// Both exits carry the elapsed time because nothing recorded how long an
-	// Open-Meteo fault actually lasts, and the whole question of whether this
-	// budget is the right size turns on that number. A recovery time is the
-	// informative half — it is an upper bound on an outage this window did absorb,
-	// so a log full of sub-second recoveries says the budget is already right and
-	// their absence says it is always too narrow. The give-up time only confirms
-	// what was spent.
+	// Both exits carry the elapsed time. That is what sized the budget (issue #27),
+	// and it is worth keeping: the two numbers only mean something against each
+	// other. Give-ups came back faster than recoveries — a median 2.39s against
+	// 3.19s — because a 503 is refused in about half a second while the answer that
+	// finally succeeds takes over two, so most of a give-up is round trips rather
+	// than waiting. Re-read them before moving these constants again.
 	start := time.Now()
 
 	for attempt := 1; attempt <= openMeteoMaxAttempts; attempt++ {
@@ -291,21 +290,50 @@ const (
 	openMeteoMaxResponseBytes = 1 << 20 // 1 MiB
 
 	// openMeteoMaxAttempts is how many times one request may be sent, first try
-	// included. Open-Meteo returns 5xx intermittently — 167 of them across one
-	// production log — and a single re-send absorbs most of that. Three bounds the
-	// worst case at roughly 31s against an hourly collection tick, and a fault that
-	// survives three attempts is not the transient this is for.
-	openMeteoMaxAttempts = 3
+	// included.
+	//
+	// Five, from 134 hourly production ticks between 2026-08-11 and 2026-08-16
+	// (issue #27). Over that window 105 of 177 forecast fetches met a 503 on the
+	// first try; 22 recovered on attempt 2 and 21 on attempt 3, leaving 62 — 35%
+	// of all fetches — failing outright. The number that decides the budget is the
+	// recovery rate *per attempt*: 21% at attempt 2 and 25% at attempt 3, flat
+	// within measurement error. Nothing is running out, so each further attempt
+	// buys about as much as the last one did, and two more should take the failure
+	// rate to roughly 21%.
+	//
+	// Five rather than more because of openMeteoTightestCallerDeadline: it is the
+	// largest budget whose waiting still fits inside the interactive city search
+	// this same client serves.
+	openMeteoMaxAttempts = 5
 
 	// openMeteoRetryBackoff is the wait before the second attempt; it doubles for
-	// each attempt after that. Short on purpose: the failure being absorbed is an
-	// upstream hiccup answered in milliseconds, not a rate limit that needs to
-	// decay, and the whole collection run waits on this.
+	// each attempt after that until openMeteoRetryBackoffCap. Short on purpose: the
+	// failure being absorbed is an upstream hiccup answered in milliseconds, not a
+	// rate limit that needs to decay, and the whole collection run waits on this.
 	openMeteoRetryBackoff = 250 * time.Millisecond
+
+	// openMeteoRetryBackoffCap stops the doubling, because waiting longer is not
+	// what recovers these requests.
+	//
+	// The production window measured recovery at 21% after a 250ms wait and 25%
+	// after 500ms — the same rate, not a rising one. The failures also arrive in
+	// episodes lasting about three hours for one location, and an hour between
+	// hourly ticks does not clear them, so no wait this client can afford outlasts
+	// one. Attempts are what recover a request; spacing them further apart only
+	// spends the budget on sleeping.
+	openMeteoRetryBackoffCap = 500 * time.Millisecond
 
 	// openMeteoRetryJitter is the fraction of each backoff that is randomised, so
 	// several locations failing on the same tick do not re-send in lockstep.
 	openMeteoRetryJitter = 0.2
+
+	// openMeteoTightestCallerDeadline is the shortest context any caller gives this
+	// client: the Mini App city search bounds its geocode at 5s (weatherGeoTimeout
+	// in the handlers package). It is recorded here because the retry schedule has
+	// to fit inside it — sleepWithContext honours the deadline, so a budget wider
+	// than this stops being a retry and becomes a slower way to fail a search.
+	// TestRetryScheduleFitsTheTightestCaller is what keeps the two in step.
+	openMeteoTightestCallerDeadline = 5 * time.Second
 )
 
 // retryableError marks a failure as an upstream hiccup rather than an answer.
@@ -495,10 +523,19 @@ func attemptsMade(err error) int {
 	return 1
 }
 
-// retryBackoff is the wait before attempt+1, doubling each time and randomised within
-// openMeteoRetryJitter so concurrent callers do not re-send in lockstep.
+// retryBackoff is the wait before attempt+1, doubling each time up to
+// openMeteoRetryBackoffCap and randomised within openMeteoRetryJitter so
+// concurrent callers do not re-send in lockstep.
+//
+// The shift is guarded rather than trusted: at attempt 63 it would shift a
+// time.Duration past its own width and hand back a negative or zero wait, which
+// a timer accepts and fires immediately on. The cap makes that unreachable today
+// and the guard makes it unreachable regardless.
 func retryBackoff(attempt int) time.Duration {
-	base := openMeteoRetryBackoff << (attempt - 1)
+	base := openMeteoRetryBackoffCap
+	if shift := attempt - 1; shift < 32 {
+		base = min(openMeteoRetryBackoff<<shift, openMeteoRetryBackoffCap)
+	}
 	spread := float64(base) * openMeteoRetryJitter
 	// rand is fine here: this randomises timing, it does not protect anything.
 	return time.Duration(float64(base) - spread + rand.Float64()*2*spread)

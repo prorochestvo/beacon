@@ -302,6 +302,12 @@ func weatherCurrentItem(c appweather.CurrentCity) dto.WeatherCurrentItem {
 const (
 	// weatherGeoTimeout is the per-request deadline for outbound geocoding calls.
 	// A slow Open-Meteo response must not stall the HTTP worker.
+	//
+	// It also caps the client's retry, which shares one code path with the
+	// collector's forecast fetch and honours this context while it waits. The
+	// weather package records the number as openMeteoTightestCallerDeadline and
+	// sizes its budget under it, so lowering this deadline shrinks a retry it does
+	// not appear to own. Change the two together.
 	weatherGeoTimeout = 5 * time.Second
 	// weatherSearchMaxResults is the number of geocoding matches requested.
 	weatherSearchMaxResults = 5
