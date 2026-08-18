@@ -305,7 +305,7 @@ func (r *RateValueRepository) ObtainHistoryForPairsPaged(
 	ctx context.Context,
 	pairs []domain.SourcePairKey,
 	limit, offset int64,
-) (rows []domain.RateValue, rowTotal int64, groupedTotal int64, err error) {
+) (rows []domain.RateValue, rowTotal, groupedTotal int64, err error) {
 	if len(pairs) == 0 {
 		return []domain.RateValue{}, 0, 0, nil
 	}

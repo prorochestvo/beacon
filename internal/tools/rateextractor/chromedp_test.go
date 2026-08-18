@@ -168,7 +168,7 @@ func TestBuildExecAllocatorOptions(t *testing.T) {
 		e := NewChromedpRateExtractor("/usr/bin/chromium", "http://127.0.0.1:7788", io.Discard, &mockRateValueRepository{})
 		opts := e.buildExecAllocatorOptions("http://127.0.0.1:7788")
 
-		// baseline + ProxyServer + ExecPath = baseline + 2
+		// two options on top of the baseline: ProxyServer and ExecPath
 		require.Len(t, opts, baseline+2)
 	})
 

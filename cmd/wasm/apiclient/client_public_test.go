@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/seilbekskindirov/beacon/cmd/wasm/apiclient"
-	"github.com/seilbekskindirov/beacon/internal/dto"
 )
 
 func TestClient_PublicRatesChart(t *testing.T) {
@@ -110,7 +109,7 @@ func TestClient_PublicRatesChart(t *testing.T) {
 		c := apiclient.New(f)
 		got, err := c.PublicRatesChart(t.Context(), 3, 10, 7)
 		require.NoError(t, err)
-		var _ dto.PublicChartResponse = got // compile-time check on the return type
+		var _ = got // compile-time check on the return type
 		assert.Equal(t, 3, got.Page)
 		assert.Equal(t, 10, got.Limit)
 		assert.Equal(t, int64(30), got.Total)

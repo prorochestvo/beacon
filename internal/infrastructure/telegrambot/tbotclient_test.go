@@ -42,7 +42,7 @@ func TestTBotClientTransportPattern_documentationOnly(t *testing.T) {
 		}
 
 		// Simulate a request to the Telegram Bot API endpoint.
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://api.telegram.org/bot123:abc/getMe", nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://api.telegram.org/bot123:abc/getMe", http.NoBody)
 		require.NoError(t, err)
 
 		got, err := noProxyTransport.Proxy(req)
@@ -58,7 +58,7 @@ func TestTBotClientTransportPattern_documentationOnly(t *testing.T) {
 			Proxy: func(*http.Request) (*url.URL, error) { return nil, nil },
 		}
 
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://example.com/some/path", nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://example.com/some/path", http.NoBody)
 		require.NoError(t, err)
 
 		got, err := noProxyTransport.Proxy(req)

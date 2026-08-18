@@ -96,8 +96,8 @@ func (m *Migrator) Run(ctx context.Context) error {
 	defer func() { _ = tx.Rollback() }()
 
 	applied := 0
-	for i, item := range m.items { //nolint:varnamelen
-		if len(item.content) == 0 {
+	for i, item := range m.items { //nolint:varnamelen // i is the migration index used only in the error message
+		if item.content == "" {
 			continue
 		}
 
@@ -198,7 +198,7 @@ func (m *Migrator) Verify(ctx context.Context) error {
 
 	var empty, missing []string
 	for _, item := range m.items {
-		if len(item.content) == 0 {
+		if item.content == "" {
 			empty = append(empty, item.name)
 			continue
 		}

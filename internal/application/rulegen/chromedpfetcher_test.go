@@ -238,7 +238,7 @@ func TestBuildExecAllocatorOptions(t *testing.T) {
 		})
 		opts := f.buildExecAllocatorOptions("http://127.0.0.1:7788")
 
-		// baseline + ProxyServer + ExecPath = baseline + 2
+		// two options on top of the baseline: ProxyServer and ExecPath
 		require.Len(t, opts, baseline+2)
 	})
 

@@ -189,7 +189,7 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 //
 // GET /api/v1/sources.
 func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
-	sources, err := h.rateService.ObtainAllRateSources(r.Context())
+	sources, err := h.ObtainAllRateSources(r.Context())
 	if err != nil {
 		h.internalError(w, err)
 		return
@@ -203,7 +203,7 @@ func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
 	for _, s := range sources {
 		names = append(names, s.Name)
 	}
-	latest, latestErr := h.rateService.ObtainLatestExecutionHistoryBySources(r.Context(), names)
+	latest, latestErr := h.ObtainLatestExecutionHistoryBySources(r.Context(), names)
 	if latestErr != nil {
 		log.Print(errors.Join(
 			fmt.Errorf("bulk latest execution: %w", latestErr),
@@ -248,7 +248,7 @@ func (h *Handler) ListRates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rates, err := h.rateService.ObtainLastNRateValuesBySourceName(r.Context(), name, limit)
+	rates, err := h.ObtainLastNRateValuesBySourceName(r.Context(), name, limit)
 	if err != nil {
 		h.internalError(w, err)
 		return
@@ -281,7 +281,7 @@ func (h *Handler) ListHistory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"missing source name"}`, http.StatusBadRequest)
 		return
 	}
-	recs, err := h.rateService.ObtainLastNExecutionHistoryBySourceName(r.Context(), name, limit)
+	recs, err := h.ObtainLastNExecutionHistoryBySourceName(r.Context(), name, limit)
 	if err != nil {
 		h.internalError(w, err)
 		return
@@ -311,7 +311,7 @@ func (h *Handler) ListNotifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	records, err := h.rateService.ObtainListOfLastRateUserEvent(r.Context(), limit)
+	records, err := h.ObtainListOfLastRateUserEvent(r.Context(), limit)
 	if err != nil {
 		h.internalError(w, err)
 		return
@@ -347,7 +347,7 @@ func (h *Handler) ListFailedNotifications(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	records, err := h.rateService.ObtainFailedListOfRateUserEvent(r.Context(), offset, limit)
+	records, err := h.ObtainFailedListOfRateUserEvent(r.Context(), offset, limit)
 	if err != nil {
 		h.internalError(w, err)
 		return
@@ -372,7 +372,7 @@ func (h *Handler) ListFailedNotifications(w http.ResponseWriter, r *http.Request
 //
 // GET /api/v1/events/pending.
 func (h *Handler) ListPendingEvents(w http.ResponseWriter, r *http.Request) {
-	events, err := h.rateService.ObtainPendingRateUserEvents(r.Context())
+	events, err := h.ObtainPendingRateUserEvents(r.Context())
 	if err != nil {
 		h.internalError(w, err)
 		return
@@ -400,7 +400,7 @@ func (h *Handler) ListSourceFailedEvents(w http.ResponseWriter, r *http.Request)
 	}
 	page := parsePage(r.URL.Query().Get("page"))
 	const pageSize = 50
-	events, err := h.rateService.ObtainFailedRateUserEventsBySourceName(r.Context(), name, page, pageSize)
+	events, err := h.ObtainFailedRateUserEventsBySourceName(r.Context(), name, page, pageSize)
 	if err != nil {
 		h.internalError(w, err)
 		return
@@ -428,7 +428,7 @@ func (h *Handler) ListSourceSubscriptions(w http.ResponseWriter, r *http.Request
 		http.Error(w, `{"error":"missing source name"}`, http.StatusBadRequest)
 		return
 	}
-	summaries, err := h.rateService.ObtainSubscriptionSummaryBySource(r.Context(), name)
+	summaries, err := h.ObtainSubscriptionSummaryBySource(r.Context(), name)
 	if err != nil {
 		h.internalError(w, err)
 		return
@@ -466,7 +466,7 @@ func (h *Handler) ToggleSourceActive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err = h.rateService.UpdateRateSourceActive(r.Context(), name, body.Active); err != nil {
+	if err = h.UpdateRateSourceActive(r.Context(), name, body.Active); err != nil {
 		if errors.Is(err, internal.ErrNotFound) {
 			http.Error(w, `{"error":"source not found"}`, http.StatusNotFound)
 			return
@@ -481,7 +481,7 @@ func (h *Handler) ToggleSourceActive(w http.ResponseWriter, r *http.Request) {
 //
 // GET /api/v1/stats.
 func (h *Handler) ListStats(w http.ResponseWriter, r *http.Request) {
-	stats, err := h.rateService.ObtainStats(r.Context())
+	stats, err := h.ObtainStats(r.Context())
 	if err != nil {
 		h.internalError(w, err)
 		return
@@ -506,7 +506,7 @@ func (h *Handler) ListSourceSubscriptionDetails(w http.ResponseWriter, r *http.R
 	const pageSize int64 = 25
 	offset := (page - 1) * pageSize
 
-	items, err := h.rateService.ObtainRateUserSubscriptionsBySourcePaged(r.Context(), name, offset, pageSize)
+	items, err := h.ObtainRateUserSubscriptionsBySourcePaged(r.Context(), name, offset, pageSize)
 	if err != nil {
 		h.internalError(w, err)
 		return
@@ -540,7 +540,7 @@ func (h *Handler) ListSourceDailyEvents(w http.ResponseWriter, r *http.Request) 
 	const pageSize int64 = 25
 	offset := (page - 1) * pageSize
 
-	items, err := h.rateService.ObtainDailyEventSummaryBySource(r.Context(), name, offset, pageSize)
+	items, err := h.ObtainDailyEventSummaryBySource(r.Context(), name, offset, pageSize)
 	if err != nil {
 		h.internalError(w, err)
 		return
@@ -565,7 +565,7 @@ func (h *Handler) ListExecutionErrors(w http.ResponseWriter, r *http.Request) {
 	const pageSize int64 = 50
 	offset := (page - 1) * pageSize
 
-	items, err := h.rateService.ObtainLastNExecutionHistoryErrors(r.Context(), offset, pageSize)
+	items, err := h.ObtainLastNExecutionHistoryErrors(r.Context(), offset, pageSize)
 	if err != nil {
 		h.internalError(w, err)
 		return

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/prorochestvo/loginjector"
@@ -76,7 +75,7 @@ func (a *RateDispatchAgent) Run(ctx context.Context) error {
 
 		if event.CreatedAt.Before(ttl) {
 			event.Status = domain.RateUserEventStatusCanceled
-			event.LastError = strings.Join([]string{fmt.Sprintf("TTL (%s) exceeded", a.ttl.String()), event.LastError}, "\n")
+			event.LastError = fmt.Sprintf("TTL (%s) exceeded", a.ttl.String()) + "\n" + event.LastError
 		} else {
 			switch event.UserType {
 			case domain.UserTypeTelegram:

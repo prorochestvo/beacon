@@ -331,7 +331,7 @@ func TestLocate(t *testing.T) {
 		t.Parallel()
 		// Three tier-1 hits: offset 200 (co-located), offset 500 (co-located), offset 10000 (no currency).
 		hit1 := strings.Repeat("a", 200) + "<table>USD</table>"
-		hit2 := strings.Repeat("b", 282) + "<table>USD</table>" // 200+18+282=500
+		hit2 := strings.Repeat("b", 282) + "<table>USD</table>" // lands at byte 500: 200 of filler, the 18-byte table, then 282 more
 		noHit := strings.Repeat("c", 9482) + "<table>nothing nearby</table>"
 		body := []byte(hit1 + hit2 + noHit)
 		out, found := Locate(body, []string{"<table"}, []string{"USD"}, 40, defaultCoLocationBytes)

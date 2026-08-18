@@ -72,6 +72,10 @@ func main() {
 
 	sourceRepo, err := repository.NewRateSourceRepository(db)
 	if err != nil {
+		//nolint:gocritic // a fatal here is a refusal to start: the deferred close is
+		// skipped, and the OS reclaims the descriptor a moment later. Threading an
+		// error out of every startup step would add plumbing for a path that ends
+		// the process anyway.
 		log.Fatalf("repositories: %s", err.Error())
 	}
 	historyRepo, err := repository.NewExecutionHistoryRepository(db)

@@ -36,11 +36,11 @@ type httpFetcher struct {
 	userAgent string
 }
 
-func (f *httpFetcher) Fetch(ctx context.Context, url string, headers map[string]string) (*FetchResult, error) {
+func (f *httpFetcher) Fetch(ctx context.Context, rawURL string, headers map[string]string) (*FetchResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -57,7 +57,7 @@ func (f *httpFetcher) Fetch(ctx context.Context, url string, headers map[string]
 	defer func(c io.Closer) { _ = c.Close() }(resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("fetch %s: unexpected status %d (%s)", url, resp.StatusCode, resp.Status)
+		return nil, fmt.Errorf("fetch %s: unexpected status %d (%s)", rawURL, resp.StatusCode, resp.Status)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))

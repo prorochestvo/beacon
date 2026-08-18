@@ -71,21 +71,20 @@ func renderWeatherSearchSection(state application.WeatherCitiesState) string {
 	b.WriteString(`<section class="weather-search-section">`)
 	b.WriteString(`<h2 class="weather-section-title">Add a city</h2>`)
 
-	b.WriteString(fmt.Sprintf(
-		`<input class="weather-search-input" id="weather-search" type="text" `+
-			`placeholder="Search city…" value="%s" autocomplete="off">`,
-		dom.Escape(state.SearchQuery),
-	))
+	fmt.Fprintf(&b, `<input class="weather-search-input" id="weather-search" type="text" `+
+		`placeholder="Search city…" value="%s" autocomplete="off">`,
+		dom.Escape(state.SearchQuery))
 
-	if state.SearchLoading {
+	switch {
+	case state.SearchLoading:
 		b.WriteString(`<p class="weather-search-loading">Searching…</p>`)
-	} else if state.SearchError != nil {
+	case state.SearchError != nil:
 		b.WriteString(`<p class="weather-search-error">`)
 		b.WriteString(dom.Escape(state.SearchError.Error()))
 		b.WriteString(`</p>`)
-	} else if len(state.SearchResults) > 0 {
+	case len(state.SearchResults) > 0:
 		b.WriteString(renderWeatherSearchResults(state))
-	} else if strings.TrimSpace(state.SearchQuery) != "" {
+	case strings.TrimSpace(state.SearchQuery) != "":
 		b.WriteString(`<p class="weather-search-empty">No cities found.</p>`)
 	}
 
@@ -129,10 +128,8 @@ func renderWeatherSearchResults(state application.WeatherCitiesState) string {
 			continue
 		}
 		seen[label] = struct{}{}
-		b.WriteString(fmt.Sprintf(
-			`<li class="%s" data-index="%d" role="option" tabindex="0">%s</li>`,
-			cls, i, dom.Escape(label),
-		))
+		fmt.Fprintf(&b, `<li class="%s" data-index="%d" role="option" tabindex="0">%s</li>`,
+			cls, i, dom.Escape(label))
 	}
 	b.WriteString(`</ul>`)
 

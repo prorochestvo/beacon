@@ -40,7 +40,7 @@ type ChromedpRateExtractor struct {
 // The extractor keeps a per-process negative URL cache (tombstone): once a URL
 // fails, later fetches in the same process short-circuit. Built for short-lived
 // one-shot processes; do not reuse an instance across cron invocations in a daemon.
-func NewChromedpRateExtractor(chromiumPath string, proxyURL string, logger io.Writer, repo rateValueRepository) *ChromedpRateExtractor {
+func NewChromedpRateExtractor(chromiumPath, proxyURL string, logger io.Writer, repo rateValueRepository) *ChromedpRateExtractor {
 	if logger == nil {
 		logger = io.Discard
 	}
@@ -213,20 +213,20 @@ func (e *ChromedpRateExtractor) fetchRenderedPageInAllocator(allocCtx context.Co
 
 // loadFailedURL returns the cached error for url and true if url was previously
 // recorded as failed during the current process lifetime.
-func (e *ChromedpRateExtractor) loadFailedURL(url string) (error, bool) {
+func (e *ChromedpRateExtractor) loadFailedURL(rawURL string) (error, bool) {
 	e.failedURLsMu.Lock()
 	defer e.failedURLsMu.Unlock()
-	err, ok := e.failedURLs[url]
+	err, ok := e.failedURLs[rawURL]
 	return err, ok
 }
 
 // recordFailedURL stores err as the tombstone for url. Subsequent fetches of url
 // inside the same process short-circuit and return a wrapped form of err at replay time.
 // See constructor godoc for lifetime constraint.
-func (e *ChromedpRateExtractor) recordFailedURL(url string, err error) {
+func (e *ChromedpRateExtractor) recordFailedURL(rawURL string, err error) {
 	e.failedURLsMu.Lock()
 	defer e.failedURLsMu.Unlock()
-	e.failedURLs[url] = err
+	e.failedURLs[rawURL] = err
 }
 
 // fixedExecAllocatorOptionCount is the number of options buildExecAllocatorOptions

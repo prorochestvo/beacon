@@ -13,6 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testChartWindow is the seven-day span the default-period wrappers cover.
+// Spelled out here rather than read from ratepair.ChartWindow, whose own doc
+// marks it superseded: the period is a service argument now, and a fixture should
+// say which period it is building data for rather than inherit one.
+const testChartWindow = 7 * 24 * time.Hour
+
 var _ chart.SubscriptionsLoader = (*fakeSubs)(nil)
 var _ chart.SourcesLoader = (*fakeSources)(nil)
 var _ chart.ValuesLoader = (*fakeValues)(nil)
@@ -194,8 +200,8 @@ func TestService_ObtainMeChart(t *testing.T) {
 
 	t.Run("single BID pair with dense data produces correct delta and role color", func(t *testing.T) {
 		t.Parallel()
-		since := fixedNow.Add(-ratepair.ChartWindow)
-		step := ratepair.ChartWindow / 12
+		since := fixedNow.Add(-testChartWindow)
+		step := testChartWindow / 12
 		ts0 := since.Add(step / 2)
 		ts11 := since.Add(11*step + step/2)
 
@@ -251,8 +257,8 @@ func TestService_ObtainMeChart(t *testing.T) {
 
 	t.Run("BID and ASK for same pair collapse into one row with two series", func(t *testing.T) {
 		t.Parallel()
-		since := fixedNow.Add(-ratepair.ChartWindow)
-		step := ratepair.ChartWindow / 12
+		since := fixedNow.Add(-testChartWindow)
+		step := testChartWindow / 12
 		ts0 := since.Add(step / 2)
 		ts11 := since.Add(11*step + step/2)
 
@@ -327,8 +333,8 @@ func TestService_ObtainMeChart(t *testing.T) {
 
 	t.Run("single pair with sparse data marks series as sparse", func(t *testing.T) {
 		t.Parallel()
-		since := fixedNow.Add(-ratepair.ChartWindow)
-		step := ratepair.ChartWindow / 12
+		since := fixedNow.Add(-testChartWindow)
+		step := testChartWindow / 12
 		ts := since.Add(step / 2)
 
 		svc := chart.NewService(
@@ -391,8 +397,8 @@ func TestService_ObtainMeChart(t *testing.T) {
 
 	t.Run("delta sign math: declining series produces negative delta", func(t *testing.T) {
 		t.Parallel()
-		since := fixedNow.Add(-ratepair.ChartWindow)
-		step := ratepair.ChartWindow / 12
+		since := fixedNow.Add(-testChartWindow)
+		step := testChartWindow / 12
 		ts0 := since.Add(step / 2)
 		ts11 := since.Add(11*step + step/2)
 
@@ -445,8 +451,8 @@ func TestService_ObtainMeChart(t *testing.T) {
 
 	t.Run("bucket downsampling: last value in each bucket wins", func(t *testing.T) {
 		t.Parallel()
-		since := fixedNow.Add(-ratepair.ChartWindow)
-		step := ratepair.ChartWindow / 12
+		since := fixedNow.Add(-testChartWindow)
+		step := testChartWindow / 12
 		ts0a := since.Add(step / 4)
 		ts0b := since.Add(step * 3 / 4)
 
@@ -478,8 +484,8 @@ func TestService_ObtainMeChart(t *testing.T) {
 		t.Parallel()
 		// effectiveSince caps to ts3 (first sample), so bucket 0 is always populated
 		// and later buckets forward-fill from the two samples. len(Points) == bucketCount.
-		since := fixedNow.Add(-ratepair.ChartWindow)
-		step := ratepair.ChartWindow / 12
+		since := fixedNow.Add(-testChartWindow)
+		step := testChartWindow / 12
 		ts3 := since.Add(3*step + step/2)
 		ts4 := since.Add(4*step + step/2)
 

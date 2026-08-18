@@ -97,11 +97,9 @@ func renderEditListView(state application.MeSubscriptionsEditState) string {
 	b.WriteString(`</div>`)
 
 	// Search input — always present. Targeted slot redraw preserves caret.
-	b.WriteString(fmt.Sprintf(
-		`<input class="me-edit-list-search" id="me-edit-list-search" type="text" `+
-			`placeholder="Search subscriptions…" value="%s" autocomplete="off">`,
-		dom.Escape(state.ListQuery),
-	))
+	fmt.Fprintf(&b, `<input class="me-edit-list-search" id="me-edit-list-search" type="text" `+
+		`placeholder="Search subscriptions…" value="%s" autocomplete="off">`,
+		dom.Escape(state.ListQuery))
 
 	// Results slot — items + pagination. The search-input handler rewrites
 	// only this slot, leaving the search input alive.
@@ -158,18 +156,12 @@ func RenderEditListResultsSlot(state application.MeSubscriptionsEditState) strin
 		nextDisabled = " disabled"
 	}
 	b.WriteString(`<div class="me-edit-picker-pagination">`)
-	b.WriteString(fmt.Sprintf(
-		`<button class="me-edit-picker-prev" type="button" data-kind="list" data-page="%d"%s>Prev</button>`,
-		page-1, prevDisabled,
-	))
-	b.WriteString(fmt.Sprintf(
-		`<span class="me-edit-picker-page-info">page %d of %d</span>`,
-		page, totalPages,
-	))
-	b.WriteString(fmt.Sprintf(
-		`<button class="me-edit-picker-next" type="button" data-kind="list" data-page="%d"%s>Next</button>`,
-		page+1, nextDisabled,
-	))
+	fmt.Fprintf(&b, `<button class="me-edit-picker-prev" type="button" data-kind="list" data-page="%d"%s>Prev</button>`,
+		page-1, prevDisabled)
+	fmt.Fprintf(&b, `<span class="me-edit-picker-page-info">page %d of %d</span>`,
+		page, totalPages)
+	fmt.Fprintf(&b, `<button class="me-edit-picker-next" type="button" data-kind="list" data-page="%d"%s>Next</button>`,
+		page+1, nextDisabled)
 	b.WriteString(`</div>`)
 	return b.String()
 }
@@ -197,20 +189,16 @@ func renderEditFormView(state application.MeSubscriptionsEditState) string {
 		if ct.val == state.Draft.ConditionType {
 			checked = ` checked`
 		}
-		b.WriteString(fmt.Sprintf(
-			`<label class="me-edit-cond-radio"><input type="radio" name="me-edit-cond-type" id="me-edit-cond-%s" value="%s"%s> %s</label>`,
-			dom.Escape(ct.val), dom.Escape(ct.val), checked, ct.label,
-		))
+		fmt.Fprintf(&b, `<label class="me-edit-cond-radio"><input type="radio" name="me-edit-cond-type" id="me-edit-cond-%s" value="%s"%s> %s</label>`,
+			dom.Escape(ct.val), dom.Escape(ct.val), checked, ct.label)
 	}
 	b.WriteString(`</div>`)
 
 	placeholder := conditionValuePlaceholder(state.Draft.ConditionType)
-	b.WriteString(fmt.Sprintf(
-		`<label class="me-edit-label" for="me-edit-value">Value</label>`+
-			`<input class="me-edit-input" id="me-edit-value" type="text" value="%s" placeholder="%s">`,
+	fmt.Fprintf(&b, `<label class="me-edit-label" for="me-edit-value">Value</label>`+
+		`<input class="me-edit-input" id="me-edit-value" type="text" value="%s" placeholder="%s">`,
 		dom.Escape(state.Draft.ConditionValue),
-		dom.Escape(placeholder),
-	))
+		dom.Escape(placeholder))
 	b.WriteString(`<p class="me-edit-help">`)
 	b.WriteString(dom.Escape(conditionValueHelp(state.Draft.ConditionType)))
 	b.WriteString(`</p>`)
@@ -302,10 +290,8 @@ func renderDirectionRadios(state application.MeSubscriptionsEditState) string {
 		if label == "ASK" {
 			hasASK = true
 		}
-		b.WriteString(fmt.Sprintf(
-			`<label class="me-edit-cond-radio"><input type="radio" name="me-edit-direction" value="%s"%s> %s</label>`,
-			dom.Escape(d.SourceName), checked, dom.Escape(label),
-		))
+		fmt.Fprintf(&b, `<label class="me-edit-cond-radio"><input type="radio" name="me-edit-direction" value="%s"%s> %s</label>`,
+			dom.Escape(d.SourceName), checked, dom.Escape(label))
 	}
 	b.WriteString(`</div>`)
 	if hasBID && hasASK {
@@ -332,14 +318,12 @@ func renderSourcePickers(state application.MeSubscriptionsEditState) string {
 	if state.SelectedProviderTitle != "" {
 		providerLabel = state.SelectedProviderTitle
 	}
-	b.WriteString(fmt.Sprintf(
-		`<button class="me-edit-picker-trigger" id="me-edit-provider-trigger" type="button" aria-haspopup="listbox" aria-expanded="%t">`+
-			`<span class="me-edit-picker-trigger-label">%s</span>`+
-			`<span class="me-edit-picker-caret" aria-hidden="true">&#9662;</span>`+
-			`</button>`,
+	fmt.Fprintf(&b, `<button class="me-edit-picker-trigger" id="me-edit-provider-trigger" type="button" aria-haspopup="listbox" aria-expanded="%t">`+
+		`<span class="me-edit-picker-trigger-label">%s</span>`+
+		`<span class="me-edit-picker-caret" aria-hidden="true">&#9662;</span>`+
+		`</button>`,
 		state.ProviderPickerOpen,
-		dom.Escape(providerLabel),
-	))
+		dom.Escape(providerLabel))
 	if state.ProviderPickerOpen {
 		b.WriteString(renderProviderPickerOverlay(state))
 	}
@@ -361,15 +345,13 @@ func renderSourcePickers(state application.MeSubscriptionsEditState) string {
 	if pairDisabled {
 		disabledAttr = " disabled"
 	}
-	b.WriteString(fmt.Sprintf(
-		`<button class="me-edit-picker-trigger" id="me-edit-pair-trigger" type="button" aria-haspopup="listbox" aria-expanded="%t"%s>`+
-			`<span class="me-edit-picker-trigger-label">%s</span>`+
-			`<span class="me-edit-picker-caret" aria-hidden="true">&#9662;</span>`+
-			`</button>`,
+	fmt.Fprintf(&b, `<button class="me-edit-picker-trigger" id="me-edit-pair-trigger" type="button" aria-haspopup="listbox" aria-expanded="%t"%s>`+
+		`<span class="me-edit-picker-trigger-label">%s</span>`+
+		`<span class="me-edit-picker-caret" aria-hidden="true">&#9662;</span>`+
+		`</button>`,
 		state.PairPickerOpen,
 		disabledAttr,
-		dom.Escape(pairLabel),
-	))
+		dom.Escape(pairLabel))
 	if state.PairPickerOpen && !pairDisabled {
 		b.WriteString(renderPairPickerOverlay(state))
 	}
@@ -386,11 +368,9 @@ func renderProviderPickerOverlay(state application.MeSubscriptionsEditState) str
 	var b strings.Builder
 	b.WriteString(`<div class="me-edit-picker-backdrop" id="me-edit-picker-backdrop"></div>`)
 	b.WriteString(`<div class="me-edit-picker-overlay" role="listbox">`)
-	b.WriteString(fmt.Sprintf(
-		`<input class="me-edit-picker-search" id="me-edit-provider-search" type="text" `+
-			`placeholder="Search providers…" value="%s" autocomplete="off">`,
-		dom.Escape(state.ProviderQuery),
-	))
+	fmt.Fprintf(&b, `<input class="me-edit-picker-search" id="me-edit-provider-search" type="text" `+
+		`placeholder="Search providers…" value="%s" autocomplete="off">`,
+		dom.Escape(state.ProviderQuery))
 	b.WriteString(`<div class="me-edit-picker-results" id="me-edit-provider-results-slot">`)
 	b.WriteString(RenderProviderResultsSlot(state))
 	b.WriteString(`</div>`)
@@ -426,11 +406,9 @@ func renderPairPickerOverlay(state application.MeSubscriptionsEditState) string 
 	var b strings.Builder
 	b.WriteString(`<div class="me-edit-picker-backdrop" id="me-edit-picker-backdrop"></div>`)
 	b.WriteString(`<div class="me-edit-picker-overlay" role="listbox">`)
-	b.WriteString(fmt.Sprintf(
-		`<input class="me-edit-picker-search" id="me-edit-pair-search" type="text" `+
-			`placeholder="Search pairs…" value="%s" autocomplete="off">`,
-		dom.Escape(state.PairQuery),
-	))
+	fmt.Fprintf(&b, `<input class="me-edit-picker-search" id="me-edit-pair-search" type="text" `+
+		`placeholder="Search pairs…" value="%s" autocomplete="off">`,
+		dom.Escape(state.PairQuery))
 	b.WriteString(`<div class="me-edit-picker-results" id="me-edit-pair-results-slot">`)
 	b.WriteString(RenderPairResultsSlot(state))
 	b.WriteString(`</div>`)
@@ -490,18 +468,12 @@ func renderPickerListAndPagination(itemsHTML string, totalItems, page, totalPage
 		nextDisabled = " disabled"
 	}
 	b.WriteString(`<div class="me-edit-picker-pagination">`)
-	b.WriteString(fmt.Sprintf(
-		`<button class="me-edit-picker-prev" type="button" data-kind="%s" data-page="%d"%s>Prev</button>`,
-		itemKind, page-1, prevDisabled,
-	))
-	b.WriteString(fmt.Sprintf(
-		`<span class="me-edit-picker-page-info">page %d of %d</span>`,
-		page, totalPages,
-	))
-	b.WriteString(fmt.Sprintf(
-		`<button class="me-edit-picker-next" type="button" data-kind="%s" data-page="%d"%s>Next</button>`,
-		itemKind, page+1, nextDisabled,
-	))
+	fmt.Fprintf(&b, `<button class="me-edit-picker-prev" type="button" data-kind="%s" data-page="%d"%s>Prev</button>`,
+		itemKind, page-1, prevDisabled)
+	fmt.Fprintf(&b, `<span class="me-edit-picker-page-info">page %d of %d</span>`,
+		page, totalPages)
+	fmt.Fprintf(&b, `<button class="me-edit-picker-next" type="button" data-kind="%s" data-page="%d"%s>Next</button>`,
+		itemKind, page+1, nextDisabled)
 	b.WriteString(`</div>`)
 	return b.String()
 }
@@ -516,10 +488,8 @@ func stringItemsToHTML(items []string, dataAttr, selected string, labelOf func(s
 		if item == selected {
 			cls += " me-edit-picker-item-active"
 		}
-		b.WriteString(fmt.Sprintf(
-			`<li class="%s" data-%s="%s" role="option" tabindex="0">%s</li>`,
-			cls, dataAttr, dom.Escape(item), dom.Escape(labelOf(item)),
-		))
+		fmt.Fprintf(&b, `<li class="%s" data-%s="%s" role="option" tabindex="0">%s</li>`,
+			cls, dataAttr, dom.Escape(item), dom.Escape(labelOf(item)))
 	}
 	return b.String()
 }
@@ -534,10 +504,8 @@ func sourceItemsToHTML(items []dto.SourceResponse, selectedSourceName string) st
 		if s.Name == selectedSourceName {
 			cls += " me-edit-picker-item-active"
 		}
-		b.WriteString(fmt.Sprintf(
-			`<li class="%s" data-source-name="%s" role="option" tabindex="0">%s/%s</li>`,
-			cls, dom.Escape(s.Name), dom.Escape(s.BaseCurrency), dom.Escape(s.QuoteCurrency),
-		))
+		fmt.Fprintf(&b, `<li class="%s" data-source-name="%s" role="option" tabindex="0">%s/%s</li>`,
+			cls, dom.Escape(s.Name), dom.Escape(s.BaseCurrency), dom.Escape(s.QuoteCurrency))
 	}
 	return b.String()
 }
