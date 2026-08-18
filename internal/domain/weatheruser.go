@@ -28,7 +28,7 @@ const (
 	// WeatherNotifyAlertThunderstorm fires when the daily-dominant WMO weather code
 	// is in the thunderstorm band (95, 96, or 99). ConditionValue is empty — no
 	// numeric threshold applies. "Today is forecast stormy" semantics, not "storm
-	// at this instant."
+	// at this instant.".
 	WeatherNotifyAlertThunderstorm WeatherNotifyKind = "alert_thunderstorm"
 
 	// WeatherNotifyAlertRain fires when the maximum precipitation probability within
@@ -359,12 +359,13 @@ func (c *WeatherUserCity) evaluateAlertCondition(obs WeatherObservation, now tim
 		if *obs.TempMax <= 0 {
 			return alertConditionNotMet, "", nil // the day never rose above freezing
 		}
-		// Thaw is keyed purely on TempMax (the warm-side metric), matching alert_heat's
-		// warm-side comparison at an implicit threshold of 0 — see the "thaw vs heat
-		// overlap" note in plans/262-weather-alert-edge-trigger-hysteresis.md. TempMin is
-		// still required to be present (evaluability), but no longer gates met/notMet:
-		// the latch model keys cold-side kinds (frost) on TempMin and warm-side kinds
-		// (heat, thaw) on TempMax exclusively, so re-arming thaw is TempMax ≤ 0 alone.
+		// Thaw is keyed purely on TempMax (the warm-side metric), which is alert_heat's
+		// comparison at an implicit threshold of 0. TempMin is still required to be
+		// present (evaluability) but no longer gates met/notMet: cold-side kinds
+		// (frost) key on TempMin and warm-side kinds (heat, thaw) on TempMax
+		// exclusively, so re-arming thaw is TempMax ≤ 0 alone. Gating on both would
+		// make a day that thaws by afternoon and freezes by night fire and re-arm
+		// together, repeating the alert every day of a thaw.
 		return alertConditionMet, fmt.Sprintf("Thaw: %s → %s",
 			formatAlertTemp(*obs.TempMin), formatAlertTemp(*obs.TempMax)), nil
 	case WeatherNotifyAlertRain:

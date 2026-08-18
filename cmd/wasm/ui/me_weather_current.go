@@ -123,13 +123,13 @@ func renderWeatherCurrentCard(item dto.WeatherCurrentItem) string {
 	if item.SunriseLocal != "" || item.SunsetLocal != "" {
 		b.WriteString(`<div class="weather-current-sun">`)
 		if item.SunriseLocal != "" {
-			b.WriteString(fmt.Sprintf(`🌅 %s`, dom.Escape(item.SunriseLocal)))
+			b.WriteString("🌅 " + dom.Escape(item.SunriseLocal))
 		}
 		if item.SunsetLocal != "" {
 			if item.SunriseLocal != "" {
 				b.WriteString(`  `)
 			}
-			b.WriteString(fmt.Sprintf(`🌇 %s`, dom.Escape(item.SunsetLocal)))
+			b.WriteString("🌇 " + dom.Escape(item.SunsetLocal))
 		}
 		b.WriteString(`</div>`)
 	}

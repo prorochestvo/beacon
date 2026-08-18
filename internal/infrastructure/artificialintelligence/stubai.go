@@ -2,7 +2,7 @@ package artificialintelligence
 
 import (
 	"context"
-	"fmt"
+	"errors"
 )
 
 // stubAIDefaultResponse is a hard-coded JSON string conforming to
@@ -25,7 +25,7 @@ func (s *stubClient) Model() string {
 
 func (s *stubClient) CheckUP(_ context.Context) error {
 	if s.completeResponse == "" {
-		return fmt.Errorf("stubai: dummy response is empty")
+		return errors.New("stubai: dummy response is empty")
 	}
 	return nil
 }

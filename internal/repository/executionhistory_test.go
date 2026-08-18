@@ -133,7 +133,7 @@ func TestExecutionHistoryRepository_ObtainLastN(t *testing.T) {
 		src := "limit-source"
 		now := time.Now().UTC()
 
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			h := &domain.ExecutionHistory{
 				SourceName: src,
 				Success:    true,
@@ -355,7 +355,7 @@ func TestExecutionHistoryRepository_ObtainErrors(t *testing.T) {
 
 		src := "err-page-source"
 		now := time.Now().UTC()
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			h := &domain.ExecutionHistory{
 				SourceName: src,
 				Success:    false,
@@ -387,7 +387,7 @@ func BenchmarkExecutionHistoryRepository_ObtainLastN(b *testing.B) {
 	src := "bench-source"
 	now := time.Now().UTC()
 
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		h := &domain.ExecutionHistory{
 			SourceName: src,
 			Success:    i%2 == 0,

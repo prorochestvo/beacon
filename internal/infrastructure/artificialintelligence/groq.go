@@ -67,7 +67,7 @@ func newGroqClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string
 		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
-	baseURL, err := url.JoinPath(fmt.Sprintf("https://%s", dns.Addr()), dns.Database())
+	baseURL, err := url.JoinPath("https://"+dns.Addr(), dns.Database())
 	if err != nil {
 		return nil, errors.Join(err, loginjector.NewTraceError())
 	}

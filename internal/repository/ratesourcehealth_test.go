@@ -204,7 +204,7 @@ func TestExecutionHistoryRepository_ObtainSourceCollectionHealth(t *testing.T) {
 		require.NoError(t, err)
 		// One collector tick writes several rows at the same second; a comparison that
 		// only looked at the newest timestamp would count one of them.
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			seed(t, repo, "src-a", base.Add(-time.Hour), false, "same second")
 		}
 

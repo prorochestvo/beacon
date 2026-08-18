@@ -3,7 +3,6 @@ package rulegen
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -406,7 +405,7 @@ func TestGenerator_Generate(t *testing.T) {
 		fetcher := &mockFetcher{body: []byte("rate: 19.1671")}
 		executorFn := &sequentialExecutor{
 			results: []execResult{
-				{0, fmt.Errorf("rulegen: value 19.1671 rejected: outside plausible range [100, 1000] for USD/KZT")},
+				{0, errors.New("rulegen: value 19.1671 rejected: outside plausible range [100, 1000] for USD/KZT")},
 				{470.0, nil},
 			},
 		}

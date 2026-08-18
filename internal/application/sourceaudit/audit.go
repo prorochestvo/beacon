@@ -5,6 +5,7 @@ package sourceaudit
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -203,19 +204,19 @@ func fetchCacheKey(rawURL string, headers map[string]string) string {
 	return b.String()
 }
 
-func truncate(s string, max int) string {
+func truncate(s string, upper int) string {
 	r := []rune(s)
-	if len(r) <= max {
+	if len(r) <= upper {
 		return s
 	}
-	return string(r[:max])
+	return string(r[:upper])
 }
 
 // validateSourceURL rejects empty, malformed, or non-http(s) URLs to prevent
 // SSRF from seed-file source URLs.
 func validateSourceURL(rawURL string) error {
 	if rawURL == "" {
-		return fmt.Errorf("source URL must not be empty")
+		return errors.New("source URL must not be empty")
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {

@@ -70,7 +70,7 @@ func TestRuntimeDetails(t *testing.T) {
 
 // benchmarks
 func BenchmarkNewPublicError(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_ = NewPublicError("test", "error", "message")
 	}
 }

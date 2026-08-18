@@ -3,6 +3,7 @@ package sourceaudit
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -53,7 +54,7 @@ var (
 	// Column-list is tried first (longer match) to avoid false positives on the positional form.
 	reInsertColumnList = regexp.MustCompile(
 		`^INSERT\s+OR\s+IGNORE\s+INTO\s+rate_sources\s*\(([^)]*)\)\s+VALUES\s*\((.*)\)\s*;\s*$`)
-	// reInsertPositional matches: INSERT OR IGNORE INTO rate_sources VALUES(vals);
+	// reInsertPositional matches: INSERT OR IGNORE INTO rate_sources VALUES(vals);.
 	reInsertPositional = regexp.MustCompile(
 		`^INSERT\s+OR\s+IGNORE\s+INTO\s+rate_sources\s+VALUES\s*\((.*)\)\s*;\s*$`)
 	// reLooksLikeInsert detects a line with the insert prefix that matches neither
@@ -361,7 +362,7 @@ func tokenizeSQLValues(s string) ([]string, error) {
 		}
 	}
 	if inString {
-		return nil, fmt.Errorf("unterminated string literal")
+		return nil, errors.New("unterminated string literal")
 	}
 	if buf.Len() > 0 {
 		out = append(out, buf.String())

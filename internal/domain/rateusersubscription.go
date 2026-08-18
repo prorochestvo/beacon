@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -139,7 +140,7 @@ func (rus *RateUserSubscription) IsDailyDue(now time.Time) (bool, error) {
 // notification; it is only used for ConditionTypeDelta.
 func (rus *RateUserSubscription) IsDue(now time.Time, delta float64) (bool, error) {
 	if rus == nil {
-		return false, fmt.Errorf("subscription is nil")
+		return false, errors.New("subscription is nil")
 	}
 	switch rus.ConditionType {
 	case ConditionTypeDelta:

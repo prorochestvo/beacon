@@ -196,7 +196,7 @@ func TestRateUserSubscriptionRepository_ObtainRateUserSubscriptionByID(t *testin
 		require.Equal(t, sub.ConditionValue, got.ConditionValue)
 	})
 
-	t.Run("returns nil nil for unknown id", func(t *testing.T) {
+	t.Run("returns nil for unknown id", func(t *testing.T) {
 		t.Parallel()
 		got, err := r.ObtainRateUserSubscriptionByID(t.Context(), "no-such-id")
 		require.NoError(t, err)
@@ -346,7 +346,7 @@ func TestRateUserSubscriptionRepository_ObtainSubscriptionSummaryBySource(t *tes
 		}
 
 		// Three sent events for that user.
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			require.NoError(t, eventRepo.RetainRateUserEvent(t.Context(), &domain.RateUserEvent{
 				UserType: domain.UserTypeTelegram, UserID: "u-multi", SourceName: "src-multi",
 				Message: "m", Status: domain.RateUserEventStatusSent,
@@ -374,7 +374,7 @@ func TestRateUserSubscriptionRepository_ObtainSubscriptionSummaryBySource(t *tes
 
 		// Each user has 3 'sent' events for src-join.
 		for _, uid := range []string{"u-join-1", "u-join-2"} {
-			for i := 0; i < 3; i++ {
+			for range 3 {
 				require.NoError(t, eventRepo.RetainRateUserEvent(t.Context(), &domain.RateUserEvent{
 					UserType: domain.UserTypeTelegram, UserID: uid, SourceName: "src-join",
 					Message: "m", Status: domain.RateUserEventStatusSent,
@@ -450,7 +450,7 @@ func TestRateUserSubscriptionRepository_ObtainBySourcePaged(t *testing.T) {
 	sourceName := "paged-source"
 	now := time.Now().UTC()
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		sub := &domain.RateUserSubscription{
 			UserType:       domain.UserTypeTelegram,
 			UserID:         fmt.Sprintf("user-%d", i),

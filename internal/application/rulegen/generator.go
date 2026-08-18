@@ -486,7 +486,7 @@ func truncate(s string, maxLen int) string {
 // rejected too.
 func validateSourceURL(rawURL string) error {
 	if rawURL == "" {
-		return fmt.Errorf("source URL must not be empty")
+		return errors.New("source URL must not be empty")
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {

@@ -67,12 +67,12 @@ func SetRuntimeDetailsProvider() {
 // information as a newline-joined string. It is the provider handed to loginjector.
 func runtimeDetails() string {
 	details := []string{
-		fmt.Sprintf("Go version: %s", runtime.Version()),
-		fmt.Sprintf("GOOS: %s", runtime.GOOS),
-		fmt.Sprintf("GOARCH: %s", runtime.GOARCH),
+		"Go version: " + runtime.Version(),
+		"GOOS: " + runtime.GOOS,
+		"GOARCH: " + runtime.GOARCH,
 		fmt.Sprintf("NumCPU: %d", runtime.NumCPU()),
 		fmt.Sprintf("GOMAXPROCS: %d", runtime.GOMAXPROCS(0)),
-		fmt.Sprintf("Compiler: %s", runtime.Compiler),
+		"Compiler: " + runtime.Compiler,
 		fmt.Sprintf("PID: %d", os.Getpid()),
 		fmt.Sprintf("PPID: %d", os.Getppid()),
 	}

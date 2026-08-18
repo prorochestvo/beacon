@@ -289,7 +289,7 @@ func TestPublicSubscriptionsPage_SetPeriod(t *testing.T) {
 	t.Run("each AllowedChartPeriods value is accepted", func(t *testing.T) {
 		t.Parallel()
 		for _, period := range application.AllowedChartPeriods {
-			period := period
+
 			t.Run("", func(t *testing.T) {
 				t.Parallel()
 				pairs := samplePublicPairs()

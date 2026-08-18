@@ -58,7 +58,7 @@ func (c *openAIClient) Name() string {
 }
 
 func (c *openAIClient) Model() string {
-	return string(c.model)
+	return c.model
 }
 
 // CheckUP verifies the OpenAI API is reachable and credentials are valid by
@@ -126,7 +126,7 @@ func newOpenAIClient(dns dsninjector.DataSource, logger io.Writer, proxyURL stri
 		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
-	model := shared.ChatModel(openaisdk.ChatModelGPT4o)
+	model := openaisdk.ChatModelGPT4o
 	if v := dns.Option("model"); v != "" {
 		found := false
 		for _, m := range OpenAIModels {
@@ -141,7 +141,7 @@ func newOpenAIClient(dns dsninjector.DataSource, logger io.Writer, proxyURL stri
 				loginjector.NewTraceError(),
 			)
 		}
-		model = shared.ChatModel(v)
+		model = v
 	}
 
 	timeout, err := parseDSNTimeout(dns)

@@ -505,7 +505,7 @@ func buildSeriesRow(p ratepair.Pair, vals []domain.RateValue, since, now time.Ti
 
 	var prev float64
 	var points []SparkPoint
-	for i := 0; i < bucketCount; i++ {
+	for i := range bucketCount {
 		bucketTime := effectiveSince.Add(time.Duration(i+1) * step)
 		if bucketFilled[i] {
 			prev = bucketVal[i]

@@ -111,7 +111,7 @@ func buildRows(alerts []alert) []tableRow {
 		}
 		if a.Delta != 0 && a.Delta != a.CurrentPrice {
 			if a.Delta > 0 {
-				row.delta = fmt.Sprintf("+%s", labelfmt.GroupThousands(a.Delta))
+				row.delta = "+" + labelfmt.GroupThousands(a.Delta)
 				row.arrow = arrowUp
 			} else {
 				row.delta = fmt.Sprintf("%s%s", minusSign, labelfmt.GroupThousands(-a.Delta))

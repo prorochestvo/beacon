@@ -278,7 +278,7 @@ func validateNavigableURL(rawURL string) error {
 		// Reject userinfo so credentials in `rate_sources.url` never reach the
 		// navigate call or the error/log message that quotes the URL on failure.
 		if u.User != nil {
-			return fmt.Errorf("URL must not contain userinfo (credentials in URLs are not allowed)")
+			return errors.New("URL must not contain userinfo (credentials in URLs are not allowed)")
 		}
 		return nil
 	default:

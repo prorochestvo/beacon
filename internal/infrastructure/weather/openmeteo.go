@@ -11,6 +11,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	_ "time/tzdata" // embed IANA tzdata so LoadLocation works without system tzdata (WASM, containers)
@@ -100,7 +101,7 @@ func (o *OpenMeteo) Geocode(ctx context.Context, name string, count int) ([]GeoR
 	}
 	q := u.Query()
 	q.Set("name", name)
-	q.Set("count", fmt.Sprintf("%d", count))
+	q.Set("count", strconv.Itoa(count))
 	q.Set("language", "ru")
 	u.RawQuery = q.Encode()
 
@@ -349,7 +350,7 @@ func (e retryableError) Unwrap() error { return e.err }
 // and the collector (at fetch time) so that observations and subscriptions line up.
 func LocationKey(geo GeoResult) string {
 	if geo.ID != 0 {
-		return fmt.Sprintf("%d", geo.ID)
+		return strconv.FormatInt(geo.ID, 10)
 	}
 	return fmt.Sprintf("%.4f,%.4f", geo.Latitude, geo.Longitude)
 }

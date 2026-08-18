@@ -286,7 +286,7 @@ func TestRateRepository_ObtainLastNRateValuesBySourceName(t *testing.T) {
 
 		now := time.Now().UTC()
 
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			rate := &domain.RateValue{SourceName: "many-source", BaseCurrency: "USD", QuoteCurrency: "KZT", Price: float64(100 + i), Timestamp: now.Add(time.Duration(i+1) * time.Minute)}
 			require.NoError(t, r.RetainRateValue(t.Context(), rate))
 		}

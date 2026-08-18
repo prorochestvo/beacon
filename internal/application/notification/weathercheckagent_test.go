@@ -768,10 +768,10 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 			city := baseCity
 			city.AlertLatched = latched
 			city.LastNotifiedAt = lastNotified
-			min := tempMin
+			lower := tempMin
 			obs := &domain.WeatherObservation{
 				Provider: domain.ProviderOpenMeteo, LocationID: "loc-jitter",
-				TempMin: &min, ForecastDate: forecastDate,
+				TempMin: &lower, ForecastDate: forecastDate,
 			}
 			cityRepo := &mockWeatherCheckCityRepo{citiesByKind: map[domain.WeatherNotifyKind][]domain.WeatherUserCity{
 				domain.WeatherNotifyAlertFrost: {city},
@@ -827,10 +827,10 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 			city := baseCity
 			city.AlertLatched = latched
 			city.LastNotifiedAt = lastNotified
-			min := tempMin
+			lower := tempMin
 			obs := &domain.WeatherObservation{
 				Provider: domain.ProviderOpenMeteo, LocationID: "loc-newday",
-				TempMin: &min, ForecastDate: forecastDate,
+				TempMin: &lower, ForecastDate: forecastDate,
 			}
 			cityRepo := &mockWeatherCheckCityRepo{citiesByKind: map[domain.WeatherNotifyKind][]domain.WeatherUserCity{
 				domain.WeatherNotifyAlertFrost: {city},

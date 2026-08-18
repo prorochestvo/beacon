@@ -133,7 +133,7 @@ func NewHandler(cfg Config) (*Handler, error) {
 // Registered at both GET /ping and GET /healthz (backward-compatibility alias).
 //
 // GET /ping
-// GET /healthz
+// GET /healthz.
 func (h *Handler) Ping(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -146,7 +146,7 @@ func (h *Handler) Ping(w http.ResponseWriter, _ *http.Request) {
 // component so operators can see which one failed). No auth; for deploy gates and
 // uptime monitors.
 //
-// GET /health/check
+// GET /health/check.
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	if h.healthAgent == nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -1317,7 +1317,7 @@ func extractOffset(r *http.Request) (int64, error) {
 func extractName(r *http.Request) (string, error) {
 	v := r.PathValue("name")
 	if v == "" {
-		return "", fmt.Errorf("missing path param: name")
+		return "", errors.New("missing path param: name")
 	}
 	return v, nil
 }

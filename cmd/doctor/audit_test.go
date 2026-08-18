@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -176,7 +177,7 @@ func TestRunAudit(t *testing.T) {
 		// maps to failures > 0 → exit 1.
 		fetcher := &stubFetcher{
 			errs: map[string]error{
-				"https://example.com/": fmt.Errorf("connection refused"),
+				"https://example.com/": errors.New("connection refused"),
 			},
 		}
 		auditor := &sourceaudit.Auditor{Fetcher: fetcher}
@@ -204,7 +205,7 @@ func TestRunAudit(t *testing.T) {
 
 		fetcher := &stubFetcher{
 			errs: map[string]error{
-				"https://example.com/": fmt.Errorf("connection refused"),
+				"https://example.com/": errors.New("connection refused"),
 			},
 		}
 
