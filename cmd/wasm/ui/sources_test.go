@@ -1,7 +1,6 @@
 package ui_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -167,7 +166,7 @@ func TestRenderSourcesTable(t *testing.T) {
 		t.Parallel()
 		html := ui.RenderSourcesTable(makeState(nil))
 		for _, hdr := range []string{"Title", "Pair", "Interval", "Last Run", "Status", "Active"} {
-			assert.True(t, strings.Contains(html, hdr), "expected header %q in table", hdr)
+			assert.Contains(t, html, hdr, "expected header %q in table", hdr)
 		}
 	})
 

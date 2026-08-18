@@ -163,7 +163,7 @@ func TestWeatherUserCity_AlertThreshold(t *testing.T) {
 		c := &WeatherUserCity{NotifyKind: WeatherNotifyAlertHeat, ConditionValue: "35"}
 		v, err := c.AlertThreshold()
 		require.NoError(t, err)
-		assert.Equal(t, 35.0, v)
+		assert.InDelta(t, 35.0, v, 0.001)
 	})
 
 	t.Run("alert_thunderstorm has no numeric threshold", func(t *testing.T) {
@@ -363,11 +363,11 @@ func TestWeatherUserCity_EvaluateAlert(t *testing.T) {
 	t.Run("thaw fires on TempMax > 0 alone, even if it never froze (warm-side-only latch model)", func(t *testing.T) {
 		t.Parallel()
 		// Deviation from the pre-latch behaviour: thaw used to require TempMin ≤ 0 (a
-		// crossing) as well as TempMax > 0. Under the finalised edge-trigger model
-		// (plans/262-weather-alert-edge-trigger-hysteresis.md), thaw is a warm-side kind
-		// keyed on TempMax exclusively — the same axis alert_heat uses — so that
-		// re-arming (TempMax ≤ 0) is well-defined without a TempMin dead-band. The
-		// approved 7-day acceptance trace (day 5) requires this: TempMin=+2 must NOT
+		// crossing) as well as TempMax > 0. It is now a warm-side kind keyed on
+		// TempMax exclusively — the same axis alert_heat uses — because re-arming
+		// (TempMax ≤ 0) is only well-defined without a TempMin dead-band: with one,
+		// a day that is warm by afternoon and cold by night both fires and re-arms,
+		// and the alert repeats every day of a thaw. TempMin=+2 must therefore NOT
 		// re-arm thaw while TempMax stays positive.
 		c := &WeatherUserCity{ID: "c1", NotifyKind: WeatherNotifyAlertThaw}
 		obs := WeatherObservation{TempMin: ptr64(1), TempMax: ptr64(8)}

@@ -121,7 +121,7 @@ func TestMeWeatherCitiesPage_LoadCities(t *testing.T) {
 		assert.Equal(t, "c1", st.Cities[0].ID)
 		assert.Equal(t, "Almaty", st.Cities[0].DisplayName)
 		assert.False(t, st.AuthFailure)
-		assert.Nil(t, st.LoadError)
+		assert.NoError(t, st.LoadError)
 	})
 
 	t.Run("empty list returns non-nil slice", func(t *testing.T) {
@@ -154,7 +154,7 @@ func TestMeWeatherCitiesPage_LoadCities(t *testing.T) {
 		require.Error(t, err)
 		st := page.State()
 		assert.True(t, st.AuthFailure)
-		assert.NotNil(t, st.LoadError)
+		assert.Error(t, st.LoadError)
 	})
 
 	t.Run("network error does not set AuthFailure", func(t *testing.T) {
@@ -192,7 +192,7 @@ func TestMeWeatherCitiesPage_SearchCities(t *testing.T) {
 
 		st := page.State()
 		assert.Nil(t, st.SearchResults)
-		assert.Nil(t, st.SearchError)
+		assert.NoError(t, st.SearchError)
 	})
 
 	t.Run("whitespace-only query clears results without an API call", func(t *testing.T) {
@@ -267,7 +267,7 @@ func TestMeWeatherCitiesPage_SearchCities(t *testing.T) {
 
 		require.Error(t, err)
 		st := page.State()
-		assert.NotNil(t, st.SearchError)
+		require.Error(t, st.SearchError)
 		assert.False(t, st.AuthFailure)
 	})
 }
@@ -372,7 +372,7 @@ func TestMeWeatherCitiesPage_SaveSelected(t *testing.T) {
 
 		err := page.SaveSelected(context.Background())
 		require.Error(t, err)
-		assert.NotNil(t, page.State().SaveError)
+		assert.Error(t, page.State().SaveError)
 	})
 
 	t.Run("create 401 sets AuthFailure", func(t *testing.T) {
@@ -512,7 +512,7 @@ func TestMeWeatherCitiesPage_OpenAlertForm(t *testing.T) {
 		assert.Equal(t, "loc1", st.AlertFormLocationID)
 		assert.Equal(t, "alert_heat", st.AlertFormKind)
 		assert.Empty(t, st.AlertFormValue)
-		assert.Nil(t, st.AlertSaveError)
+		assert.NoError(t, st.AlertSaveError)
 	})
 
 	t.Run("SetAlertFormKind updates kind", func(t *testing.T) {
@@ -542,7 +542,7 @@ func TestMeWeatherCitiesPage_OpenAlertForm(t *testing.T) {
 		assert.Empty(t, st.AlertFormLocationID)
 		assert.Empty(t, st.AlertFormKind)
 		assert.Empty(t, st.AlertFormValue)
-		assert.Nil(t, st.AlertSaveError)
+		assert.NoError(t, st.AlertSaveError)
 	})
 }
 
@@ -622,7 +622,7 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 
 		st := page.State()
 		assert.Empty(t, st.AlertFormLocationID, "form must be closed on success")
-		assert.Nil(t, st.AlertSaveError)
+		require.NoError(t, st.AlertSaveError)
 		assert.Len(t, st.Cities, 2, "list must be reloaded after save")
 	})
 
@@ -646,7 +646,7 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 
 		st := page.State()
 		assert.NotEmpty(t, st.AlertFormLocationID, "form must stay open on error")
-		assert.NotNil(t, st.AlertSaveError)
+		assert.Error(t, st.AlertSaveError)
 	})
 
 	t.Run("POST 401 sets AuthFailure", func(t *testing.T) {
@@ -684,7 +684,7 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 
 		st := page.State()
 		assert.Empty(t, st.AlertFormLocationID, "form must be closed on success")
-		assert.Nil(t, st.AlertSaveError)
+		assert.NoError(t, st.AlertSaveError)
 	})
 
 	t.Run("morning_summary routes the value to NotifyHour, not ConditionValue", func(t *testing.T) {
@@ -747,7 +747,7 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 
 		st := page.State()
 		assert.NotEmpty(t, st.AlertFormLocationID, "form must stay open on a client-side validation error")
-		assert.NotNil(t, st.AlertSaveError)
+		require.Error(t, st.AlertSaveError)
 		assert.Nil(t, f.lastPostBody, "no POST must be made when the hour is invalid")
 	})
 }
@@ -774,7 +774,7 @@ func TestMeWeatherCitiesPage_ClearSearch(t *testing.T) {
 		assert.Empty(t, st.SearchQuery)
 		assert.Nil(t, st.SearchResults)
 		assert.Nil(t, st.Selected)
-		assert.Nil(t, st.SearchError)
-		assert.Nil(t, st.SaveError)
+		assert.NoError(t, st.SearchError)
+		assert.NoError(t, st.SaveError)
 	})
 }

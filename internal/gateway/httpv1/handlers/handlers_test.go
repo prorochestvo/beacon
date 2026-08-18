@@ -1760,8 +1760,8 @@ func TestGetPublicRatesChart(t *testing.T) {
 		var resp dto.PublicChartResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 		assert.Equal(t, "7 days", resp.Window)
-		assert.EqualValues(t, 1, resp.Page)
-		assert.EqualValues(t, 20, resp.Limit)
+		assert.Equal(t, 1, resp.Page)
+		assert.Equal(t, 20, resp.Limit)
 		assert.EqualValues(t, 2, resp.Total)
 		assert.Len(t, resp.Pairs, 2)
 	})
@@ -1782,7 +1782,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp dto.PublicChartResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
-		assert.EqualValues(t, 2, resp.Page)
+		assert.Equal(t, 2, resp.Page)
 	})
 
 	t.Run("limit cap clamps to 100", func(t *testing.T) {
@@ -1798,7 +1798,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp dto.PublicChartResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
-		assert.EqualValues(t, 100, resp.Limit)
+		assert.Equal(t, 100, resp.Limit)
 	})
 
 	t.Run("non-integer limit returns 400", func(t *testing.T) {
@@ -1843,7 +1843,7 @@ func TestGetPublicRatesChart(t *testing.T) {
 
 		require.Equal(t, http.StatusInternalServerError, rr.Code)
 		const errFallbackMessage = `{"error":"internal error"}` + "\n"
-		assert.Equal(t, errFallbackMessage, rr.Body.String())
+		assert.JSONEq(t, errFallbackMessage, rr.Body.String())
 	})
 
 	t.Run("effective_days round-trips through GetPublicRatesChart", func(t *testing.T) {
@@ -1930,7 +1930,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		assert.EqualValues(t, 1, resp.Total)
 		require.Len(t, resp.Items, 1)
 		require.NotNil(t, resp.Items[0].Bid)
-		assert.Equal(t, 490.0, *resp.Items[0].Bid)
+		assert.InDelta(t, 490.0, *resp.Items[0].Bid, 0.001)
 	})
 
 	t.Run("200 OK with empty items when no subscription matches", func(t *testing.T) {
@@ -2047,7 +2047,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		require.Equal(t, http.StatusOK, rr.Code)
 		var resp dto.MeHistoryResponse
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
-		assert.EqualValues(t, 1, resp.Page)
+		assert.Equal(t, 1, resp.Page)
 	})
 
 	t.Run("X-Telegram-Init-Data is not echoed in any log line", func(t *testing.T) {
@@ -2097,7 +2097,7 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		h.GetMeRatesHistory(rr, withCaller(req, 42))
 
 		require.Equal(t, http.StatusOK, rr.Code)
-		assert.Equal(t, "", svc.received.sourceTitle)
+		assert.Empty(t, svc.received.sourceTitle)
 	})
 
 	t.Run("trims whitespace around source_title", func(t *testing.T) {
@@ -2136,9 +2136,9 @@ func TestHandler_GetMeRatesHistory(t *testing.T) {
 		require.NoError(t, json.Unmarshal(bodyBytes, &resp))
 		require.Len(t, resp.Items, 1)
 		require.NotNil(t, resp.Items[0].Last, "Last must be set for equity row")
-		assert.Equal(t, 221.50, *resp.Items[0].Last)
+		assert.InDelta(t, 221.50, *resp.Items[0].Last, 0.001)
 		require.NotNil(t, resp.Items[0].LastDeltaPct, "LastDeltaPct must be set for equity row")
-		assert.Equal(t, 1.25, *resp.Items[0].LastDeltaPct)
+		assert.InDelta(t, 1.25, *resp.Items[0].LastDeltaPct, 0.001)
 		assert.Nil(t, resp.Items[0].Bid, "Bid must be nil for equity row")
 		assert.Nil(t, resp.Items[0].Ask, "Ask must be nil for equity row")
 	})

@@ -399,7 +399,7 @@ func TestRateCheckAgent_Run(t *testing.T) {
 
 		require.Len(t, subRepo.retained, 3, "all three subscriptions must be retained")
 		for _, s := range subRepo.retained {
-			require.Equal(t, currentPrice, s.LatestNotifiedRate, "LatestNotifiedRate must advance for every retained sub")
+			require.InDelta(t, currentPrice, s.LatestNotifiedRate, 0.001, "LatestNotifiedRate must advance for every retained sub")
 		}
 	})
 
@@ -692,7 +692,7 @@ func TestRateCheckAgent_Run(t *testing.T) {
 
 		// Subscription LatestNotifiedRate must advance to the current price.
 		require.Len(t, subRepo.retained, 1)
-		require.Equal(t, newPrice, subRepo.retained[0].LatestNotifiedRate,
+		require.InDelta(t, newPrice, subRepo.retained[0].LatestNotifiedRate, 0.001,
 			"LatestNotifiedRate must advance to current price after LAST fire")
 
 		// Second Run at the same price — delta=0, threshold=0, LatestNotifiedRate==price → no fire.

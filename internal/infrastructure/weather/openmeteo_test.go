@@ -496,9 +496,9 @@ func TestOpenMeteo_Retry(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			if hits.Add(1) == 1 {
 				hijacker, ok := w.(http.Hijacker)
-				require.True(t, ok)
+				assert.True(t, ok)
 				conn, _, hijackErr := hijacker.Hijack()
-				require.NoError(t, hijackErr)
+				assert.NoError(t, hijackErr)
 				_ = conn.Close()
 				return
 			}

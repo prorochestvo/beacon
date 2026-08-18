@@ -382,7 +382,7 @@ func TestBuildAlertMessage(t *testing.T) {
 		require.Equal(t, 1, strings.Count(msgs[0], "</pre>"), "exactly one </pre> close tag")
 		preIdx := strings.Index(msgs[0], "<pre>")
 		postIdx := strings.Index(msgs[0], "</pre>")
-		require.True(t, preIdx < postIdx, "<pre> must precede </pre>")
+		require.Less(t, preIdx, postIdx, "<pre> must precede </pre>")
 	})
 
 	t.Run("splitting forces multiple parts each with balanced pre", func(t *testing.T) {
@@ -417,7 +417,7 @@ func TestBuildAlertMessage(t *testing.T) {
 			// Each part must have exactly one balanced <pre>…</pre>.
 			require.Equal(t, 1, strings.Count(msg, "<pre>"))
 			require.Equal(t, 1, strings.Count(msg, "</pre>"))
-			require.True(t, strings.Index(msg, "<pre>") < strings.Index(msg, "</pre>"))
+			require.Less(t, strings.Index(msg, "<pre>"), strings.Index(msg, "</pre>"))
 
 			// Collect pair strings to verify each row appears exactly once.
 			preStart := strings.Index(msg, "<pre>\n") + len("<pre>\n")
@@ -484,7 +484,7 @@ func TestReasonHashtags(t *testing.T) {
 	})
 	t.Run("empty input", func(t *testing.T) {
 		t.Parallel()
-		require.Equal(t, "", reasonHashtags(nil))
-		require.Equal(t, "", reasonHashtags([]alert{{}}))
+		require.Empty(t, reasonHashtags(nil))
+		require.Empty(t, reasonHashtags([]alert{{}}))
 	})
 }

@@ -172,7 +172,7 @@ func TestSourceDetailPage_LoadSubsPage(t *testing.T) {
 		state := p.State()
 		assert.Equal(t, 1, state.SubsPage)
 		assert.Len(t, state.Subs, application.SubsLimit)
-		assert.False(t, state.SubsPage > 1, "page 1: prev must be disabled")
+		assert.LessOrEqual(t, state.SubsPage, 1, "page 1: prev must be disabled")
 	})
 
 	t.Run("last page next disabled - count less than limit", func(t *testing.T) {
@@ -238,7 +238,7 @@ func TestSourceDetailPage_LoadDailyEventsPage(t *testing.T) {
 		p := newDetailPage("src", nil, nil, f)
 		require.NoError(t, p.LoadDailyEventsPage(context.Background(), 1))
 		state := p.State()
-		assert.False(t, state.DailyEventsPage > 1, "page 1: prev must be disabled")
+		assert.LessOrEqual(t, state.DailyEventsPage, 1, "page 1: prev must be disabled")
 		assert.Len(t, state.DailyEvents, application.DailyEventsLimit)
 	})
 

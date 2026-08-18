@@ -121,7 +121,7 @@ func TestMeSubscriptionsEditPage_LoadInitial(t *testing.T) {
 		require.Len(t, st.Sources, 1, "inactive source must be filtered out")
 		assert.Equal(t, "src_a", st.Sources[0].Name)
 		assert.False(t, st.AuthFailure)
-		assert.Nil(t, st.LoadError)
+		assert.NoError(t, st.LoadError)
 	})
 
 	t.Run("empty subscriptions returns non-nil slice", func(t *testing.T) {
@@ -155,7 +155,7 @@ func TestMeSubscriptionsEditPage_LoadInitial(t *testing.T) {
 
 		st := page.State()
 		assert.True(t, st.AuthFailure)
-		assert.NotNil(t, st.LoadError)
+		assert.Error(t, st.LoadError)
 	})
 
 	t.Run("sources failure propagates as error", func(t *testing.T) {
@@ -190,7 +190,7 @@ func TestMeSubscriptionsEditPage_SetDraftSource(t *testing.T) {
 
 		st := page.State()
 		assert.Equal(t, "src_x", st.Draft.SourceName)
-		assert.Nil(t, st.FormError)
+		assert.NoError(t, st.FormError)
 	})
 }
 
@@ -205,7 +205,7 @@ func TestMeSubscriptionsEditPage_SetDraftConditionType(t *testing.T) {
 
 		st := page.State()
 		assert.Equal(t, "interval", st.Draft.ConditionType)
-		assert.Nil(t, st.FormError)
+		assert.NoError(t, st.FormError)
 	})
 }
 
@@ -220,7 +220,7 @@ func TestMeSubscriptionsEditPage_SetDraftConditionValue(t *testing.T) {
 
 		st := page.State()
 		assert.Equal(t, "1h", st.Draft.ConditionValue)
-		assert.Nil(t, st.FormError)
+		assert.NoError(t, st.FormError)
 	})
 }
 
@@ -237,7 +237,7 @@ func TestMeSubscriptionsEditPage_OpenProviderPicker(t *testing.T) {
 
 		st := page.State()
 		assert.True(t, st.ProviderPickerOpen)
-		assert.Equal(t, "", st.ProviderQuery)
+		assert.Empty(t, st.ProviderQuery)
 		assert.Equal(t, 1, st.ProviderPage)
 	})
 
@@ -307,7 +307,7 @@ func TestMeSubscriptionsEditPage_ChooseProvider(t *testing.T) {
 		assert.False(t, st.ProviderPickerOpen)
 		assert.True(t, st.PairPickerOpen)
 		assert.Equal(t, 1, st.PairPage)
-		assert.Equal(t, "", st.PairQuery)
+		assert.Empty(t, st.PairQuery)
 	})
 
 	t.Run("clears a previously chosen pair when provider changes", func(t *testing.T) {
@@ -330,7 +330,7 @@ func TestMeSubscriptionsEditPage_ChooseProvider(t *testing.T) {
 
 		st := page.State()
 		assert.Equal(t, "Bravo", st.SelectedProviderTitle)
-		assert.Equal(t, "", st.Draft.SourceName)
+		assert.Empty(t, st.Draft.SourceName)
 		assert.Nil(t, st.PairDirections)
 	})
 }
@@ -389,7 +389,7 @@ func TestMeSubscriptionsEditPage_ChoosePair(t *testing.T) {
 		assert.Equal(t, "src_a", st.Draft.SourceName)
 		assert.Len(t, st.PairDirections, 1)
 		assert.False(t, st.PairPickerOpen)
-		assert.Nil(t, st.FormError)
+		assert.NoError(t, st.FormError)
 	})
 
 	t.Run("BID/ASK pair leaves SourceName empty and seeds two directions", func(t *testing.T) {
@@ -403,7 +403,7 @@ func TestMeSubscriptionsEditPage_ChoosePair(t *testing.T) {
 		page.ChoosePair("KZ_BANK_ASK_USD_KZT")
 
 		st := page.State()
-		assert.Equal(t, "", st.Draft.SourceName, "ambiguous pair must not auto-pick a direction")
+		assert.Empty(t, st.Draft.SourceName, "ambiguous pair must not auto-pick a direction")
 		require.Len(t, st.PairDirections, 2)
 		// Sorted ASC by SourceName so ASK lands first under our naming scheme.
 		assert.Equal(t, "ASK", st.PairDirections[0].Label)
@@ -444,7 +444,7 @@ func TestMeSubscriptionsEditPage_ChoosePair(t *testing.T) {
 		st := page.State()
 		require.Len(t, st.PairDirections, 1,
 			"single LAST source must yield exactly one PairDirection")
-		assert.Equal(t, "", st.PairDirections[0].Label,
+		assert.Empty(t, st.PairDirections[0].Label,
 			"single-direction pair must have empty Label so no direction radio renders")
 		assert.Equal(t, "US_YAHOO_LAST_AAPL_USD", st.Draft.SourceName,
 			"single-direction auto-selects the source name")
@@ -485,7 +485,7 @@ func TestMeSubscriptionsEditPage_SetDraftDirection(t *testing.T) {
 
 		page := loaded(t)
 		page.SetDraftDirection("not-in-list")
-		assert.Equal(t, "", page.State().Draft.SourceName)
+		assert.Empty(t, page.State().Draft.SourceName)
 	})
 }
 
@@ -522,13 +522,13 @@ func TestMeSubscriptionsEditPage_ClearDraft(t *testing.T) {
 		page.ClearDraft()
 
 		st := page.State()
-		assert.Equal(t, "", st.Draft.SourceName)
-		assert.Equal(t, "", st.Draft.ConditionType)
-		assert.Equal(t, "", st.Draft.ConditionValue)
-		assert.Equal(t, "", st.SelectedProviderTitle)
+		assert.Empty(t, st.Draft.SourceName)
+		assert.Empty(t, st.Draft.ConditionType)
+		assert.Empty(t, st.Draft.ConditionValue)
+		assert.Empty(t, st.SelectedProviderTitle)
 		assert.False(t, st.ProviderPickerOpen)
 		assert.False(t, st.PairPickerOpen)
-		assert.Equal(t, "", st.ProviderQuery)
+		assert.Empty(t, st.ProviderQuery)
 		assert.Equal(t, 0, st.ProviderPage)
 		assert.Nil(t, st.PairDirections)
 	})
@@ -569,7 +569,7 @@ func TestMeSubscriptionsEditPage_SaveDraft(t *testing.T) {
 		require.NoError(t, err)
 
 		st := page.State()
-		assert.Nil(t, st.FormError)
+		require.NoError(t, st.FormError)
 		// Items should be reloaded:
 		require.Len(t, st.Items, 1)
 	})
@@ -586,7 +586,7 @@ func TestMeSubscriptionsEditPage_SaveDraft(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "source is required")
 		st := page.State()
-		assert.NotNil(t, st.FormError)
+		assert.Error(t, st.FormError)
 	})
 
 	t.Run("client-side validation rejects invalid delta value", func(t *testing.T) {
@@ -668,7 +668,7 @@ func TestMeSubscriptionsEditPage_SaveDraft(t *testing.T) {
 
 		st := page.State()
 		assert.True(t, st.AuthFailure)
-		assert.NotNil(t, st.FormError)
+		assert.Error(t, st.FormError)
 	})
 }
 

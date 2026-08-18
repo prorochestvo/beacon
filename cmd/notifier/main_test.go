@@ -15,6 +15,8 @@ import (
 //
 // not t.Parallel() — initFlags mutates the package-level LogsDir and LogVerbosity,
 // and the subtests swap the flag pointers those read from.
+//
+//nolint:paralleltest // deliberately serial; the reason is stated directly above
 func TestInitFlags(t *testing.T) {
 	origDir, origVerbosity := LogsDir, LogVerbosity
 	origFlagDir, origFlagVerbosity := flagLogsDir, flagVerbosity

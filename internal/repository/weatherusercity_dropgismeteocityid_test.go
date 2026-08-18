@@ -2,7 +2,6 @@ package repository
 
 import (
 	"database/sql"
-	"errors"
 	"testing"
 	"time"
 
@@ -163,8 +162,9 @@ func indexNames(t *testing.T, sqlDB db, table string) []string {
 // TestWeatherGismeteoRemovalMigrations verifies migrations 202607.022-025 against
 // a production-shaped fixture (rows in weather_user_cities and weather_observations,
 // plus the seeded weather_sources / weather_gismeteo_cities rows from migrations
-// 016/017) — the highest-risk task in plans/264-remove-gismeteo.md: a wrong or
-// missing column in 025's rebuild silently drops live user subscriptions.
+// 016/017). 025 rebuilds the table rather than altering it, and a column missed or
+// mistyped in the rebuild drops live user subscriptions without erroring — which is
+// why this fixture is production-shaped rather than minimal.
 //
 // Each subtest builds its DB via stubSQLiteDBThrough(t, backfillAlertThawFilename)
 // (schema frozen right after 021, still carrying weather_sources /
@@ -222,7 +222,7 @@ func TestWeatherGismeteoRemovalMigrations(t *testing.T) {
 		morning, err := repo.ObtainWeatherUserCityByID(t.Context(), "WUCFIX001")
 		require.NoError(t, err)
 		assert.Equal(t, domain.WeatherNotifyMorningSummary, morning.NotifyKind)
-		assert.Equal(t, "", morning.ConditionValue)
+		assert.Empty(t, morning.ConditionValue)
 		assert.False(t, morning.AlertLatched)
 		assert.True(t, morning.LastNotifiedAt.IsZero())
 		assert.Equal(t, "2026-07-01T06:00:00Z", morning.UpdatedAt.Format(time.RFC3339))
@@ -254,7 +254,7 @@ func TestWeatherGismeteoRemovalMigrations(t *testing.T) {
 		require.NoError(t, err)
 
 		_, err = obsRepo.ObtainLatestObservation(t.Context(), "locA", "gismeteo")
-		require.True(t, errors.Is(err, internal.ErrNotFound), "the gismeteo row must be deleted by migration 022")
+		require.ErrorIs(t, err, internal.ErrNotFound, "the gismeteo row must be deleted by migration 022")
 
 		got, err := obsRepo.ObtainLatestObservation(t.Context(), "locA", domain.ProviderOpenMeteo)
 		require.NoError(t, err)

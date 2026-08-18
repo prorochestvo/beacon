@@ -225,7 +225,7 @@ func TestService_ObtainMeChart(t *testing.T) {
 		assert.Equal(t, ratepair.ColorBid, sr.Color)
 		assert.False(t, sr.Sparse)
 		assert.InDelta(t, 25.0, sr.DeltaPct, 0.001, "delta should be (500-400)/400*100=25%%")
-		assert.Equal(t, 500.0, sr.Latest)
+		assert.InDelta(t, 500.0, sr.Latest, 0.001)
 		assert.NotEmpty(t, sr.Points)
 	})
 
@@ -349,8 +349,8 @@ func TestService_ObtainMeChart(t *testing.T) {
 		require.Len(t, result.Pairs[0].Series, 1)
 		sr := result.Pairs[0].Series[0]
 		assert.True(t, sr.Sparse)
-		assert.Equal(t, 0.0, sr.DeltaPct)
-		assert.Equal(t, 450.0, sr.Latest)
+		assert.InDelta(t, 0.0, sr.DeltaPct, 0.001)
+		assert.InDelta(t, 450.0, sr.Latest, 0.001)
 	})
 
 	t.Run("single pair with zero data in window is no-data series", func(t *testing.T) {
@@ -368,7 +368,7 @@ func TestService_ObtainMeChart(t *testing.T) {
 		require.Len(t, result.Pairs[0].Series, 1)
 		sr := result.Pairs[0].Series[0]
 		assert.True(t, sr.Sparse)
-		assert.Equal(t, 0.0, sr.Latest)
+		assert.InDelta(t, 0.0, sr.Latest, 0.001)
 		assert.Nil(t, sr.Points)
 	})
 
@@ -468,9 +468,9 @@ func TestService_ObtainMeChart(t *testing.T) {
 		assert.False(t, sr.Sparse)
 		assert.Len(t, sr.Points, 12)
 		require.NotEmpty(t, sr.Points)
-		assert.Equal(t, 200.0, sr.Points[0].Value)
+		assert.InDelta(t, 200.0, sr.Points[0].Value, 0.001)
 		for i, pt := range sr.Points {
-			assert.Equal(t, 200.0, pt.Value, "bucket %d must be forward-filled to 200", i)
+			assert.InDelta(t, 200.0, pt.Value, 0.001, "bucket %d must be forward-filled to 200", i)
 		}
 	})
 
@@ -502,9 +502,9 @@ func TestService_ObtainMeChart(t *testing.T) {
 		// Bucket 0 always populated, so all 12 emitted. effectiveSince == ts3;
 		// ts3 lands in bucket 0, ts4 in bucket 1.
 		assert.Len(t, sr.Points, 12, "post-capping invariant: bucket 0 is always populated")
-		assert.Equal(t, 300.0, sr.Points[0].Value, "first bucket must carry the first sample value")
+		assert.InDelta(t, 300.0, sr.Points[0].Value, 0.001, "first bucket must carry the first sample value")
 		lastVal := sr.Points[len(sr.Points)-1].Value
-		assert.Equal(t, 350.0, lastVal, "last bucket must be forward-filled to the second sample value")
+		assert.InDelta(t, 350.0, lastVal, 0.001, "last bucket must be forward-filled to the second sample value")
 	})
 
 	t.Run("multiple pairs are sorted fiat before metal", func(t *testing.T) {

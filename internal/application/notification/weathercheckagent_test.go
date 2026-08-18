@@ -123,7 +123,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		require.Len(t, eventRepo.retained, 1)
 		ev := eventRepo.retained[0]
 		assert.NotEmpty(t, ev.Message, "queued event must have a non-empty message")
-		assert.Equal(t, "", ev.SourceName, "SourceName must be empty so it stores as NULL")
+		assert.Empty(t, ev.SourceName, "SourceName must be empty so it stores as NULL")
 		assert.Equal(t, domain.UserTypeTelegram, ev.UserType)
 		assert.Equal(t, "user1", ev.UserID)
 		// last_notified_at must be advanced

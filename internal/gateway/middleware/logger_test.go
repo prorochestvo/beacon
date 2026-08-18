@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -50,7 +49,7 @@ func TestLogger(t *testing.T) {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/api/echo", nil)
 		h.ServeHTTP(rec, req)
 		require.Contains(t, buf.String(), "middleware [202] PUT /api/echo")
-		require.False(t, strings.Contains(buf.String(), "[500]"),
+		require.NotContains(t, buf.String(), "[500]",
 			"second WriteHeader must be ignored")
 	})
 }

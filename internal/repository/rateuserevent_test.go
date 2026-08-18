@@ -122,7 +122,7 @@ func TestRateUserEventRepository_ObtainLastNRateUserEvents(t *testing.T) {
 		result, err := r.ObtainLastNRateUserEvents(t.Context(), 0, 10)
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		require.Len(t, result, 0)
+		require.Empty(t, result)
 	})
 
 	t.Run("rows are ordered oldest first", func(t *testing.T) {
@@ -194,7 +194,7 @@ func TestRateUserEventRepository_ObtainUnprocessedRateUserEvents(t *testing.T) {
 
 		result, err := r.ObtainUnprocessedRateUserEvents(t.Context())
 		require.NoError(t, err)
-		require.Len(t, result, 0)
+		require.Empty(t, result)
 	})
 
 	t.Run("empty table", func(t *testing.T) {
@@ -206,7 +206,7 @@ func TestRateUserEventRepository_ObtainUnprocessedRateUserEvents(t *testing.T) {
 		result, err := r.ObtainUnprocessedRateUserEvents(t.Context())
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		require.Len(t, result, 0)
+		require.Empty(t, result)
 	})
 
 	t.Run("ordered oldest first", func(t *testing.T) {
@@ -504,7 +504,7 @@ func TestRateUserEventRepository_SourceNameRoundTrip(t *testing.T) {
 		result, err := r.ObtainRateUserEventById(t.Context(), event.ID)
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		require.Equal(t, "", result.SourceName)
+		require.Empty(t, result.SourceName)
 	})
 
 	// Plan 018 Task 6 acceptance criterion: a weather event with an empty SourceName
@@ -532,7 +532,7 @@ func TestRateUserEventRepository_SourceNameRoundTrip(t *testing.T) {
 		var found bool
 		for _, e := range unprocessed {
 			if e.ID == ev.ID {
-				assert.Equal(t, "", e.SourceName, "weather event must have empty SourceName after round-trip")
+				assert.Empty(t, e.SourceName, "weather event must have empty SourceName after round-trip")
 				assert.Equal(t, ev.Message, e.Message)
 				assert.Equal(t, domain.UserTypeTelegram, e.UserType)
 				found = true

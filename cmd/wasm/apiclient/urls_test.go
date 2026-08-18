@@ -151,7 +151,7 @@ func TestMeSubscriptionsURL(t *testing.T) {
 		assert.Equal(t, "/api/v1/me/subscriptions", path)
 		assert.Equal(t, "1", q.Get("page"))
 		assert.Equal(t, "10", q.Get("page_size"))
-		assert.Equal(t, "", q.Get("q"), "q should be absent when empty")
+		assert.Empty(t, q.Get("q"), "q should be absent when empty")
 	})
 
 	t.Run("includes q when non-empty", func(t *testing.T) {
@@ -276,7 +276,7 @@ func TestMeSubscriptionsHeaders(t *testing.T) {
 	t.Run("empty initData produces empty header value", func(t *testing.T) {
 		t.Parallel()
 		h := meSubscriptionsHeaders("")
-		assert.Equal(t, "", h["X-Telegram-Init-Data"])
+		assert.Empty(t, h["X-Telegram-Init-Data"])
 	})
 }
 

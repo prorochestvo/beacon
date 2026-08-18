@@ -104,7 +104,7 @@ func TestWeatherUserCityBackfillAlertThawMigration(t *testing.T) {
 		assert.Equal(t, "Asia/Almaty", thaw.Timezone)
 		assert.Equal(t, "Kazakhstan", thaw.Country)
 		assert.Equal(t, "Almaty", thaw.Admin1)
-		assert.Equal(t, "", thaw.ConditionValue)
+		assert.Empty(t, thaw.ConditionValue)
 		assert.True(t, thaw.AlertLatched, "backfilled rows must seed pre-latched: alert_latched=0 would fire a spurious mass notification on the first post-deploy tick since thaw fires on TempMax > 0, the default warm-season state")
 		assert.True(t, thaw.LastNotifiedAt.IsZero(), "last_notified_at must be NULL (armed)")
 		assert.Equal(t, 7, thaw.NotifyHour)

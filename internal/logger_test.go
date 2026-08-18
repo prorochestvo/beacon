@@ -20,6 +20,8 @@ import (
 // forgotten.
 
 // not t.Parallel(): NewLogger rebinds the global standard logger.
+//
+//nolint:paralleltest // deliberately serial; the reason is stated directly above
 func TestNewLogger_FileTimestamps(t *testing.T) {
 	dir := newLoggerInTempDir(t)
 
@@ -69,6 +71,8 @@ func TestNewLogger_FileTimestamps(t *testing.T) {
 }
 
 // not t.Parallel(): NewLogger rebinds the global standard logger.
+//
+//nolint:paralleltest // deliberately serial; the reason is stated directly above
 func TestNewLogger_BuildLineReachesTheFile(t *testing.T) {
 	dir := newLoggerInTempDir(t)
 
@@ -83,6 +87,8 @@ func TestNewLogger_BuildLineReachesTheFile(t *testing.T) {
 }
 
 // not t.Parallel(): NewLogger rebinds the global standard logger.
+//
+//nolint:paralleltest // deliberately serial; the reason is stated directly above
 func TestNewLogger_MultiLineMessages(t *testing.T) {
 	dir := newLoggerInTempDir(t)
 
@@ -105,6 +111,8 @@ func TestNewLogger_MultiLineMessages(t *testing.T) {
 }
 
 // not t.Parallel(): NewLogger rebinds the global standard logger.
+//
+//nolint:paralleltest // deliberately serial; the reason is stated directly above
 func TestNewLogger_DefaultsAndDirectoryCreation(t *testing.T) {
 	prevFlags := log.Flags()
 	prevOutput := log.Writer()
@@ -134,6 +142,8 @@ func TestNewLogger_DefaultsAndDirectoryCreation(t *testing.T) {
 
 // not t.Parallel(): NewLogger rebinds the global standard logger, and this one
 // additionally swaps os.Stdout to capture the printer hook.
+//
+//nolint:paralleltest // deliberately serial; the reason is stated directly above
 func TestNewLogger_StdoutIsTimestampedOnce(t *testing.T) {
 	prevFlags := log.Flags()
 	prevOutput := log.Writer()

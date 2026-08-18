@@ -186,7 +186,7 @@ func TestRunAudit(t *testing.T) {
 		var out bytes.Buffer
 		failures, err := sourceaudit.WriteReport(&out, results, false)
 		require.NoError(t, err)
-		assert.Greater(t, failures, 0, "expected at least one MISS when fetch fails")
+		assert.Positive(t, failures, "expected at least one MISS when fetch fails")
 	})
 
 	t.Run("fetch failure produces exit code 1 via runAudit", func(t *testing.T) {

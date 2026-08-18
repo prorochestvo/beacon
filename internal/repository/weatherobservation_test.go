@@ -194,7 +194,7 @@ func TestWeatherObservationRepository_ObtainLatestObservation(t *testing.T) {
 
 		got, err := repo.ObtainLatestObservation(t.Context(), "missing", "open-meteo")
 		require.Nil(t, got)
-		require.True(t, errors.Is(err, internal.ErrNotFound))
+		require.ErrorIs(t, err, internal.ErrNotFound)
 	})
 
 	t.Run("returns most recent observation by captured_at", func(t *testing.T) {

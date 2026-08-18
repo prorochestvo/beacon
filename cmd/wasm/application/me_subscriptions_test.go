@@ -229,7 +229,7 @@ func TestMeSubscriptionsPage_ClosePairModal(t *testing.T) {
 		assert.Nil(t, st.HistoryItems)
 		assert.Equal(t, 0, st.HistoryPage)
 		assert.Equal(t, int64(0), st.HistoryTotal)
-		assert.NoError(t, st.HistoryError)
+		require.NoError(t, st.HistoryError)
 		// HistoryLimit must survive the close so re-open reuses the same page size.
 		assert.Equal(t, application.MeHistoryDefaultLimit, st.HistoryLimit)
 	})
@@ -247,7 +247,7 @@ func TestMeSubscriptionsPage_ClosePairModal(t *testing.T) {
 
 		page.ClosePairModal()
 		st := page.State()
-		assert.Equal(t, "", st.SelectedSourceTitle, "SelectedSourceTitle must be empty after ClosePairModal")
+		assert.Empty(t, st.SelectedSourceTitle, "SelectedSourceTitle must be empty after ClosePairModal")
 		assert.Nil(t, st.KnownSources, "KnownSources must be nil after ClosePairModal")
 	})
 }
@@ -281,7 +281,7 @@ func TestMeSubscriptionsPage_LoadSparklineChart(t *testing.T) {
 		page := newMePage(f, "valid-init-data")
 
 		assert.False(t, page.State().ChartLoading)
-		assert.NoError(t, page.State().ChartError)
+		require.NoError(t, page.State().ChartError)
 
 		err := page.LoadSparklineChart(t.Context())
 		require.NoError(t, err)
@@ -303,7 +303,7 @@ func TestMeSubscriptionsPage_LoadSparklineChart(t *testing.T) {
 		st := page.State()
 		assert.False(t, st.ChartLoading, "ChartLoading must be false after failure")
 		require.Error(t, st.ChartError)
-		assert.ErrorContains(t, st.ChartError, "http 503")
+		require.ErrorContains(t, st.ChartError, "http 503")
 		assert.Nil(t, st.Chart, "Chart must remain nil on failure")
 	})
 
@@ -426,7 +426,7 @@ func TestMeSubscriptionsPage_OpenHistory(t *testing.T) {
 		assert.Equal(t, 1, st.HistoryPage)
 		assert.Equal(t, int64(len(items)), st.HistoryTotal)
 		require.Len(t, st.HistoryItems, len(items))
-		assert.NoError(t, st.HistoryError)
+		require.NoError(t, st.HistoryError)
 		assert.False(t, st.HistoryLoading)
 	})
 
@@ -444,7 +444,7 @@ func TestMeSubscriptionsPage_OpenHistory(t *testing.T) {
 		assert.True(t, st.HistoryOpen, "HistoryOpen must stay true even on error")
 		require.NotNil(t, st.OpenPair, "modal must stay open on history fetch error")
 		require.Error(t, st.HistoryError)
-		assert.ErrorContains(t, st.HistoryError, "http 500")
+		require.ErrorContains(t, st.HistoryError, "http 500")
 		assert.False(t, st.HistoryLoading)
 	})
 
@@ -499,7 +499,7 @@ func TestMeSubscriptionsPage_OpenHistory(t *testing.T) {
 		f.urlResponses["/api/v1/me/rates/history"] = secondBody
 		require.NoError(t, page.OpenHistory(t.Context()))
 		st := page.State()
-		assert.Equal(t, "", st.SelectedSourceTitle, "SelectedSourceTitle must be cleared on OpenHistory")
+		assert.Empty(t, st.SelectedSourceTitle, "SelectedSourceTitle must be cleared on OpenHistory")
 		assert.NotContains(t, st.KnownSources, "Halyk Bank", "Halyk Bank must not be in KnownSources after reset (was not in second fetch)")
 		assert.Contains(t, st.KnownSources, "Kaspi", "Kaspi must be present (it was in the second fetch)")
 	})
@@ -553,7 +553,7 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 		assert.Equal(t, 2, st.HistoryPage)
 		assert.Equal(t, int64(42), st.HistoryTotal)
 		require.Len(t, st.HistoryItems, len(items))
-		assert.NoError(t, st.HistoryError)
+		require.NoError(t, st.HistoryError)
 		assert.False(t, st.HistoryLoading)
 	})
 
@@ -569,7 +569,7 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 
 		st := page.State()
 		require.Error(t, st.HistoryError)
-		assert.ErrorContains(t, st.HistoryError, "http 502")
+		require.ErrorContains(t, st.HistoryError, "http 502")
 		assert.False(t, st.HistoryLoading, "HistoryLoading must be false after fetch")
 	})
 
@@ -582,7 +582,7 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 		page.OpenPairModal("USD/KZT")
 		err := page.LoadHistory(t.Context(), 1)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, context.Canceled)
+		require.ErrorIs(t, err, context.Canceled)
 		assert.False(t, page.State().HistoryLoading)
 	})
 
@@ -667,7 +667,7 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 		require.Error(t, err)
 
 		st := page.State()
-		assert.Equal(t, "", st.SelectedSourceTitle, "SelectedSourceTitle must be cleared on 401")
+		assert.Empty(t, st.SelectedSourceTitle, "SelectedSourceTitle must be cleared on 401")
 		assert.Nil(t, st.KnownSources, "KnownSources must be nil on 401")
 	})
 
@@ -755,7 +755,7 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 		// The stale guard must have dropped the "Kaspi" response because
 		// SelectedSourceTitle changed to "" while the fetch was in flight.
 		st := page2.State()
-		assert.Equal(t, "", st.SelectedSourceTitle)
+		assert.Empty(t, st.SelectedSourceTitle)
 		assert.Empty(t, st.HistoryItems, "stale items from Kaspi must not overwrite the empty state from OpenHistory")
 	})
 

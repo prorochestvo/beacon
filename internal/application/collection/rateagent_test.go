@@ -91,7 +91,7 @@ func TestRateAgent_execution(t *testing.T) {
 		}
 
 		errs := a.execution(t.Context(), []domain.RateSource{{Name: "src1"}})
-		require.NotNil(t, errs["src1"])
+		require.Error(t, errs["src1"])
 	})
 	t.Run("multiple sources each get their own history record", func(t *testing.T) {
 		t.Parallel()
@@ -222,7 +222,7 @@ func TestRateAgent_execution_dispatchesByFetcherKind(t *testing.T) {
 
 		errs := a.execution(t.Context(), []domain.RateSource{{Name: "badsrc", FetcherKind: "bogus"}})
 
-		require.NotNil(t, errs["badsrc"], "unsupported fetcher_kind must produce an error entry")
+		require.Error(t, errs["badsrc"], "unsupported fetcher_kind must produce an error entry")
 		require.ErrorContains(t, errs["badsrc"], "unsupported fetcher_kind")
 		require.ErrorContains(t, errs["badsrc"], "bogus")
 		require.Equal(t, 0, plain.calls, "plain extractor must not be called for unsupported kind")
