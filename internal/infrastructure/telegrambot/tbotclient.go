@@ -267,11 +267,12 @@ func (tbot *TelegramBotClient) Updates(ctx context.Context) <-chan tgbotapi.Upda
 		defer close(out)
 
 		// The standard logger, not tbot.logger, and deliberately so: internal.NewLogger
-		// gives the file handler a base level of Warning and points the standard logger
-		// at it, while every WriterAs(LogLevelInfo) a component is handed reaches the
-		// file only if stdout happens to be redirected there. Under systemd it is not,
-		// so a lifecycle marker written at Info is written nowhere — and these two are
-		// the only evidence that the poller is alive.
+		// points the standard logger at LogLevelWarning, which is the only level that
+		// reaches both sinks. An Info line lands in the file but never in the journal,
+		// where printerMinLevel filters it — and the journal is where an operator looks
+		// straight after a restart to ask whether the poller came back. These two
+		// markers are the only evidence that it did, so they belong with the rest of the
+		// startup sequence rather than in the file alone.
 		log.Println("telegram: bot started listening for updates")
 		defer log.Println("telegram: bot stopped listening for updates")
 
