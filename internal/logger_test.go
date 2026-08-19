@@ -2,6 +2,7 @@ package internal
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +25,7 @@ import (
 //
 //nolint:paralleltest // deliberately serial; the reason is stated directly above
 func TestNewLogger_FileTimestamps(t *testing.T) {
-	dir := newLoggerInTempDir(t)
+	_, dir := newLoggerInTempDir(t)
 
 	log.Println("a message worth dating")
 
@@ -74,7 +76,7 @@ func TestNewLogger_FileTimestamps(t *testing.T) {
 //
 //nolint:paralleltest // deliberately serial; the reason is stated directly above
 func TestNewLogger_BuildLineReachesTheFile(t *testing.T) {
-	dir := newLoggerInTempDir(t)
+	_, dir := newLoggerInTempDir(t)
 
 	// Every binary logs its build immediately after this point. It used to be logged
 	// before the logger existed, so it went to a stderr the cron wrappers discard and no
@@ -90,7 +92,7 @@ func TestNewLogger_BuildLineReachesTheFile(t *testing.T) {
 //
 //nolint:paralleltest // deliberately serial; the reason is stated directly above
 func TestNewLogger_MultiLineMessages(t *testing.T) {
-	dir := newLoggerInTempDir(t)
+	_, dir := newLoggerInTempDir(t)
 
 	log.Printf("first line\nsecond line")
 
@@ -183,6 +185,68 @@ func TestNewLogger_StdoutIsTimestampedOnce(t *testing.T) {
 	}
 }
 
+// not t.Parallel(): NewLogger rebinds the global standard logger.
+//
+//nolint:paralleltest // deliberately serial; the reason is stated directly above
+func TestNewLogger_InfoReachesTheFile(t *testing.T) {
+	l, dir := newLoggerInTempDir(t)
+
+	// The file handler used to start at Warning, so every component handed
+	// WriterAs(LogLevelInfo) wrote into a sink that dropped it: cmd/web's HTTP access
+	// log was never written once, and the collector's maintenance report never landed.
+	_, err := fmt.Fprintln(l.WriterAs(LogLevelInfo), "middleware [200] GET /api/v1/public/sources")
+	require.NoError(t, err)
+
+	// Debug staying below the bar is what bounds the file's growth — without it the
+	// level carries no meaning and the rotation budget is the only limit left.
+	_, err = fmt.Fprintln(l.WriterAs(LogLevelDebug), "a debug line nobody reads")
+	require.NoError(t, err)
+
+	joined := strings.Join(readLogFile(t, dir), "\n")
+	assert.Contains(t, joined, "middleware [200] GET /api/v1/public/sources")
+	assert.NotContains(t, joined, "a debug line nobody reads")
+}
+
+// not t.Parallel(): NewLogger rebinds the global standard logger, and this one
+// additionally swaps os.Stdout to observe the printer hook.
+//
+//nolint:paralleltest // deliberately serial; the reason is stated directly above
+func TestNewLogger_InfoStaysOutOfStdout(t *testing.T) {
+	prevFlags := log.Flags()
+	prevOutput := log.Writer()
+	t.Cleanup(func() {
+		log.SetFlags(prevFlags)
+		log.SetOutput(prevOutput)
+	})
+
+	realStdout := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = realStdout })
+
+	// LogLevelWarning is what every binary passes for printerMinLevel. Under systemd
+	// stdout is the journal, so an Info line reaching it would multiply the journal's
+	// volume by the request rate — the file taking Info must not drag stdout with it.
+	l, err := NewLogger(t.TempDir(), "test", LogLevelWarning)
+	require.NoError(t, err)
+
+	_, err = fmt.Fprintln(l.WriterAs(LogLevelInfo), "an info line bound for the file")
+	require.NoError(t, err)
+	_, err = fmt.Fprintln(l.WriterAs(LogLevelWarning), "a warning line bound for both")
+	require.NoError(t, err)
+
+	require.NoError(t, w.Close())
+	var buf bytes.Buffer
+	_, err = buf.ReadFrom(r)
+	require.NoError(t, err)
+	os.Stdout = realStdout
+
+	out := buf.String()
+	assert.Contains(t, out, "a warning line bound for both", "printerMinLevel still admits Warning")
+	assert.NotContains(t, out, "an info line bound for the file")
+}
+
 // readLogFile returns the lines the rotating handler wrote into dir.
 func readLogFile(t *testing.T, dir string) []string {
 	t.Helper()
@@ -205,8 +269,9 @@ func readLogFile(t *testing.T, dir string) []string {
 }
 
 // newLoggerInTempDir builds a logger writing into a fresh directory and restores the
-// global standard-logger state NewLogger mutates.
-func newLoggerInTempDir(t *testing.T) string {
+// global standard-logger state NewLogger mutates. It returns the logger as well as the
+// directory so a test can write through a level other than the standard logger's.
+func newLoggerInTempDir(t *testing.T) (*loginjector.Logger, string) {
 	t.Helper()
 
 	prevFlags := log.Flags()
@@ -217,7 +282,7 @@ func newLoggerInTempDir(t *testing.T) string {
 	})
 
 	dir := t.TempDir()
-	_, err := NewLogger(dir, "test", LogLevelCritical) // critical: keep stdout quiet during tests
+	l, err := NewLogger(dir, "test", LogLevelCritical) // critical: keep stdout quiet during tests
 	require.NoError(t, err)
-	return dir
+	return l, dir
 }

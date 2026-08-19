@@ -29,6 +29,7 @@ const (
 
 // NewLogger creates a new file-based logger that writes cyclic log files to logsDir.
 // name is used as the log file prefix (e.g. "collector", "web", "api").
+// The file records every entry at LogLevelInfo or above; LogLevelDebug is dropped.
 // Log entries at or above printerMinLevel are also printed to stdout.
 // If logsDir is empty, a default temp directory is used.
 // If name is empty, "app" is used as the prefix.
@@ -61,7 +62,15 @@ func NewLogger(logsDir, name string, printerMinLevel loginjector.LogLevel) (*log
 	// timestamps are stored everywhere else in this project, and carries its own UTC
 	// offset — so a host whose timezone changes says so in the log instead of quietly
 	// renumbering history.
-	l := loginjector.NewLogger(LogLevelWarning, loginjector.TimestampedHandler(fHNDL, loginjector.WithTimeLayout(time.RFC3339)))
+	//
+	// Info, not Warning: for a long-running unit the file is the only sink, since its
+	// stdout is the journal and the printer hook below filters that at printerMinLevel.
+	// A base level of Warning therefore discarded every WriterAs(LogLevelInfo) line a
+	// component was handed — cmd/web's HTTP access log was never written once and the
+	// collector's maintenance report never landed, both looking wired the whole time.
+	// Debug staying below the bar is what bounds the volume; stdout is unaffected,
+	// because the printer is a set of exact-level hooks and hooks ignore this level.
+	l := loginjector.NewLogger(LogLevelInfo, loginjector.TimestampedHandler(fHNDL, loginjector.WithTimeLayout(time.RFC3339)))
 
 	var printerLevels []loginjector.LogLevel
 	for _, lvl := range []loginjector.LogLevel{LogLevelDebug, LogLevelInfo, LogLevelWarning, LogLevelError, LogLevelSevere, LogLevelCritical} {
