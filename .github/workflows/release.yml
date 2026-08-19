@@ -24,10 +24,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          # lint-new resolves LINT_BASE and asks git what changed since it; the default
-          # shallow clone has neither the commit nor the history to reach it.
-          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -35,37 +31,16 @@ jobs:
       # Pinned to the version the Makefile names, so a release and a local run cannot
       # disagree about what a finding is.
       - run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
-      # A release is linted against the previous release, not against a branch.
+      # lint, not lint-new: a release is the whole tree shipping, so the whole tree is
+      # what gets linted. The diff-scoped run answered "what does this change add",
+      # which needed a base revision to diff against — and picking one for a tag was
+      # its own trap, because the default origin/alpha lints history backwards the
+      # moment a tag is cut anywhere but alpha's tip. Nothing needs a base now.
       #
-      # LINT_BASE defaults to origin/alpha, which is right for a PR and wrong here the
-      # moment a tag is cut anywhere but alpha's tip: golangci-lint then diffs the tag's
-      # tree against a *newer* branch and reports everything the branch has and the tag
-      # does not, so the gate lints history backwards and fails on code that is not in
-      # the release. That is exactly what happened cutting alpha.17 at the commit before
-      # the /v1 cutover.
-      #
-      # The previous r_* tag is the honest base: it answers "what does this release add".
-      # On the first ever release there is none, and the step leaves LINT_BASE alone.
-      - name: Resolve the lint base
-        run: |
-          git fetch --no-tags --force origin 'refs/tags/r_*:refs/tags/r_*'
-          prev=$(git describe --tags --abbrev=0 --match 'r_*' "${GITHUB_REF_NAME}^" 2>/dev/null || true)
-          if [ -n "$prev" ]; then
-            echo "LINT_BASE=$prev" >> "$GITHUB_ENV"
-            echo "linting against the previous release: $prev"
-          else
-            git fetch --no-tags origin +refs/heads/alpha:refs/remotes/origin/alpha
-            echo "no previous release tag; falling back to origin/alpha"
-          fi
-      # lint-new, not lint: the tree carries standing findings being worked off under #68,
-      # so the full run is a worklist and is expected to be red. This job was left on
-      # `make lint` when ci.main.yml moved, and the first tag after the linter landed
-      # failed here — before deploying, which is the one thing that went right.
-      #
-      # On a tag cut from alpha's tip this checks little, because the two coincide. The
-      # gate with teeth is ci.main.yml's, which every commit passed on its PR; this one
-      # is here to stay consistent and to catch a tag cut from somewhere unexpected.
-      - run: make lint-new
+      # On a tag cut from alpha's tip this repeats ci.main.yml, which every commit
+      # already passed on its PR. It is here to catch a tag cut from somewhere
+      # unexpected, where that guarantee does not hold.
+      - run: make lint
       - run: make test
 
   deploy:
