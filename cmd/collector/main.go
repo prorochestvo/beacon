@@ -56,7 +56,7 @@ func main() {
 	ProxyURL = proxyutil.ResolveURL(internal.EnvProxyURL)
 	log.Println("settings: initiated")
 
-	db, err := sqlitedb.NewSQLiteClient(dsnDB, l.WriterAs(internal.LogLevelInfo))
+	db, err := sqlitedb.NewSQLiteClient(dsnDB)
 	if err != nil {
 		log.Fatalf("dependencies: %s", err.Error())
 	}

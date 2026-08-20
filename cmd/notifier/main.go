@@ -52,7 +52,7 @@ func main() {
 	}
 	log.Println("settings: initiated")
 
-	db, err := sqlitedb.NewSQLiteClient(dsnDB, l.WriterAs(internal.LogLevelInfo))
+	db, err := sqlitedb.NewSQLiteClient(dsnDB)
 	if err != nil {
 		log.Fatalf("dependencies: %s", err.Error())
 	}
@@ -64,7 +64,7 @@ func main() {
 			log.Printf("close sqlite client: %v", e)
 		}
 	}(db)
-	tbot, err := integration.NewTBotClient(dsnTelegramBOT, l.WriterAs(internal.LogLevelInfo))
+	tbot, err := integration.NewTBotClient(dsnTelegramBOT)
 	if err != nil {
 		//nolint:gocritic // a fatal here is a refusal to start: the deferred close is
 		// skipped, and the OS reclaims the descriptor a moment later. Threading an

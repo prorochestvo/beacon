@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/prorochestvo/dsninjector"
@@ -19,7 +18,6 @@ import (
 // SQLiteClient wraps a *sql.DB and provides a managed SQLite connection.
 type SQLiteClient struct {
 	db      *sql.DB
-	logger  io.Writer
 	Timeout time.Duration
 }
 
@@ -45,7 +43,7 @@ type SQLiteClient struct {
 // less than Timeout (30 s default; 60 s in NewSQLiteClient). If busy_timeout is
 // raised, raise Timeout first so the Go-level context deadline always fires
 // after the driver retry window expires.
-func NewSQLiteClientEx(db *sql.DB, logger io.Writer) (*SQLiteClient, error) {
+func NewSQLiteClientEx(db *sql.DB) (*SQLiteClient, error) {
 	// Per-connection PRAGMAs are best-effort here for the legacy single-
 	// connection test path. Production opens through NewSQLiteClient where the
 	// DSN carries them and the seven-connection pool inherits them on every open.
@@ -65,7 +63,6 @@ func NewSQLiteClientEx(db *sql.DB, logger io.Writer) (*SQLiteClient, error) {
 	return &SQLiteClient{
 		db:      db,
 		Timeout: 30 * time.Second,
-		logger:  logger,
 	}, nil
 }
 
@@ -79,7 +76,7 @@ func NewSQLiteClientEx(db *sql.DB, logger io.Writer) (*SQLiteClient, error) {
 // them on every new connection the pool opens. PRAGMA journal_mode=WAL is
 // persisted in the database file header and is set via db.Exec inside
 // NewSQLiteClientEx.
-func NewSQLiteClient(sqlDSN dsninjector.DataSource, logger io.Writer) (*SQLiteClient, error) {
+func NewSQLiteClient(sqlDSN dsninjector.DataSource) (*SQLiteClient, error) {
 	db, err := sql.Open("sqlite", connectionOptions(sqlDSN.Database()))
 	if err != nil {
 		err = fmt.Errorf("open sqlite: %w", err)
@@ -89,7 +86,7 @@ func NewSQLiteClient(sqlDSN dsninjector.DataSource, logger io.Writer) (*SQLiteCl
 
 	db.SetMaxOpenConns(7)
 
-	c, err := NewSQLiteClientEx(db, logger)
+	c, err := NewSQLiteClientEx(db)
 	if err != nil {
 		err = errors.Join(err, db.Close())
 		err = errors.Join(err, fmt.Errorf("initialize sqlite client: %w", err))

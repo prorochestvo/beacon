@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"os"
 	"testing"
 	"testing/fstest"
 
@@ -124,7 +123,7 @@ func TestMigrator_Run(t *testing.T) {
 		t.Cleanup(func() { _ = mem.Close() })
 		mem.SetMaxOpenConns(1)
 
-		c, err := NewSQLiteClientEx(mem, os.Stdout)
+		c, err := NewSQLiteClientEx(mem)
 		require.NoError(t, err)
 
 		m, err := NewMigrator(c, minimalFS())
@@ -176,7 +175,7 @@ func TestMigrator_Run(t *testing.T) {
 		t.Cleanup(func() { _ = mem.Close() })
 		mem.SetMaxOpenConns(1)
 
-		c, err := NewSQLiteClientEx(mem, os.Stdout)
+		c, err := NewSQLiteClientEx(mem)
 		require.NoError(t, err)
 
 		m, err := NewMigrator(c, minimalFS())
@@ -198,7 +197,7 @@ func TestMigrator_Run(t *testing.T) {
 		t.Cleanup(func() { _ = mem.Close() })
 		mem.SetMaxOpenConns(1)
 
-		c, err := NewSQLiteClientEx(mem, os.Stdout)
+		c, err := NewSQLiteClientEx(mem)
 		require.NoError(t, err)
 
 		badFS := fstest.MapFS{
@@ -231,7 +230,7 @@ func TestRequireMigratedSchema(t *testing.T) {
 		t.Cleanup(func() { _ = mem.Close() })
 		mem.SetMaxOpenConns(1)
 
-		c, err := NewSQLiteClientEx(mem, os.Stdout)
+		c, err := NewSQLiteClientEx(mem)
 		require.NoError(t, err)
 
 		err = RequireMigratedSchema(t.Context(), c)

@@ -94,7 +94,7 @@ var (
 
 func run(dsnSQLiteDB dsninjector.DataSource, _ *loginjector.Logger) (err error) {
 
-	db, err := sqlitedb.NewSQLiteClient(dsnSQLiteDB, os.Stdout)
+	db, err := sqlitedb.NewSQLiteClient(dsnSQLiteDB)
 	if err != nil {
 		return err
 	}
