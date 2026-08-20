@@ -41,9 +41,10 @@ jobs:
       # already passed on its PR. It is here to catch a tag cut from somewhere
       # unexpected, where that guarantee does not hold.
       #
-      # Tee each step into a shared trace so the failure notification below can
-      # paste the real reason inline. $RUNNER_TEMP persists across steps within a
-      # job, which is why the trace is produced in the same job that reads it.
+      # Tee each step into a shared trace, matching ci.main.yml. Nothing in this job
+      # reads it today — the gate's failure notification was removed, see below —
+      # but keeping the two workflows' gate steps identical costs nothing and means
+      # the trace is already there if a reader is ever added.
       - name: Lint
         run: |
           exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
@@ -53,48 +54,17 @@ jobs:
           exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
           make test
 
-      # Failure-only, and it belongs here rather than in deploy: deploy declares
-      # needs: lint-and-test, so a red gate means deploy never starts and neither
-      # of its two notify steps ever runs. Without this, a tag that fails to lint
-      # deploys nothing and tells nobody — the operator has just pushed an r_* tag
-      # and gets silence indistinguishable from "still building".
+      # No failure notification here, deliberately. One was added and then removed:
+      # the Telegram credentials live on the PRIME environment, which this job does
+      # not carry and must not — it runs `make test`, i.e. arbitrary project and
+      # dependency code, and PRIME holds SSH_PRIVATEKEY for the production host. The
+      # step therefore passed its own `[ -n "$TOKEN" ] || exit 0` guard and reported
+      # success while sending nothing, which is worse than an absent step: a reader
+      # scanning the job would conclude alerting was covered.
       #
-      # ACTION is "release gate", not the default "deploy": no deploy was
-      # attempted, and saying otherwise would send someone looking at a server
-      # that was never touched. The grep pattern is the CI-tuned one, since a
-      # failed lint looks nothing like a failed ssh.
-      #
-      # No success counterpart. The deploy job already sends exactly one message
-      # on the happy path.
-      - name: Notify failure
-        if: failure()
-        env:
-          ACTION_EMITER_TBOT_TOKEN: ${{ secrets.ACTION_EMITER_TBOT_TOKEN }}
-          TELEGRAM_ROOT_CHAT_ID: ${{ vars.TELEGRAM_ROOT_CHAT_ID }}
-          APP_LABEL: ""
-          ACTION: "release gate"
-        run: |
-          [ -n "$ACTION_EMITER_TBOT_TOKEN" ] && [ -n "$TELEGRAM_ROOT_CHAT_ID" ] || exit 0
-          PROJECT_TAG=$(echo "${GITHUB_REPOSITORY##*/}" | tr 'a-z-' 'A-Z_' | tr -cd 'A-Z0-9_')
-          WF_REF="${GITHUB_WORKFLOW_REF%@*}"; WF_FILE="${WF_REF##*/}"
-          LABEL="${APP_LABEL:+$APP_LABEL }"
-          ACTION="${ACTION:-deploy}"
-          reason=""
-          if [ -f "$RUNNER_TEMP/deploy_trace.log" ]; then
-            reason=$(grep -iE 'error|FAIL|panic|cannot|undefined|denied|forbidden|expected|no such' \
-              "$RUNNER_TEMP/deploy_trace.log" | tail -n 3 | cut -c1-300)
-          fi
-          text=$(printf '#%s %s%s <b>failed</b>\n<b>%s</b> <i>(%s)</i>\nref:  %s (%s)\nrun:  <a href="%s/%s/actions/runs/%s">#%s</a>' \
-            "$PROJECT_TAG" "$LABEL" "$ACTION" "$GITHUB_REPOSITORY" "$WF_FILE" "$GITHUB_REF_NAME" "${GITHUB_SHA:0:7}" \
-            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ID")
-          if [ -n "$reason" ]; then
-            esc=$(printf '%s' "$reason" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
-            text=$(printf '%s\n<pre>%s</pre>' "$text" "$esc")
-          fi
-          curl -s -X POST "https://api.telegram.org/bot${ACTION_EMITER_TBOT_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${TELEGRAM_ROOT_CHAT_ID}" \
-            --data-urlencode "text=${text}" \
-            -d parse_mode=HTML -d disable_web_page_preview=true >/dev/null || true
+      # A failed gate is not silent regardless. GitHub emails the actor who pushed
+      # the tag, and every release failure in this project's history has been a gate
+      # failure, so that is the channel that has always carried them. See #118.
 
   deploy:
     environment: PRIME
