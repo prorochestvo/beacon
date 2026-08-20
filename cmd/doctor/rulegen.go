@@ -234,7 +234,7 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 		return 3
 	}
 
-	db, err := sqlitedb.NewSQLiteClient(dsnSQLiteDB, l.WriterAs(internal.LogLevelInfo))
+	db, err := sqlitedb.NewSQLiteClient(dsnSQLiteDB)
 	if err != nil {
 		infraFail("sqlite connection: %v", err)
 		return 3

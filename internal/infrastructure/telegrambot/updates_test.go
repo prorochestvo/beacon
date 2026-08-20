@@ -61,7 +61,7 @@ func TestTelegramBotClient_Updates(t *testing.T) {
 		t.Parallel()
 
 		bot, _ := newFakeBotAPI(t)
-		tbot := &TelegramBotClient{bot: bot, logger: io.Discard}
+		tbot := &TelegramBotClient{bot: bot}
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -80,7 +80,7 @@ func TestTelegramBotClient_Updates(t *testing.T) {
 		t.Parallel()
 
 		bot, _ := newFakeBotAPI(t)
-		tbot := &TelegramBotClient{bot: bot, logger: io.Discard}
+		tbot := &TelegramBotClient{bot: bot}
 
 		ctx, cancel := context.WithCancel(t.Context())
 		updates := tbot.Updates(ctx)
@@ -105,7 +105,7 @@ func TestTelegramBotClient_Updates(t *testing.T) {
 
 		bot, polls := newFakeBotAPI(t)
 		logged := captureStandardLog(t)
-		tbot := &TelegramBotClient{bot: bot, logger: io.Discard}
+		tbot := &TelegramBotClient{bot: bot}
 
 		ctx, cancel := context.WithCancel(t.Context())
 		_ = tbot.Updates(ctx)

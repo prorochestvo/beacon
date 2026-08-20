@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,7 +30,7 @@ func newTestClient(t *testing.T) *SQLiteClient {
 	t.Cleanup(func() { _ = mem.Close() })
 	mem.SetMaxOpenConns(1)
 
-	c, err := NewSQLiteClientEx(mem, os.Stdout)
+	c, err := NewSQLiteClientEx(mem)
 	require.NoError(t, err)
 
 	// Bootstrap the migration table so Ping works.
@@ -53,7 +52,7 @@ func TestNewSQLiteClientEx(t *testing.T) {
 		mem, err := sql.Open("sqlite", ":memory:")
 		require.NoError(t, err)
 		require.NoError(t, mem.Close())
-		_, err = NewSQLiteClientEx(mem, os.Stdout)
+		_, err = NewSQLiteClientEx(mem)
 		require.Error(t, err)
 	})
 }
@@ -66,7 +65,7 @@ func TestNewSQLiteClient(t *testing.T) {
 		dbPath := filepath.Join(t.TempDir(), "test.db")
 		dsn := &stubDataSource{path: dbPath}
 
-		c, err := NewSQLiteClient(dsn, os.Stdout)
+		c, err := NewSQLiteClient(dsn)
 		require.NoError(t, err)
 		require.NotNil(t, c)
 		t.Cleanup(func() { _ = c.Close() })
@@ -87,7 +86,7 @@ func TestNewSQLiteClient(t *testing.T) {
 		// when executing the first statement (WAL/foreign-key pragmas inside
 		// NewSQLiteClientEx), exercising the constructor error path.
 		dsn := &stubDataSource{path: "/nonexistent/path/that/cannot/be/created/test.db"}
-		_, err := NewSQLiteClient(dsn, os.Stdout)
+		_, err := NewSQLiteClient(dsn)
 		require.Error(t, err)
 	})
 }
@@ -108,7 +107,7 @@ func TestSQLiteClient_Ping(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = mem.Close() })
 		mem.SetMaxOpenConns(1)
-		c, err := NewSQLiteClientEx(mem, os.Stdout)
+		c, err := NewSQLiteClientEx(mem)
 		require.NoError(t, err)
 		require.Error(t, c.Ping(t.Context()))
 	})
@@ -117,7 +116,7 @@ func TestSQLiteClient_Ping(t *testing.T) {
 		mem, err := sql.Open("sqlite", ":memory:")
 		require.NoError(t, err)
 		mem.SetMaxOpenConns(1)
-		c, err := NewSQLiteClientEx(mem, os.Stdout)
+		c, err := NewSQLiteClientEx(mem)
 		require.NoError(t, err)
 		require.NoError(t, mem.Close())
 		require.Error(t, c.Ping(t.Context()))
@@ -209,7 +208,7 @@ func TestSQLiteClient_Commit(t *testing.T) {
 		mem, err := sql.Open("sqlite", ":memory:")
 		require.NoError(t, err)
 		mem.SetMaxOpenConns(1)
-		c, err := NewSQLiteClientEx(mem, os.Stdout)
+		c, err := NewSQLiteClientEx(mem)
 		require.NoError(t, err)
 		require.NoError(t, mem.Close())
 		require.Error(t, c.Commit(t.Context(), &execAction{sql: "SELECT 1;"}))
@@ -271,7 +270,7 @@ func TestSQLiteClient_Rollback(t *testing.T) {
 		mem, err := sql.Open("sqlite", ":memory:")
 		require.NoError(t, err)
 		mem.SetMaxOpenConns(1)
-		c, err := NewSQLiteClientEx(mem, os.Stdout)
+		c, err := NewSQLiteClientEx(mem)
 		require.NoError(t, err)
 		require.NoError(t, mem.Close())
 		require.Error(t, c.Rollback(t.Context(), &execAction{sql: "SELECT 1;"}))
@@ -297,7 +296,7 @@ func TestSQLiteClient_Close(t *testing.T) {
 		require.NoError(t, err)
 		mem.SetMaxOpenConns(1)
 
-		c, err := NewSQLiteClientEx(mem, os.Stdout)
+		c, err := NewSQLiteClientEx(mem)
 		require.NoError(t, err)
 
 		require.NoError(t, c.Close())
@@ -471,7 +470,7 @@ func TestWriteTransactionsWaitInsteadOfFailing(t *testing.T) {
 		t.Cleanup(func() { _ = db.Close() })
 		db.SetMaxOpenConns(4)
 
-		c, err := NewSQLiteClientEx(db, os.Stdout)
+		c, err := NewSQLiteClientEx(db)
 		require.NoError(t, err)
 		_, err = db.ExecContext(t.Context(), "CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT);")
 		require.NoError(t, err)

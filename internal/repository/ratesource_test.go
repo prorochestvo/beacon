@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 
@@ -460,7 +459,7 @@ func newCascadeDB(t *testing.T) *sqlitedb.SQLiteClient {
 	t.Cleanup(func() { _ = mem.Close() })
 	mem.SetMaxOpenConns(4)
 
-	db, err := sqlitedb.NewSQLiteClientEx(mem, os.Stdout)
+	db, err := sqlitedb.NewSQLiteClientEx(mem)
 	require.NoError(t, err)
 	sqlitedbtest.Apply(t, db)
 	return db

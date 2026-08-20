@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -45,7 +44,7 @@ func stubSQLiteDB(tb testing.TB, sourceNames ...string) *sqlitedb.SQLiteClient {
 
 		mem.SetMaxOpenConns(1)
 
-		db, err := sqlitedb.NewSQLiteClientEx(mem, os.Stdout)
+		db, err := sqlitedb.NewSQLiteClientEx(mem)
 		if err != nil {
 			panic(err)
 		}
@@ -106,7 +105,7 @@ func stubSQLiteDBThrough(t *testing.T, throughFilename string) *sqlitedb.SQLiteC
 	t.Cleanup(func() { _ = mem.Close() })
 	mem.SetMaxOpenConns(1)
 
-	db, err := sqlitedb.NewSQLiteClientEx(mem, os.Stdout)
+	db, err := sqlitedb.NewSQLiteClientEx(mem)
 	if err != nil {
 		panic(err)
 	}

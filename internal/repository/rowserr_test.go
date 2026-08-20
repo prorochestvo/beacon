@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
-	"os"
 	"sync/atomic"
 	"testing"
 
@@ -214,7 +213,7 @@ func stubTruncatingDB(t *testing.T, failAfter int) (*sqlitedb.SQLiteClient, *ato
 	t.Cleanup(func() { _ = mem.Close() })
 	mem.SetMaxOpenConns(1)
 
-	db, err := sqlitedb.NewSQLiteClientEx(mem, os.Stdout)
+	db, err := sqlitedb.NewSQLiteClientEx(mem)
 	require.NoError(t, err)
 	sqlitedbtest.Apply(t, db)
 

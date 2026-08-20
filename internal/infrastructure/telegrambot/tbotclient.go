@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -44,7 +43,6 @@ type TelegramChatID int64
 type TelegramBotClient struct {
 	bot         *tgbotapi.BotAPI
 	adminChatID TelegramChatID
-	logger      io.Writer
 }
 
 // NewTBotClient parses the BEACON_TELEGRAMBOT_DSN, validates the bot token and admin
@@ -54,7 +52,7 @@ type TelegramBotClient struct {
 // The HTTP client hardcoded into the bot uses an explicit empty proxy transport
 // so Telegram traffic never routes via the process-wide proxy. Do not change
 // this without coordinating with the proxy wiring policy.
-func NewTBotClient(tbotDSN dsninjector.DataSource, logger io.Writer) (*TelegramBotClient, error) {
+func NewTBotClient(tbotDSN dsninjector.DataSource) (*TelegramBotClient, error) {
 	rx := regexp.MustCompile(regexpTelegramToken)
 
 	token := strings.TrimSpace(tbotDSN.Addr())
@@ -93,7 +91,6 @@ func NewTBotClient(tbotDSN dsninjector.DataSource, logger io.Writer) (*TelegramB
 	t := &TelegramBotClient{
 		bot:         bot,
 		adminChatID: TelegramChatID(adminChatID),
-		logger:      logger,
 	}
 
 	return t, nil
@@ -266,13 +263,13 @@ func (tbot *TelegramBotClient) Updates(ctx context.Context) <-chan tgbotapi.Upda
 	go func() {
 		defer close(out)
 
-		// The standard logger, not tbot.logger, and deliberately so: internal.NewLogger
-		// points the standard logger at LogLevelWarning, which is the only level that
-		// reaches both sinks. An Info line lands in the file but never in the journal,
-		// where printerMinLevel filters it — and the journal is where an operator looks
-		// straight after a restart to ask whether the poller came back. These two
-		// markers are the only evidence that it did, so they belong with the rest of the
-		// startup sequence rather than in the file alone.
+		// The standard logger, and deliberately so: internal.NewLogger points it at
+		// LogLevelWarning, which is the only level reaching both sinks. An Info line
+		// lands in the file but never in the journal, where printerMinLevel filters
+		// it — and the journal is where an operator looks straight after a restart to
+		// ask whether the poller came back. These two markers are the only evidence
+		// that it did, so they belong with the rest of the startup sequence rather
+		// than in the file alone.
 		log.Println("telegram: bot started listening for updates")
 		defer log.Println("telegram: bot stopped listening for updates")
 
