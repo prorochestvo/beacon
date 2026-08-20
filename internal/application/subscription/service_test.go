@@ -19,6 +19,13 @@ var (
 	_ ValuesLoader       = (*stubValues)(nil)
 )
 
+// otherChannel is a UserType this codebase cannot produce: domain declares
+// UserTypeTelegram and nothing else. It is synthetic on purpose. Ownership is a
+// (UserType, UserID) pair, and a check comparing UserID alone stays correct only
+// while one channel exists — so the case that would break it has to be written
+// before the second channel can, not after.
+const otherChannel domain.UserType = "not-telegram"
+
 // stubSubscriptions serves subscriptions keyed by user id and records the
 // (userType, userID) pair it was asked for, so a test can prove the service
 // scopes the read to one caller. byID backs the ownership look-up, and a miss
@@ -546,6 +553,15 @@ func TestService_UpdateMeSubscription(t *testing.T) {
 				ID: "sub-other", UserType: domain.UserTypeTelegram, UserID: other,
 				SourceName: "src_a", ConditionType: domain.ConditionTypeDelta, ConditionValue: "3",
 			},
+			// Same UserID as the caller, different channel. Unreachable today —
+			// UserTypeTelegram is the only constant — which is exactly why the row
+			// exists: rows are keyed by (UserType, UserID) and a check that compares
+			// UserID alone hands this one to the wrong owner the moment a second
+			// channel can mint the same identifier.
+			"sub-other-channel": {
+				ID: "sub-other-channel", UserType: otherChannel, UserID: caller,
+				SourceName: "src_a", ConditionType: domain.ConditionTypeDelta, ConditionValue: "7",
+			},
 		}}
 	}
 	toInterval := ConditionUpdate{ConditionType: domain.ConditionTypeInterval, ConditionValue: "1h"}
@@ -569,8 +585,9 @@ func TestService_UpdateMeSubscription(t *testing.T) {
 		t.Parallel()
 
 		unreachable := map[string]string{
-			"no such subscription":  "no-such",
-			"owned by another user": "sub-other",
+			"no such subscription":          "no-such",
+			"owned by another user":         "sub-other",
+			"same user id, another channel": "sub-other-channel",
 		}
 		for name, id := range unreachable {
 			t.Run(name, func(t *testing.T) {
@@ -647,6 +664,15 @@ func TestService_DeleteMeSubscription(t *testing.T) {
 				ID: "sub-other", UserType: domain.UserTypeTelegram, UserID: other,
 				SourceName: "src_a", ConditionType: domain.ConditionTypeDelta, ConditionValue: "3",
 			},
+			// Same UserID as the caller, different channel. Unreachable today —
+			// UserTypeTelegram is the only constant — which is exactly why the row
+			// exists: rows are keyed by (UserType, UserID) and a check that compares
+			// UserID alone hands this one to the wrong owner the moment a second
+			// channel can mint the same identifier.
+			"sub-other-channel": {
+				ID: "sub-other-channel", UserType: otherChannel, UserID: caller,
+				SourceName: "src_a", ConditionType: domain.ConditionTypeDelta, ConditionValue: "7",
+			},
 		}}
 	}
 
@@ -665,8 +691,9 @@ func TestService_DeleteMeSubscription(t *testing.T) {
 		t.Parallel()
 
 		unreachable := map[string]string{
-			"no such subscription":  "no-such",
-			"owned by another user": "sub-other",
+			"no such subscription":          "no-such",
+			"owned by another user":         "sub-other",
+			"same user id, another channel": "sub-other-channel",
 		}
 		for name, id := range unreachable {
 			t.Run(name, func(t *testing.T) {

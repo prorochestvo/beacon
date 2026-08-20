@@ -292,6 +292,12 @@ func (s *Service) DeleteMeSubscription(ctx context.Context, userID, id string) e
 // obtainOwned loads subscription id and reports internal.ErrNotFound unless
 // userID owns it.
 //
+// Ownership is a (channel, user) pair, not a user: rows are keyed by UserType
+// as well as UserID, and every other read in this service scopes by both. This
+// one compared UserID alone, which is correct only while UserTypeTelegram is
+// the sole channel — the moment a second one can mint the same UserID string,
+// its owner would pass this check for somebody else's subscription.
+//
 // "No such row" and "somebody else's row" are one answer on purpose, and the
 // caller is given no way to tell them apart. Ownership is decided here so that
 // the sentinel crossing the boundary says only "not found for you" — a service
@@ -302,7 +308,7 @@ func (s *Service) obtainOwned(ctx context.Context, userID, id string) (*domain.R
 	if err != nil {
 		return nil, fmt.Errorf("subscription lookup: %w", err)
 	}
-	if sub == nil || sub.UserID != userID {
+	if sub == nil || sub.UserType != domain.UserTypeTelegram || sub.UserID != userID {
 		return nil, internal.ErrNotFound
 	}
 	return sub, nil
