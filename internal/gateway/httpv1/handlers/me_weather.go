@@ -249,15 +249,20 @@ func (h *Handler) GetMeWeatherCurrent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, dto.WeatherCurrentResponse{Items: items})
 }
 
-// weatherCurrentItem renders one city and its latest observation for the wire.
-// A nil observation is the "collector has not run for this city yet" case and
-// renders as has_data:false with every reading absent, so a client never has to
-// read an omitted number as a zero.
+// weatherCurrentItem renders one city, its latest observation and its multi-week
+// outlook for the wire. A nil observation is the "collector has not run for this
+// city yet" case and renders as has_data:false with every reading absent, so a
+// client never has to read an omitted number as a zero. The outlook is independent
+// of has_data: the two are collected on different cadences.
 func weatherCurrentItem(c appweather.CurrentCity) dto.WeatherCurrentItem {
 	item := dto.WeatherCurrentItem{
 		LocationID:  c.City.LocationID,
 		DisplayName: c.City.DisplayName,
 		Timezone:    c.City.Timezone,
+		// The outlook is collected on its own daily cadence, so it is attached before
+		// the has_data gate below: a city can have an outlook and no reading yet, and
+		// dropping it there would hide a whole screen over an unrelated absence.
+		Days: weatherForecastDayItems(c.Forecast),
 	}
 	if c.Observation == nil {
 		return item
@@ -297,6 +302,49 @@ func weatherCurrentItem(c appweather.CurrentCity) dto.WeatherCurrentItem {
 	}
 
 	return item
+}
+
+// weatherForecastDayItems renders the stored outlook for the wire, resolving the day
+// thresholds, the freezing-point classification and the date label server-side so every
+// client draws the same badges from the same rule and the WASM bundle needs no tzdata.
+// Returns nil — not an empty slice — for a location with nothing stored, so the field is
+// omitted rather than sent as [].
+func weatherForecastDayItems(days []domain.WeatherForecastDay) []dto.WeatherForecastDayItem {
+	if len(days) == 0 {
+		return nil
+	}
+	items := make([]dto.WeatherForecastDayItem, 0, len(days))
+	for _, day := range days {
+		item := dto.WeatherForecastDayItem{
+			Date:        day.ForecastDate,
+			Label:       weatherForecastDayLabel(day.ForecastDate),
+			TempMax:     day.TempMax,
+			TempMin:     day.TempMin,
+			RainSum:     day.RainSum,
+			SnowfallSum: day.SnowfallSum,
+			Rain:        day.IsRainDay(),
+			Snow:        day.IsSnowDay(),
+			ZeroState:   day.ZeroState().Label(),
+			WeatherCode: day.WeatherCode,
+		}
+		if day.WeatherCode != nil {
+			_, emoji := domain.WMOWeatherCode(*day.WeatherCode)
+			item.ConditionEmoji = emoji
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+// weatherForecastDayLabel formats a YYYY-MM-DD city-local date as "Sun 23 Aug". The date
+// is already local, so it is parsed as a bare calendar day and never converted; one that
+// will not parse is passed through rather than dropped.
+func weatherForecastDayLabel(forecastDate string) string {
+	t, err := time.Parse(time.DateOnly, forecastDate)
+	if err != nil {
+		return forecastDate
+	}
+	return t.Format("Mon 2 Jan")
 }
 
 const (

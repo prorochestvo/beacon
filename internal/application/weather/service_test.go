@@ -104,6 +104,24 @@ func (s *stubCities) ObtainWeatherUserCitiesByUserID(_ context.Context, userType
 // location it holds nothing for — the repository's contract for a city whose
 // first collection has not run. It counts calls so a test can prove one
 // location is read once however many notify kinds point at it.
+// stubForecasts stands in for the forecast-day repository. days is keyed by location_id;
+// a location absent from the map has nothing stored, which is the normal state of a city
+// whose first long-range fetch has not completed.
+type stubForecasts struct {
+	days map[string][]domain.WeatherForecastDay
+	err  error
+
+	calls int
+}
+
+func (s *stubForecasts) ObtainForecastDays(_ context.Context, locationID, _, _ string, _ int) ([]domain.WeatherForecastDay, error) {
+	s.calls++
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.days[locationID], nil
+}
+
 type stubObservations struct {
 	obs map[string]*domain.WeatherObservation
 	err error
@@ -133,7 +151,7 @@ func TestService_ObtainMeCities(t *testing.T) {
 			{ID: "c2", LocationID: "1234", DisplayName: "Almaty", NotifyKind: domain.WeatherNotifyAlertThaw},
 		}}
 
-		got, err := NewService(cities, &stubObservations{}).ObtainMeCities(t.Context(), "42")
+		got, err := NewService(cities, &stubObservations{}, &stubForecasts{}).ObtainMeCities(t.Context(), "42")
 		require.NoError(t, err)
 
 		require.Len(t, got, 2, "the city list is per subscription, not per location")
@@ -145,7 +163,7 @@ func TestService_ObtainMeCities(t *testing.T) {
 		t.Parallel()
 
 		down := errors.New("db down")
-		got, err := NewService(&stubCities{err: down}, &stubObservations{}).ObtainMeCities(t.Context(), "42")
+		got, err := NewService(&stubCities{err: down}, &stubObservations{}, &stubForecasts{}).ObtainMeCities(t.Context(), "42")
 		require.ErrorIs(t, err, down)
 		assert.Nil(t, got)
 	})
@@ -184,7 +202,7 @@ func TestService_ObtainMeCurrent(t *testing.T) {
 		cities := &stubCities{cities: []domain.WeatherUserCity{newCity("1234", "Almaty")}}
 		obs := &stubObservations{obs: map[string]*domain.WeatherObservation{"1234": newObs("1234")}}
 
-		got, err := NewService(cities, obs).ObtainMeCurrent(t.Context(), "42")
+		got, err := NewService(cities, obs, &stubForecasts{}).ObtainMeCurrent(t.Context(), "42")
 		require.NoError(t, err)
 
 		require.Len(t, got, 1)
@@ -204,7 +222,7 @@ func TestService_ObtainMeCurrent(t *testing.T) {
 		cities := &stubCities{cities: []domain.WeatherUserCity{first, second}}
 		obs := &stubObservations{obs: map[string]*domain.WeatherObservation{"1234": newObs("1234")}}
 
-		got, err := NewService(cities, obs).ObtainMeCurrent(t.Context(), "42")
+		got, err := NewService(cities, obs, &stubForecasts{}).ObtainMeCurrent(t.Context(), "42")
 		require.NoError(t, err)
 
 		require.Len(t, got, 1, "a physical city has one set of readings regardless of how many alerts watch it")
@@ -217,7 +235,7 @@ func TestService_ObtainMeCurrent(t *testing.T) {
 
 		cities := &stubCities{cities: []domain.WeatherUserCity{newCity("1234", "Almaty")}}
 
-		got, err := NewService(cities, &stubObservations{}).ObtainMeCurrent(t.Context(), "42")
+		got, err := NewService(cities, &stubObservations{}, &stubForecasts{}).ObtainMeCurrent(t.Context(), "42")
 		require.NoError(t, err)
 
 		require.Len(t, got, 1, "a just-added city must stay visible while its first collection is pending")
@@ -227,7 +245,7 @@ func TestService_ObtainMeCurrent(t *testing.T) {
 	t.Run("no cities yields an empty slice", func(t *testing.T) {
 		t.Parallel()
 
-		got, err := NewService(&stubCities{}, &stubObservations{}).ObtainMeCurrent(t.Context(), "42")
+		got, err := NewService(&stubCities{}, &stubObservations{}, &stubForecasts{}).ObtainMeCurrent(t.Context(), "42")
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		assert.Empty(t, got)
@@ -238,10 +256,16 @@ func TestService_ObtainMeCurrent(t *testing.T) {
 
 		down := errors.New("db down")
 		broken := map[string]*Service{
-			"cities": NewService(&stubCities{err: down}, &stubObservations{}),
+			"cities": NewService(&stubCities{err: down}, &stubObservations{}, &stubForecasts{}),
 			"observations": NewService(
 				&stubCities{cities: []domain.WeatherUserCity{newCity("1234", "Almaty")}},
 				&stubObservations{err: down},
+				&stubForecasts{},
+			),
+			"forecasts": NewService(
+				&stubCities{cities: []domain.WeatherUserCity{newCity("1234", "Almaty")}},
+				&stubObservations{},
+				&stubForecasts{err: down},
 			),
 		}
 		for name, svc := range broken {
@@ -306,7 +330,7 @@ func TestService_CreateMeCity_Validation(t *testing.T) {
 			tc.mutate(&req)
 
 			cities := &stubCities{}
-			id, err := NewService(cities, &stubObservations{}).CreateMeCity(t.Context(), caller, req)
+			id, err := NewService(cities, &stubObservations{}, &stubForecasts{}).CreateMeCity(t.Context(), caller, req)
 
 			var pub *internal.PublicError
 			require.ErrorAs(t, err, &pub, "every field here comes from the client, so a bad one has to be named back to it")
@@ -338,7 +362,7 @@ func TestService_CreateMeCity(t *testing.T) {
 		t.Parallel()
 
 		cities := &stubCities{}
-		id, err := NewService(cities, &stubObservations{}).CreateMeCity(t.Context(), caller, validCity())
+		id, err := NewService(cities, &stubObservations{}, &stubForecasts{}).CreateMeCity(t.Context(), caller, validCity())
 		require.NoError(t, err)
 		assert.NotEmpty(t, id)
 
@@ -364,7 +388,7 @@ func TestService_CreateMeCity(t *testing.T) {
 		req.NotifyHour = hour(0)
 
 		cities := &stubCities{}
-		_, err := NewService(cities, &stubObservations{}).CreateMeCity(t.Context(), caller, req)
+		_, err := NewService(cities, &stubObservations{}, &stubForecasts{}).CreateMeCity(t.Context(), caller, req)
 		require.NoError(t, err)
 
 		require.NotEmpty(t, cities.retained)
@@ -391,7 +415,7 @@ func TestService_CreateMeCity(t *testing.T) {
 				req.ConditionValue = tc.value
 
 				cities := &stubCities{}
-				_, err := NewService(cities, &stubObservations{}).CreateMeCity(t.Context(), caller, req)
+				_, err := NewService(cities, &stubObservations{}, &stubForecasts{}).CreateMeCity(t.Context(), caller, req)
 				require.NoError(t, err)
 
 				require.NotEmpty(t, cities.retained)
@@ -417,7 +441,7 @@ func TestService_CreateMeCity(t *testing.T) {
 				req.ConditionValue = "whatever the client sent"
 
 				cities := &stubCities{}
-				_, err := NewService(cities, &stubObservations{}).CreateMeCity(t.Context(), caller, req)
+				_, err := NewService(cities, &stubObservations{}, &stubForecasts{}).CreateMeCity(t.Context(), caller, req)
 				require.NoError(t, err)
 
 				require.NotEmpty(t, cities.retained)
@@ -434,7 +458,7 @@ func TestService_CreateMeCity(t *testing.T) {
 		req.NotifyKind = domain.WeatherNotifyAlertThunderstorm
 
 		cities := &stubCities{}
-		_, err := NewService(cities, &stubObservations{}).CreateMeCity(t.Context(), caller, req)
+		_, err := NewService(cities, &stubObservations{}, &stubForecasts{}).CreateMeCity(t.Context(), caller, req)
 		require.NoError(t, err)
 		assert.Equal(t, domain.WeatherNotifyAlertThunderstorm, cities.retained[0].NotifyKind)
 	})
@@ -443,7 +467,7 @@ func TestService_CreateMeCity(t *testing.T) {
 		t.Parallel()
 
 		cities := &stubCities{}
-		_, err := NewService(cities, &stubObservations{}).CreateMeCity(t.Context(), caller, validCity())
+		_, err := NewService(cities, &stubObservations{}, &stubForecasts{}).CreateMeCity(t.Context(), caller, validCity())
 		require.NoError(t, err)
 
 		require.Len(t, cities.retained, 3)
@@ -484,7 +508,7 @@ func TestService_CreateMeCity(t *testing.T) {
 				req.ConditionValue = tc.value
 
 				cities := &stubCities{}
-				_, err := NewService(cities, &stubObservations{}).CreateMeCity(t.Context(), caller, req)
+				_, err := NewService(cities, &stubObservations{}, &stubForecasts{}).CreateMeCity(t.Context(), caller, req)
 				require.NoError(t, err)
 
 				assert.Equal(t, append([]domain.WeatherNotifyKind{tc.kind}, tc.alsoAdded...), retainedKinds(cities))
@@ -503,7 +527,7 @@ func TestService_CreateMeCity(t *testing.T) {
 		req.NotifyKind = domain.WeatherNotifyAlertHeat
 		req.ConditionValue = "35"
 
-		_, err := NewService(cities, &stubObservations{}).CreateMeCity(t.Context(), caller, req)
+		_, err := NewService(cities, &stubObservations{}, &stubForecasts{}).CreateMeCity(t.Context(), caller, req)
 		require.NoError(t, err)
 
 		assert.Equal(t, []domain.WeatherNotifyKind{
@@ -520,7 +544,7 @@ func TestService_CreateMeCity(t *testing.T) {
 			LocationID: "9999", NotifyKind: domain.WeatherNotifyAlertRain, ConditionValue: "20",
 		}}}
 
-		_, err := NewService(cities, &stubObservations{}).CreateMeCity(t.Context(), caller, validCity())
+		_, err := NewService(cities, &stubObservations{}, &stubForecasts{}).CreateMeCity(t.Context(), caller, validCity())
 		require.NoError(t, err)
 
 		assert.Contains(t, retainedKinds(cities), domain.WeatherNotifyAlertRain)
@@ -530,7 +554,7 @@ func TestService_CreateMeCity(t *testing.T) {
 		t.Parallel()
 
 		cities := &stubCities{}
-		_, err := NewService(cities, &stubObservations{}).CreateMeCity(t.Context(), caller, validCity())
+		_, err := NewService(cities, &stubObservations{}, &stubForecasts{}).CreateMeCity(t.Context(), caller, validCity())
 		require.NoError(t, err)
 
 		require.Len(t, cities.retained, 3)
@@ -544,7 +568,7 @@ func TestService_CreateMeCity(t *testing.T) {
 		down := errors.New("db down")
 		cities := &stubCities{retainErrOnKind: domain.WeatherNotifyAlertThaw, retainErrForKind: down}
 
-		id, err := NewService(cities, &stubObservations{}).CreateMeCity(t.Context(), caller, validCity())
+		id, err := NewService(cities, &stubObservations{}, &stubForecasts{}).CreateMeCity(t.Context(), caller, validCity())
 		require.ErrorIs(t, err, down)
 		assert.Empty(t, id)
 		require.Len(t, cities.retained, 1, "the requested row was written before the forced one failed")
@@ -557,7 +581,7 @@ func TestService_CreateMeCity(t *testing.T) {
 		down := errors.New("db down")
 		cities := &stubCities{err: down}
 
-		_, err := NewService(cities, &stubObservations{}).CreateMeCity(t.Context(), caller, validCity())
+		_, err := NewService(cities, &stubObservations{}, &stubForecasts{}).CreateMeCity(t.Context(), caller, validCity())
 		require.ErrorIs(t, err, down)
 	})
 
@@ -565,7 +589,7 @@ func TestService_CreateMeCity(t *testing.T) {
 		t.Parallel()
 
 		down := errors.New("db down")
-		id, err := NewService(&stubCities{retainErr: down}, &stubObservations{}).
+		id, err := NewService(&stubCities{retainErr: down}, &stubObservations{}, &stubForecasts{}).
 			CreateMeCity(t.Context(), caller, validCity())
 		require.ErrorIs(t, err, down)
 		assert.Empty(t, id)
@@ -607,7 +631,7 @@ func TestService_DeleteMeCity(t *testing.T) {
 		t.Parallel()
 
 		cities := stored()
-		require.NoError(t, NewService(cities, &stubObservations{}).DeleteMeCity(t.Context(), caller, "city-1"))
+		require.NoError(t, NewService(cities, &stubObservations{}, &stubForecasts{}).DeleteMeCity(t.Context(), caller, "city-1"))
 
 		require.Len(t, cities.removed, 1)
 		assert.Equal(t, "city-1", cities.removed[0].ID)
@@ -625,7 +649,7 @@ func TestService_DeleteMeCity(t *testing.T) {
 				t.Parallel()
 
 				cities := stored()
-				err := NewService(cities, &stubObservations{}).DeleteMeCity(t.Context(), caller, id)
+				err := NewService(cities, &stubObservations{}, &stubForecasts{}).DeleteMeCity(t.Context(), caller, id)
 
 				require.ErrorIs(t, err, internal.ErrNotFound)
 				assert.Empty(t, cities.removed)
@@ -645,7 +669,7 @@ func TestService_DeleteMeCity(t *testing.T) {
 				t.Parallel()
 
 				cities := stored()
-				err := NewService(cities, &stubObservations{}).DeleteMeCity(t.Context(), caller, id)
+				err := NewService(cities, &stubObservations{}, &stubForecasts{}).DeleteMeCity(t.Context(), caller, id)
 
 				require.ErrorIs(t, err, ErrForcedSubscription)
 				var pub *internal.PublicError
@@ -660,7 +684,7 @@ func TestService_DeleteMeCity(t *testing.T) {
 		t.Parallel()
 
 		cities := stored()
-		err := NewService(cities, &stubObservations{}).DeleteMeCity(t.Context(), caller, "city-other-thaw")
+		err := NewService(cities, &stubObservations{}, &stubForecasts{}).DeleteMeCity(t.Context(), caller, "city-other-thaw")
 
 		require.ErrorIs(t, err, internal.ErrNotFound)
 		require.NotErrorIs(t, err, ErrForcedSubscription,
@@ -674,12 +698,12 @@ func TestService_DeleteMeCity(t *testing.T) {
 
 		lookupBroken := stored()
 		lookupBroken.getErr = down
-		require.ErrorIs(t, NewService(lookupBroken, &stubObservations{}).
+		require.ErrorIs(t, NewService(lookupBroken, &stubObservations{}, &stubForecasts{}).
 			DeleteMeCity(t.Context(), caller, "city-1"), down)
 
 		removeBroken := stored()
 		removeBroken.removeErr = down
-		require.ErrorIs(t, NewService(removeBroken, &stubObservations{}).
+		require.ErrorIs(t, NewService(removeBroken, &stubObservations{}, &stubForecasts{}).
 			DeleteMeCity(t.Context(), caller, "city-1"), down)
 	})
 }
@@ -693,7 +717,7 @@ func TestService_DeleteMeLocation(t *testing.T) {
 		t.Parallel()
 
 		cities := &stubCities{}
-		require.NoError(t, NewService(cities, &stubObservations{}).DeleteMeLocation(t.Context(), caller, "1234"))
+		require.NoError(t, NewService(cities, &stubObservations{}, &stubForecasts{}).DeleteMeLocation(t.Context(), caller, "1234"))
 
 		require.Len(t, cities.removedByLocation, 1)
 		assert.Equal(t, domain.UserTypeTelegram, cities.removedByLocation[0].userType)
@@ -706,7 +730,7 @@ func TestService_DeleteMeLocation(t *testing.T) {
 		t.Parallel()
 
 		cities := &stubCities{removeByLocationErr: internal.ErrNotFound}
-		err := NewService(cities, &stubObservations{}).DeleteMeLocation(t.Context(), caller, "1234")
+		err := NewService(cities, &stubObservations{}, &stubForecasts{}).DeleteMeLocation(t.Context(), caller, "1234")
 
 		require.ErrorIs(t, err, internal.ErrNotFound,
 			"no such location for anyone and somebody else's location are one answer")
@@ -717,7 +741,75 @@ func TestService_DeleteMeLocation(t *testing.T) {
 
 		down := errors.New("db down")
 		cities := &stubCities{removeByLocationErr: down}
-		require.ErrorIs(t, NewService(cities, &stubObservations{}).
+		require.ErrorIs(t, NewService(cities, &stubObservations{}, &stubForecasts{}).
 			DeleteMeLocation(t.Context(), caller, "1234"), down)
+	})
+}
+
+func TestServiceObtainMeCurrentForecast(t *testing.T) {
+	t.Parallel()
+
+	newCity := func(locationID, displayName string) domain.WeatherUserCity {
+		return domain.WeatherUserCity{
+			ID:          "city-" + locationID,
+			UserType:    domain.UserTypeTelegram,
+			UserID:      "42",
+			LocationID:  locationID,
+			DisplayName: displayName,
+			Timezone:    "Asia/Almaty",
+			NotifyKind:  domain.WeatherNotifyMorningSummary,
+			NotifyHour:  7,
+		}
+	}
+
+	t.Run("attaches the stored outlook to its city", func(t *testing.T) {
+		t.Parallel()
+		cities := &stubCities{cities: []domain.WeatherUserCity{newCity("1234", "Almaty")}}
+		forecasts := &stubForecasts{days: map[string][]domain.WeatherForecastDay{
+			"1234": {{ForecastDate: "2026-08-21"}, {ForecastDate: "2026-08-22"}},
+		}}
+
+		got, err := NewService(cities, &stubObservations{}, forecasts).ObtainMeCurrent(t.Context(), "42")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.Len(t, got[0].Forecast, 2)
+		assert.Equal(t, "2026-08-21", got[0].Forecast[0].ForecastDate)
+	})
+
+	t.Run("a location with no outlook yet is carried with an empty one", func(t *testing.T) {
+		t.Parallel()
+		cities := &stubCities{cities: []domain.WeatherUserCity{newCity("1234", "Almaty")}}
+
+		got, err := NewService(cities, &stubObservations{}, &stubForecasts{}).ObtainMeCurrent(t.Context(), "42")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Empty(t, got[0].Forecast, "a daily fetch lags a freshly added city; that is a state, not a failure")
+	})
+
+	t.Run("one read per distinct location, not one per subscription", func(t *testing.T) {
+		t.Parallel()
+		twoKinds := newCity("1234", "Almaty")
+		twoKinds.NotifyKind = domain.WeatherNotifyAlertHeat
+		cities := &stubCities{cities: []domain.WeatherUserCity{newCity("1234", "Almaty"), twoKinds}}
+		forecasts := &stubForecasts{}
+
+		got, err := NewService(cities, &stubObservations{}, forecasts).ObtainMeCurrent(t.Context(), "42")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, 1, forecasts.calls)
+	})
+
+	t.Run("an unloadable timezone costs the city its outlook, not its reading", func(t *testing.T) {
+		t.Parallel()
+		broken := newCity("1234", "Almaty")
+		broken.Timezone = "Mars/Olympus_Mons"
+		cities := &stubCities{cities: []domain.WeatherUserCity{broken}}
+		forecasts := &stubForecasts{}
+
+		got, err := NewService(cities, &stubObservations{}, forecasts).ObtainMeCurrent(t.Context(), "42")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Empty(t, got[0].Forecast)
+		assert.Zero(t, forecasts.calls, "an outlook cannot be windowed without a local day to anchor it")
 	})
 }
