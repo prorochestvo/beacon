@@ -326,6 +326,15 @@ func (a *WeatherCheckAgent) runOutlookPhase(ctx context.Context, now time.Time) 
 		}
 
 		outlook := domain.NewWeatherOutlook(days, baseline)
+		if outlook.AheadDays() == 0 {
+			// Rows exist but none of them is in the future — a window that has drained
+			// from the front because collection stopped days ago. That is not an outlook
+			// with nothing in it, it is an outlook with nothing to look at, and it is
+			// treated like a missing one: no message, no cursor, resumes when collection
+			// does.
+			fmt.Fprintf(a.logger, "weather outlook: city %s location %s: window holds no future day, skipping\n", city.ID, city.LocationID)
+			continue
+		}
 		signature := outlook.Signature()
 
 		// Two quiet cases. The outlook is unchanged since the last digest; or this is the

@@ -1606,3 +1606,41 @@ func TestWeatherCheckAgent_OutlookPhase(t *testing.T) {
 		require.Len(t, eventRepo.retained, 1, "one phase failing must not silence another")
 	})
 }
+
+func TestWeatherCheckAgentOutlookDrainedWindow(t *testing.T) {
+	t.Parallel()
+
+	// A window that holds only the baseline day is what a location looks like after the
+	// collector has been down long enough for retention to drain the front of it.
+	city := domain.WeatherUserCity{
+		ID:          "o1",
+		UserType:    domain.UserTypeTelegram,
+		UserID:      "user1",
+		LocationID:  "loc1",
+		DisplayName: "Astana",
+		Timezone:    "UTC",
+		NotifyKind:  domain.WeatherNotifyForecastOutlook,
+		NotifyHour:  0,
+		NotifyState: "o1:2026-08-23:R+",
+	}
+	cityRepo := &mockWeatherCheckCityRepo{citiesByKind: map[domain.WeatherNotifyKind][]domain.WeatherUserCity{
+		domain.WeatherNotifyForecastOutlook: {city},
+	}}
+	forecastRepo := &mockWeatherCheckForecastRepo{days: map[string][]domain.WeatherForecastDay{
+		"loc1": {{ForecastDate: time.Now().UTC().Format(time.DateOnly), Provider: domain.ProviderOpenMeteo}},
+	}}
+	eventRepo := &mockCheckEventRepository{}
+
+	a := &WeatherCheckAgent{
+		cityRepo:     cityRepo,
+		obsRepo:      &mockWeatherCheckObsRepo{},
+		forecastRepo: forecastRepo,
+		eventRepo:    eventRepo,
+		logger:       io.Discard,
+	}
+	require.NoError(t, a.Run(t.Context()))
+
+	assert.Empty(t, eventRepo.retained, "a window with no future day is not an outlook that cleared")
+	assert.Empty(t, cityRepo.states)
+	assert.Empty(t, cityRepo.advanced, "the digest must resume when collection does")
+}
