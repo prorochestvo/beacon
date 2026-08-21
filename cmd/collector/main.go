@@ -94,6 +94,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("repositories: %s", err.Error())
 	}
+	weatherForecastRepo, err := repository.NewWeatherForecastDayRepository(db)
+	if err != nil {
+		log.Fatalf("repositories: %s", err.Error())
+	}
 	metaRepo, err := repository.NewServiceMetaRepository(db)
 	if err != nil {
 		log.Fatalf("repositories: %s", err.Error())
@@ -112,7 +116,7 @@ func main() {
 
 	runners, err := buildRunners(
 		sourceRepo, historyRepo, rateValueRepo,
-		weatherCityRepo, weatherObsRepo,
+		weatherCityRepo, weatherObsRepo, weatherForecastRepo,
 		l.WriterAs(internal.LogLevelWarning),
 	)
 	if err != nil {
@@ -262,6 +266,7 @@ func buildRunners(
 	value *repository.RateValueRepository,
 	weatherCity *repository.WeatherUserCityRepository,
 	weatherObs *repository.WeatherObservationRepository,
+	weatherForecast *repository.WeatherForecastDayRepository,
 	logger io.Writer,
 ) ([]runner, error) {
 	// Passing the proxy URL does not route anything through it: the extractor builds a
@@ -280,17 +285,21 @@ func buildRunners(
 		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
-	weatherAgent, err := wireWeather(weatherCity, weatherObs, logger)
+	weatherAgents, err := wireWeather(weatherCity, weatherObs, weatherForecast, logger)
 	if err != nil {
 		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
-	return []runner{collectionRateAgent, weatherAgent}, nil
+	return append([]runner{collectionRateAgent}, weatherAgents...), nil
 }
 
-// wireWeather constructs the Open-Meteo weather collection agent. Open-Meteo is
-// hardcoded and always on — there is no per-provider config table and no "inactive"
-// state, so this always returns a non-nil runner. An agent construction failure is fatal
+// wireWeather constructs the two Open-Meteo weather collection agents: current conditions
+// on an hourly throttle, and the multi-week daily forecast on a once-per-UTC-day gate. They
+// share one provider instance and are separate runners because their cadences and their
+// tables are different; see the type comments in the collection package.
+//
+// Open-Meteo is hardcoded and always on — there is no per-provider config table and no
+// "inactive" state, so this always returns runners. An agent construction failure is fatal
 // and returned as an error.
 //
 // Direct, like the rate sources, which also makes this consistent with cmd/web: the
@@ -299,8 +308,9 @@ func buildRunners(
 func wireWeather(
 	weatherCity *repository.WeatherUserCityRepository,
 	weatherObs *repository.WeatherObservationRepository,
+	weatherForecast *repository.WeatherForecastDayRepository,
 	logger io.Writer,
-) (runner, error) {
+) ([]runner, error) {
 	openMeteoProvider, err := weatherinfra.NewOpenMeteo("", logger)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("weather: open-meteo provider: %w", err), loginjector.NewTraceError())
@@ -314,5 +324,14 @@ func wireWeather(
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("weather: agent: %w", err), loginjector.NewTraceError())
 	}
-	return weatherAgent, nil
+
+	forecastAgent, err := collection.NewWeatherForecastAgent(
+		openMeteoProvider, weatherCity, weatherForecast,
+		logger,
+	)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("weather: forecast agent: %w", err), loginjector.NewTraceError())
+	}
+
+	return []runner{weatherAgent, forecastAgent}, nil
 }
