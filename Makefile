@@ -4,7 +4,12 @@ SHELL := /bin/bash
 
 ROOT_DIRECTORY := $(shell pwd)
 PROJECT_NAME := $(shell basename "$(PWD)")
-VERSION := $(shell git describe --tags --always)
+# --match 'r_*': describe is otherwise unqualified and an s_* gate tag, which by
+# design sits on the commit being checked, outranks the release tag behind it.
+# Nothing consumes VERSION today, so that would be harmless right up until
+# someone wires it into a build stamp and a gate tag silently brands a binary as
+# a release.
+VERSION := $(shell git describe --tags --always --match 'r_*')
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 BUILD := $(shell git rev-parse --short HEAD)
 TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
