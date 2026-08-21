@@ -36,6 +36,8 @@ const (
 	KindWeatherUserCity Kind = "WUC"
 	// KindWeatherObservation is the Kind for weather_observations entities.
 	KindWeatherObservation Kind = "WOB"
+	// KindWeatherForecastDay is the Kind for weather_forecast_days entities.
+	KindWeatherForecastDay Kind = "WFD"
 )
 
 // New returns a new unique string identifier for the given Kind, in the format:
