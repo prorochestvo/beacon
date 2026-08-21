@@ -34,6 +34,7 @@ var (
 	_ appsub.ValuesLoader           = (*stubMeRateValueRepo)(nil)
 	_ appweather.CitiesStore        = (*stubWeatherCityRepo)(nil)
 	_ appweather.ObservationsLoader = (*stubWeatherObsRepo)(nil)
+	_ appweather.ForecastLoader     = (*stubWeatherForecastRepo)(nil)
 )
 
 // meRoutes is every method+path under /api/v1/me, the project's only authenticated

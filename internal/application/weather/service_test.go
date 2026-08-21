@@ -15,6 +15,7 @@ import (
 var (
 	_ CitiesStore        = (*stubCities)(nil)
 	_ ObservationsLoader = (*stubObservations)(nil)
+	_ ForecastLoader     = (*stubForecasts)(nil)
 )
 
 // stubCities serves a fixed city list and records the (userType, userID) pair it
