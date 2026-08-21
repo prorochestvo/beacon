@@ -1,6 +1,6 @@
 ---
 name: beacon-storage
-description: Beacon's SQLite storage rules beyond the basics — the hot/archive tiering of rate_values and execution_history (why one file, why reads UNION both tiers and writes touch only hot, roll-over, retention, VACUUM), the migrator contract and the immutable migration filename convention, columns that look droppable but are not, and how to read production data out of a gzipped snapshot. Load before writing or reviewing any query in internal/repository or internal/infrastructure/sqlitedb, adding or altering a migration under ./migrations, touching collection.MaintenanceAgent, sqlitedb.Migrator, Transaction/ReadOnlyTransaction, RetainRateSource, rate_source_health or weather_observations, or inspecting the production database.
+description: Beacon's SQLite storage rules beyond the basics — the hot/archive tiering of rate_values and execution_history (why one file, why reads UNION both tiers and writes touch only hot, roll-over, retention, VACUUM), the migrator contract and the immutable migration filename convention, columns that look droppable but are not, why weather_forecast_days is bounded rather than tiered, why historical migration tests must not seed through a repository, and how to read production data out of a gzipped snapshot. Load before writing or reviewing any query in internal/repository or internal/infrastructure/sqlitedb, adding or altering a migration under ./migrations, touching collection.MaintenanceAgent, sqlitedb.Migrator, Transaction/ReadOnlyTransaction, RetainRateSource, rate_source_health, weather_observations, weather_forecast_days or RetainWeatherForecastDays, writing a test against stubSQLiteDBThrough, or inspecting the production database.
 ---
 
 # Beacon storage
@@ -89,6 +89,37 @@ Repository files in `internal/repository/` reference table and column names excl
 through `const` declarations (e.g. `rateSourceTableName`, `rateSourceNameFieldName`) so a
 schema rename surfaces at compile time and via `grep`, never via a runtime "no such column"
 error.
+
+### `weather_forecast_days` is bounded, not tiered
+
+The long-range forecast table is a **bounded working set**, `locations × 16` rows, upserted
+in place on the natural key `(location_id, provider, forecast_date)`. The tiering rule above
+governs append-only telemetry and does not apply here: there is nothing an `*_archive` twin
+could hold, no roll-over, and no reason for a read to union two branches. Do not "fix" that.
+
+Three things about it that are decisions rather than omissions:
+
+- **A whole fetch is one transaction.** `RetainWeatherForecastDays` writes all sixteen rows
+  under one `BEGIN`: a day's forecast is a single observation of the future, and the write
+  lock is taken at `BEGIN` (`_txlock=immediate`), so sixteen transactions would take and
+  release it sixteen times per location against three processes sharing the file.
+- **Retention is keyed on `forecast_date`, never on `captured_at`.** Rows are superseded
+  while the day is still ahead and dropped once it is behind. A `captured_at` sweep — which
+  is what `weather_observations` uses — would delete a still-future day the moment its
+  location stopped being refreshed.
+- **No foreign key to `weather_user_cities`.** A location whose last subscriber leaves stops
+  being refreshed and ages out within the horizon; cascading would tie the lifetime of
+  public meteorological data to one user's subscription row.
+
+### Historical migration tests must not go through a repository
+
+`weatherusercity_backfill_test.go` and `weatherusercity_backfillrain_test.go` exercise
+migrations 021 and 026 against a snapshot of the schema **as it was when those migrations
+were written** (`stubSQLiteDBThrough`), because both reference columns that later migrations
+drop. Seeding or reading such a snapshot through `WeatherUserCityRepository` fails on every
+column added afterwards: its SQL always names the current schema. Use
+`seedHistoricalWeatherUserCity` / `obtainHistoricalWeatherUserCities` in `main_test.go`,
+whose column list (`weatherUserCityEraColumns`) is frozen to that era on purpose.
 
 ### Two columns a migration must not "clean up"
 
