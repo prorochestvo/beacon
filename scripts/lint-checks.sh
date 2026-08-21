@@ -143,4 +143,35 @@ while IFS= read -r file; do
 	done <<<"$types"
 done < <(scan_list '_test\.go$')
 
+# Every Go package must sit under a root the Makefile actually walks.
+#
+# GO_PKGS names ./cmd/..., ./internal/... and ./migrations/... explicitly instead
+# of ./..., because .gitignore is invisible to the Go toolchain and ./tmp/ is
+# therefore still inside the module — a stale scratch .go file there breaks build,
+# test, lint and format. The cost of an explicit list is that it narrows in
+# silence: a new top-level root would simply stop being checked, and nothing would
+# say so. This is what makes that narrowing loud instead.
+#
+# The roots are parsed out of the Makefile rather than restated here. A second
+# copy would be a second thing to keep in sync, which is the failure mode the
+# variable exists to remove.
+if command -v go >/dev/null 2>&1 && [ -f Makefile ]; then
+	roots=$(sed -n 's/^GO_PKGS[[:space:]]*:=[[:space:]]*//p' Makefile \
+		| tr ' ' '\n' | sed 's|^\./||; s|/\.\.\.$||' | grep -v '^$' | paste -sd'|' -)
+	if [ -n "$roots" ]; then
+		module=$(go list -m 2>/dev/null)
+		# -e so a package that does not compile is still reported by location rather
+		# than aborting the scan; a broken package is golangci-lint's business, and
+		# its position in the tree is this check's.
+		outside=$(go list -e ./... 2>/dev/null \
+			| sed "s|^${module}/||" \
+			| grep -vE "^(${roots})(/|\$)" \
+			| grep -vE '^tmp(/|$)' || true)
+		if [ -n "$outside" ]; then
+			report "Go packages outside the roots GO_PKGS walks — they are not linted, vetted or tested (add them to GO_PKGS in the Makefile, or move them under ./tmp/):"
+			printf '  %s\n' $outside >&2
+		fi
+	fi
+fi
+
 exit $status
