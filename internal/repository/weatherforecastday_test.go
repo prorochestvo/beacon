@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -184,7 +183,7 @@ func TestWeatherForecastDayRepository_ObtainLatestForecastCapture(t *testing.T) 
 
 		_, err := repo.ObtainLatestForecastCapture(t.Context(), "nobody", domain.ProviderOpenMeteo)
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, internal.ErrNotFound))
+		assert.ErrorIs(t, err, internal.ErrNotFound)
 	})
 }
 

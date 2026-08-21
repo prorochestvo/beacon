@@ -120,12 +120,12 @@ func TestWeatherOutlook_NotableDays(t *testing.T) {
 		o := NewWeatherOutlook([]WeatherForecastDay{
 			tempDay("2026-11-01", 2, 8),    // baseline: above
 			tempDay("2026-11-02", 1, 6),    // above, no change
-			tempDay("2026-11-03", -2, 4),   // crossing  <- transition
+			tempDay("2026-11-03", -2, 4),   // crossing: reported
 			tempDay("2026-11-04", -3, 3),   // crossing, no change
-			tempDay("2026-11-05", -9, -1),  // below     <- transition
+			tempDay("2026-11-05", -9, -1),  // below: reported
 			tempDay("2026-11-06", -12, -4), // below, no change
 			tempDay("2026-11-07", -11, -3), // below, no change
-			tempDay("2026-11-08", -2, 5),   // crossing  <- transition
+			tempDay("2026-11-08", -2, 5),   // crossing: reported
 		}, "2026-11-01")
 		got := o.NotableDays()
 		require.Len(t, got, 3)
@@ -194,8 +194,9 @@ func TestWeatherOutlook_Signature(t *testing.T) {
 			wet.RainSum = f(1.3)
 			return NewWeatherOutlook([]WeatherForecastDay{tempDay("2026-08-21", 11.2, 21.5), wet}, "2026-08-21")
 		}
-		assert.Equal(t, build().Signature(), build().Signature())
-		assert.Equal(t, "o1:2026-08-23:R+", build().Signature())
+		first, second := build().Signature(), build().Signature()
+		assert.Equal(t, first, second)
+		assert.Equal(t, "o1:2026-08-23:R+", first)
 	})
 
 	t.Run("a changed flag changes the signature", func(t *testing.T) {

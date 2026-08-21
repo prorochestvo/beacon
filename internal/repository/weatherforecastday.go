@@ -108,11 +108,11 @@ func (r *WeatherForecastDayRepository) ObtainLatestForecastCapture(ctx context.C
 	// MAX over an empty set is one row holding NULL, not zero rows, so the miss arrives as
 	// a nil string rather than as sql.ErrNoRows.
 	var capturedAt *string
-	if err := tx.QueryRowContext(ctx, query, locationID, provider).Scan(&capturedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	if scanErr := tx.QueryRowContext(ctx, query, locationID, provider).Scan(&capturedAt); scanErr != nil {
+		if errors.Is(scanErr, sql.ErrNoRows) {
 			return time.Time{}, internal.ErrNotFound
 		}
-		return time.Time{}, errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
+		return time.Time{}, errors.Join(scanErr, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
 	if capturedAt == nil || *capturedAt == "" {
 		return time.Time{}, internal.ErrNotFound
