@@ -4,6 +4,15 @@ Tests run on every push/PR to `main` (`.github/workflows/ci.main.yml`).
 Production deployment is driven by `.github/workflows/release.yml`, which fires
 on an `r_*` release tag — see that file for the live procedure.
 
+The same workflow also fires on an **`s_*` tag, which runs the gate and stops**:
+lint, the full suite, and a production-shape build, then nothing. No artifact is
+uploaded, no symlink moves, no host is contacted — the `deploy` job guards on the
+leading `r`. Use it to run the real gate on CI hardware when the dev machine
+cannot; the 8 GB Pi has no swap and the kernel OOM-kills `golangci-lint` under
+load. Name them however you like (`s_0.0.4-check`), and delete them afterwards or
+keep them as a record that a commit passed — nothing downstream reads them, and
+`git describe` prefers the `r_*` tags the Makefile matches on.
+
 ## On-server layout
 
 The host follows the standard release layout: immutable per-version artifact
