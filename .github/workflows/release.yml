@@ -6,6 +6,14 @@ name: release
 # VERSION_ID. NOTE: the PRIME environment also gates which tags may deploy; if its
 # policy is r_*, use r_X.Y.Z (widen it to r* to allow bare rX.Y.Z too).
 #
+# An s* tag runs the gate and nothing else: lint, the full suite, and a
+# production-shape build, then stop. No artifact is uploaded, no symlink moves,
+# no host is contacted. It exists because the full gate is not always runnable
+# locally — the dev machine is an 8 GB Pi with no swap and the kernel OOM-kills
+# golangci-lint under load — so `s_<anything>` is the way to run the real thing
+# on hardware that can. The deploy job guards on the leading r rather than
+# relying on the trigger, so the two can never be confused.
+#
 # Deploy model (see the release-layout convention): build the four binaries,
 # upload them into an immutable, never-reused artifacts/<VERSION_ID>/ dir, flip
 # the bin/release channel symlink, migrate + restart, and health-gate with an
@@ -15,6 +23,7 @@ on:
   push:
     tags:
       - 'r*'
+      - 's*'
 
 permissions:
   contents: read
@@ -54,6 +63,28 @@ jobs:
           exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
           make test
 
+      # Production-shape build: CGO off, linux/amd64, the same artifacts a release
+      # ships. Catches "tests pass but the production build breaks" — build tags,
+      # race-only files, a missing wasm asset.
+      #
+      # s* only. An r* tag builds for real in the deploy job moments later, so
+      # running it here too would slow every release down to re-prove the same
+      # thing. This mirrors ci.main.yml's Sanity build, which an s* tag would
+      # otherwise be the only gate not to have.
+      - name: Sanity build
+        if: startsWith(github.ref_name, 's')
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
+          mkdir -p ./cmd/web/static
+          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" ./cmd/web/static/wasm_exec.js
+          GOOS=js GOARCH=wasm go build -o ./cmd/web/static/app.wasm ./cmd/wasm
+          GOOS=linux GOARCH=amd64 go build -o ./build/webapp ./cmd/web
+          GOOS=linux GOARCH=amd64 go build -o ./build/collector ./cmd/collector
+          GOOS=linux GOARCH=amd64 go build -o ./build/notifier ./cmd/notifier
+          GOOS=linux GOARCH=amd64 go build -o ./build/migrator ./cmd/migrator
+
       # No failure notification here, deliberately. One was added and then removed:
       # the Telegram credentials live on the PRIME environment, which this job does
       # not carry and must not — it runs `make test`, i.e. arbitrary project and
@@ -67,6 +98,11 @@ jobs:
       # failure, so that is the channel that has always carried them. See #118.
 
   deploy:
+    # r* only. The trigger admits s* as well, and an s* tag must never reach a
+    # host: guarding here rather than on the trigger means the gate job is shared
+    # verbatim between the two, so what an s* tag proves is exactly what an r*
+    # tag will be held to.
+    if: startsWith(github.ref_name, 'r')
     environment: PRIME
     runs-on: ubuntu-latest
     needs: lint-and-test
