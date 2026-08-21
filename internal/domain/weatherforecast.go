@@ -179,6 +179,19 @@ func NewWeatherOutlook(days []WeatherForecastDay, baseline string) WeatherOutloo
 	return WeatherOutlook{days: window, baseline: baseline}
 }
 
+// AheadDays returns how many days beyond the baseline the window actually holds. It is what
+// a message may honestly claim to cover, which is not the same as the horizon requested: a
+// fetch can come back short, and rows age out of the near end of the window as the day turns.
+func (o WeatherOutlook) AheadDays() int {
+	ahead := 0
+	for _, d := range o.days {
+		if d.ForecastDate > o.baseline {
+			ahead++
+		}
+	}
+	return ahead
+}
+
 // Days returns the whole window ascending by date, baseline day included. This is the
 // view's input; NotableDays is the notification's.
 func (o WeatherOutlook) Days() []WeatherForecastDay {

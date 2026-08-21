@@ -174,3 +174,73 @@ func formatWeatherTemp(v float64) string {
 	// with the U+2212 MINUS SIGN for visual alignment with the FX table style.
 	return fmt.Sprintf("%s%.1f°C", minusSign, -v)
 }
+
+// RenderForecastOutlook produces the Telegram HTML multi-week outlook digest for city.
+//
+// It lists only the days the outlook considers notable — rain, snow, or a change in the
+// freezing regime — because a line per day over two weeks is a wall of text whose signal is
+// the three lines that differ. Days whose entry is new or has changed since prevSignature
+// carry a marker; when prevSignature names no comparable previous state, nothing is marked,
+// since marking every line of a first digest tells the reader nothing.
+//
+// Returns an error only for a city of the wrong kind, which is a wiring bug rather than a
+// message. A forecast date that will not parse degrades to the raw date rather than failing
+// the digest: the reader loses a weekday name, not the warning.
+func RenderForecastOutlook(city domain.WeatherUserCity, outlook domain.WeatherOutlook, prevSignature string) (string, error) {
+	if city.NotifyKind != domain.WeatherNotifyForecastOutlook {
+		return "", fmt.Errorf("RenderForecastOutlook: city %s is %q, not %q", city.ID, city.NotifyKind, domain.WeatherNotifyForecastOutlook)
+	}
+
+	cityName := html.EscapeString(city.DisplayName)
+	notable := outlook.NotableDays()
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "🗓 <b>Outlook — %s</b>\n", cityName)
+
+	if len(notable) == 0 {
+		fmt.Fprintf(&sb, "No rain, snow or freezing change in the next %d days.", outlook.AheadDays())
+		return sb.String(), nil
+	}
+
+	change := domain.CompareWeatherOutlookSignatures(prevSignature, outlook.Signature())
+
+	fmt.Fprintf(&sb, "Next %d days\n", outlook.AheadDays())
+	for _, day := range notable {
+		sb.WriteByte('\n')
+		if change.Changed[day.ForecastDate] {
+			sb.WriteString("🆕 ")
+		}
+		fmt.Fprintf(&sb, "<b>%s</b>", html.EscapeString(formatForecastDate(day.ForecastDate)))
+		if day.IsRainDay() && day.RainSum != nil {
+			fmt.Fprintf(&sb, "  🌧 %.1f mm", *day.RainSum)
+		}
+		if day.IsSnowDay() && day.SnowfallSum != nil {
+			fmt.Fprintf(&sb, "  ❄ %.1f cm", *day.SnowfallSum)
+		}
+		fmt.Fprintf(&sb, "  %s", day.ZeroState().Symbol())
+		if day.TempMax != nil && day.TempMin != nil {
+			fmt.Fprintf(&sb, " %s / %s", formatWeatherTemp(*day.TempMax), formatWeatherTemp(*day.TempMin))
+		}
+	}
+
+	if len(change.Cleared) > 0 {
+		labels := make([]string, 0, len(change.Cleared))
+		for _, date := range change.Cleared {
+			labels = append(labels, html.EscapeString(formatForecastDate(date)))
+		}
+		fmt.Fprintf(&sb, "\n\nCleared: %s", strings.Join(labels, ", "))
+	}
+
+	return sb.String(), nil
+}
+
+// formatForecastDate turns a YYYY-MM-DD forecast date into "Sun 23 Aug". The date is already
+// city-local, so it is parsed as a bare calendar day and never converted; an unparseable one
+// is returned verbatim rather than dropped.
+func formatForecastDate(forecastDate string) string {
+	t, err := time.Parse(time.DateOnly, forecastDate)
+	if err != nil {
+		return forecastDate
+	}
+	return t.Format("Mon 2 Jan")
+}
