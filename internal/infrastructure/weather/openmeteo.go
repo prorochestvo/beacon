@@ -184,6 +184,44 @@ func (o *OpenMeteo) Forecast(ctx context.Context, lat, lng float64) (*domain.Wea
 	return decodeOpenMeteoForecast(body, lat, lng)
 }
 
+// ForecastRange fetches the multi-week daily forecast for the given coordinates: one
+// domain.WeatherForecastDay per city-local calendar day, starting with today, over
+// domain.WeatherOutlookHorizonDays days.
+//
+// It is a second request rather than a widening of Forecast, on purpose. Forecast decodes
+// daily index [0], and that index IS today for the morning summary and for all four
+// daily-metric alert latches; changing what it asks for or how it decodes would put their
+// meaning at risk of a shift that nothing would report. A separate request costs roughly one
+// weighted API call per location per day against a budget of 10,000, which is the cheaper
+// side of that trade.
+//
+// The returned days carry no LocationID — the caller owns the location key — and no ID; the
+// repository mints one.
+func (o *OpenMeteo) ForecastRange(ctx context.Context, lat, lng float64) ([]domain.WeatherForecastDay, error) {
+	u, err := url.Parse(openMeteoForecastBase)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+	q := u.Query()
+	q.Set("latitude", fmt.Sprintf("%f", lat))
+	q.Set("longitude", fmt.Sprintf("%f", lng))
+	// rain_sum and snowfall_sum are requested alongside precipitation_sum rather than
+	// derived from it: the rain-or-snow distinction is the whole question this fetch
+	// answers, and a combined total cannot be split back apart. Their units differ —
+	// rain in millimetres, snowfall in centimetres.
+	q.Set("daily", "temperature_2m_max,temperature_2m_min,rain_sum,snowfall_sum,precipitation_sum,precipitation_probability_max,weather_code")
+	q.Set("timezone", "auto")
+	q.Set("forecast_days", strconv.Itoa(domain.WeatherOutlookHorizonDays))
+	u.RawQuery = q.Encode()
+
+	body, err := o.get(ctx, u.String())
+	if err != nil {
+		return nil, err
+	}
+
+	return decodeOpenMeteoForecastRange(body)
+}
+
 // get fetches rawURL, re-sending the request when the failure looks transient.
 //
 // Open-Meteo intermittently answers 5xx — 59% of forecast fetches met one over five days
@@ -510,6 +548,67 @@ func decodeOpenMeteoForecast(body []byte, lat, lng float64) (*domain.WeatherObse
 	return obs, nil
 }
 
+// decodeOpenMeteoForecastRange is the pure-decode step for ForecastRange, extracted so
+// tests can exercise it without a live HTTP server.
+//
+// Every measurement array is read by index against daily.time and every element is a
+// pointer. Open-Meteo returns the arrays parallel and writes JSON null where it has no
+// value, so a short array or a null must yield a nil measurement — decoding into []float64
+// would turn both into a very believable 0.0, and "0 mm of rain" on a day the model has no
+// answer for is exactly the kind of wrong that reads as data.
+func decodeOpenMeteoForecastRange(body []byte) ([]domain.WeatherForecastDay, error) {
+	var resp struct {
+		Daily struct {
+			Time                 []string   `json:"time"`
+			Temperature2mMax     []*float64 `json:"temperature_2m_max"`
+			Temperature2mMin     []*float64 `json:"temperature_2m_min"`
+			RainSum              []*float64 `json:"rain_sum"`
+			SnowfallSum          []*float64 `json:"snowfall_sum"`
+			PrecipitationSum     []*float64 `json:"precipitation_sum"`
+			PrecipitationProbMax []*int     `json:"precipitation_probability_max"`
+			WeatherCode          []*int     `json:"weather_code"`
+		} `json:"daily"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("open-meteo forecast range: decode response: %w", err),
+			loginjector.NewTraceError(),
+		)
+	}
+
+	if len(resp.Daily.Time) == 0 {
+		return nil, errors.Join(
+			errors.New("open-meteo forecast range: daily[] array is empty"),
+			loginjector.NewTraceError(),
+		)
+	}
+
+	// One capture instant for the whole fetch: the sixteen rows are a single observation of
+	// the future, and the collector's daily gate compares against exactly this value.
+	capturedAt := time.Now().UTC()
+
+	days := make([]domain.WeatherForecastDay, 0, len(resp.Daily.Time))
+	for i, date := range resp.Daily.Time {
+		if date == "" {
+			continue // a day with no calendar date has no natural key to be stored under
+		}
+		days = append(days, domain.WeatherForecastDay{
+			Provider:      domain.ProviderOpenMeteo,
+			ForecastDate:  date,
+			CapturedAt:    capturedAt,
+			TempMax:       valueAt(resp.Daily.Temperature2mMax, i),
+			TempMin:       valueAt(resp.Daily.Temperature2mMin, i),
+			RainSum:       valueAt(resp.Daily.RainSum, i),
+			SnowfallSum:   valueAt(resp.Daily.SnowfallSum, i),
+			PrecipSum:     valueAt(resp.Daily.PrecipitationSum, i),
+			PrecipProbMax: valueAt(resp.Daily.PrecipitationProbMax, i),
+			WeatherCode:   valueAt(resp.Daily.WeatherCode, i),
+		})
+	}
+
+	return days, nil
+}
+
 func isRetryable(err error) bool {
 	var r retryableError
 	return errors.As(err, &r)
@@ -560,6 +659,15 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+// valueAt returns the i-th element of a parallel Open-Meteo measurement array, or nil when
+// the array is shorter than daily.time or holds a null at that index.
+func valueAt[T any](values []*T, i int) *T {
+	if i >= len(values) {
+		return nil
+	}
+	return values[i]
 }
 
 func float64Ptr(v float64) *float64 { return &v }

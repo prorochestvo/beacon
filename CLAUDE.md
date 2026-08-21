@@ -13,8 +13,8 @@ for its subject — this file only keeps the tripwire.
 
 | Skill | Load before touching |
 |---|---|
-| `beacon-collection` | `cmd/collector`, `rateextractor`, `application/collection`, `infrastructure/weather`, `SourceHealthAgent`, `rate_sources` rows, `BEACON_PROXY_URL` / `options.use_proxy`, weather alert kinds |
-| `beacon-storage` | any `internal/repository` query, any `./migrations/*.sql`, `MaintenanceAgent`, `sqlitedb.Migrator`, reading the production database |
+| `beacon-collection` | `cmd/collector`, `rateextractor`, `application/collection`, `infrastructure/weather`, `SourceHealthAgent`, `rate_sources` rows, `BEACON_PROXY_URL` / `options.use_proxy`, weather alert kinds, `ForecastRange`, `forecast_outlook` |
+| `beacon-storage` | any `internal/repository` query, any `./migrations/*.sql`, `MaintenanceAgent`, `sqlitedb.Migrator`, `weather_forecast_days`, reading the production database |
 | `beacon-http-api` | `internal/gateway`, `cmd/web`, `cmd/wasm`, `cmd/web/static`, `configs/nginx.*`, any `/api/v1/me` or `/api/v1/public` route |
 | `beacon-forecasting` | `internal/tools/rateforecaster`, `internal/tools/rateanomaly` (load with `knowledge:forecasting`) |
 | `beacon-data-privacy` | any new column on a user-scoped table, anything captured from a Telegram update, any new log field |
@@ -82,6 +82,10 @@ that batching is load-bearing and easy to break. **Skill: `beacon-collection`.**
 proxied: `BEACON_PROXY_URL` says a proxy exists, `rate_sources.options.use_proxy` says the
 source wants it. No source is opted in today, and the default is a measured decision
 (issue #16) — do not reverse it casually. Chromedp and weather stay direct regardless.
+
+**Never widen `OpenMeteo.Forecast`'s `daily` block.** Its index `[0]` *is* today for the
+morning summary and all four daily-metric latches. The multi-week fetch is a separate call
+(`ForecastRange`, its own table, its own daily cadence) for exactly that reason.
 
 > `cmd/doctor` is the operator-only umbrella for LLM rule (re)generation and source auditing (`rulegen` single/`--all`, `audit --all`/`--source`). Usage, exit codes, and env vars: `cmd/doctor/README.md` + godoc.
 
@@ -178,6 +182,11 @@ column degrades them. And **runtime state never goes on `rate_sources`**: `Retai
 rewrites those rows wholesale (`cmd/doctor rulegen` does exactly that), so a column added
 there is destroyed by an unrelated config write — which is why the source-health latch lives
 in its own `rate_source_health` table.
+
+**Long-range forecast rows belong in `weather_forecast_days`, never in
+`weather_observations`**: the collector sweeps that table by `captured_at` at 48 h on every
+tick, so a row describing a day two weeks out is gone a day and a half after it is written,
+without an error anywhere.
 
 **`rate_values` and `execution_history` are tiered.** Each has an `*_archive` twin in the
 same file: reads must span both via `UNION ALL`, writes touch hot only. Getting this wrong

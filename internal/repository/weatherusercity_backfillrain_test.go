@@ -61,15 +61,13 @@ func TestWeatherUserCityBackfillRainAlertMigration(t *testing.T) {
 	t.Run("one rain row per distinct city with multiple non-rain rows", func(t *testing.T) {
 		t.Parallel()
 		sqlDB := stubSQLiteDBThrough(t, backfillRainAlertFilename)
-		repo, err := NewWeatherUserCityRepository(sqlDB)
-		require.NoError(t, err)
 
 		for _, kind := range []domain.WeatherNotifyKind{
 			domain.WeatherNotifyMorningSummary,
 			domain.WeatherNotifyAlertHeat,
 			domain.WeatherNotifyAlertThaw,
 		} {
-			require.NoError(t, repo.RetainWeatherUserCity(t.Context(), &domain.WeatherUserCity{
+			require.NoError(t, seedHistoricalWeatherUserCity(t.Context(), sqlDB, &domain.WeatherUserCity{
 				UserType:    domain.UserTypeTelegram,
 				UserID:      "ru1",
 				LocationID:  "rloc1",
@@ -86,7 +84,7 @@ func TestWeatherUserCityBackfillRainAlertMigration(t *testing.T) {
 
 		runBackfillRainAlert(t, sqlDB)
 
-		all, err := repo.ObtainWeatherUserCitiesByUserID(t.Context(), domain.UserTypeTelegram, "ru1")
+		all, err := obtainHistoricalWeatherUserCities(t.Context(), sqlDB, domain.UserTypeTelegram, "ru1")
 		require.NoError(t, err)
 		rainRows := rainRowsOf(all)
 		require.Len(t, rainRows, 1, "a 3-non-rain-row city must yield exactly one rain row")
@@ -112,10 +110,8 @@ func TestWeatherUserCityBackfillRainAlertMigration(t *testing.T) {
 	t.Run("rerun is a no-op", func(t *testing.T) {
 		t.Parallel()
 		sqlDB := stubSQLiteDBThrough(t, backfillRainAlertFilename)
-		repo, err := NewWeatherUserCityRepository(sqlDB)
-		require.NoError(t, err)
 
-		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), &domain.WeatherUserCity{
+		require.NoError(t, seedHistoricalWeatherUserCity(t.Context(), sqlDB, &domain.WeatherUserCity{
 			UserType:   domain.UserTypeTelegram,
 			UserID:     "ru2",
 			LocationID: "rloc2",
@@ -124,12 +120,12 @@ func TestWeatherUserCityBackfillRainAlertMigration(t *testing.T) {
 		}))
 
 		runBackfillRainAlert(t, sqlDB)
-		firstPass, err := repo.ObtainWeatherUserCitiesByUserID(t.Context(), domain.UserTypeTelegram, "ru2")
+		firstPass, err := obtainHistoricalWeatherUserCities(t.Context(), sqlDB, domain.UserTypeTelegram, "ru2")
 		require.NoError(t, err)
 		require.Len(t, firstPass, 2, "morning_summary + one backfilled rain row")
 
 		runBackfillRainAlert(t, sqlDB)
-		secondPass, err := repo.ObtainWeatherUserCitiesByUserID(t.Context(), domain.UserTypeTelegram, "ru2")
+		secondPass, err := obtainHistoricalWeatherUserCities(t.Context(), sqlDB, domain.UserTypeTelegram, "ru2")
 		require.NoError(t, err)
 		assert.Len(t, secondPass, 2, "rerunning the migration must insert nothing new")
 	})
@@ -137,10 +133,8 @@ func TestWeatherUserCityBackfillRainAlertMigration(t *testing.T) {
 	t.Run("city that already has a rain row keeps its own threshold", func(t *testing.T) {
 		t.Parallel()
 		sqlDB := stubSQLiteDBThrough(t, backfillRainAlertFilename)
-		repo, err := NewWeatherUserCityRepository(sqlDB)
-		require.NoError(t, err)
 
-		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), &domain.WeatherUserCity{
+		require.NoError(t, seedHistoricalWeatherUserCity(t.Context(), sqlDB, &domain.WeatherUserCity{
 			UserType:   domain.UserTypeTelegram,
 			UserID:     "ru3",
 			LocationID: "rloc3",
@@ -156,11 +150,11 @@ func TestWeatherUserCityBackfillRainAlertMigration(t *testing.T) {
 			ConditionValue: "85",
 			AlertLatched:   true,
 		}
-		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), existingRain))
+		require.NoError(t, seedHistoricalWeatherUserCity(t.Context(), sqlDB, existingRain))
 
 		runBackfillRainAlert(t, sqlDB)
 
-		all, err := repo.ObtainWeatherUserCitiesByUserID(t.Context(), domain.UserTypeTelegram, "ru3")
+		all, err := obtainHistoricalWeatherUserCities(t.Context(), sqlDB, domain.UserTypeTelegram, "ru3")
 		require.NoError(t, err)
 		rainRows := rainRowsOf(all)
 		require.Len(t, rainRows, 1, "no duplicate rain row must be created")
@@ -172,11 +166,9 @@ func TestWeatherUserCityBackfillRainAlertMigration(t *testing.T) {
 	t.Run("distinct users at the same location each get their own rain row", func(t *testing.T) {
 		t.Parallel()
 		sqlDB := stubSQLiteDBThrough(t, backfillRainAlertFilename)
-		repo, err := NewWeatherUserCityRepository(sqlDB)
-		require.NoError(t, err)
 
 		for _, userID := range []string{"ru4", "ru5"} {
-			require.NoError(t, repo.RetainWeatherUserCity(t.Context(), &domain.WeatherUserCity{
+			require.NoError(t, seedHistoricalWeatherUserCity(t.Context(), sqlDB, &domain.WeatherUserCity{
 				UserType:   domain.UserTypeTelegram,
 				UserID:     userID,
 				LocationID: "shared-rain-loc",
@@ -188,7 +180,7 @@ func TestWeatherUserCityBackfillRainAlertMigration(t *testing.T) {
 		runBackfillRainAlert(t, sqlDB)
 
 		for _, userID := range []string{"ru4", "ru5"} {
-			all, err := repo.ObtainWeatherUserCitiesByUserID(t.Context(), domain.UserTypeTelegram, userID)
+			all, err := obtainHistoricalWeatherUserCities(t.Context(), sqlDB, domain.UserTypeTelegram, userID)
 			require.NoError(t, err)
 			assert.Len(t, rainRowsOf(all), 1, "each user must get their own rain row at a shared location")
 		}

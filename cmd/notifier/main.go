@@ -102,6 +102,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("repositories: %s", err.Error())
 	}
+	weatherForecastRepo, err := repository.NewWeatherForecastDayRepository(db)
+	if err != nil {
+		log.Fatalf("repositories: %s", err.Error())
+	}
 	historyRepo, err := repository.NewExecutionHistoryRepository(db)
 	if err != nil {
 		log.Fatalf("repositories: %s", err.Error())
@@ -133,6 +137,7 @@ func main() {
 	weatherCheckAgent, err := notification.NewWeatherCheckAgent(
 		weatherCityRepo,
 		weatherObsRepo,
+		weatherForecastRepo,
 		eventRepo,
 		l.WriterAs(internal.LogLevelWarning),
 	)

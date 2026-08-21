@@ -58,20 +58,26 @@ type CurrentCity struct {
 	// the collector has not produced one yet. That is the normal state of a
 	// just-added city, not a failure, and callers render it as "no data yet".
 	Observation *domain.WeatherObservation
+	// Forecast is the multi-week outlook for City.LocationID from the city-local
+	// today onwards, ascending by date, empty until the first long-range fetch
+	// completes. It arrives on its own cadence, so a city can carry a reading
+	// with no outlook or an outlook with no reading.
+	Forecast []domain.WeatherForecastDay
 }
 
 // Service reads a user's weather subscriptions and the observations collected
 // for them. Construct it with NewService; it holds no mutable state and is safe
 // for concurrent use.
 type Service struct {
-	cities CitiesStore
-	obs    ObservationsLoader
+	cities   CitiesStore
+	obs      ObservationsLoader
+	forecast ForecastLoader
 }
 
-// NewService constructs a Service over the city-subscription and observation
-// stores. In production both are repositories.
-func NewService(cities CitiesStore, obs ObservationsLoader) *Service {
-	return &Service{cities: cities, obs: obs}
+// NewService constructs a Service over the city-subscription, observation and
+// forecast stores. In production all three are repositories.
+func NewService(cities CitiesStore, obs ObservationsLoader, forecast ForecastLoader) *Service {
+	return &Service{cities: cities, obs: obs, forecast: forecast}
 }
 
 // ObtainMeCities returns every city subscription userID owns — one row per
@@ -88,7 +94,8 @@ func (s *Service) ObtainMeCities(ctx context.Context, userID string) ([]domain.W
 //
 // A location with no observation yet is returned with a nil Observation rather
 // than dropped, so a just-added city is still listed while its first collection
-// is pending.
+// is pending. The same holds for the outlook, which is collected once a day and
+// therefore lags a freshly added city by longer.
 func (s *Service) ObtainMeCurrent(ctx context.Context, userID string) ([]CurrentCity, error) {
 	cities, err := s.cities.ObtainWeatherUserCitiesByUserID(ctx, domain.UserTypeTelegram, userID)
 	if err != nil {
@@ -113,7 +120,23 @@ func (s *Service) ObtainMeCurrent(ctx context.Context, userID string) ([]Current
 			obs = nil
 		}
 
-		current = append(current, CurrentCity{City: city, Observation: obs})
+		// The city-local day, not UTC: forecast dates are city-local, so a UTC
+		// baseline would drop today or show yesterday for most of the world.
+		baseline, dateErr := city.LocalDate(time.Now().UTC())
+		if dateErr != nil {
+			// An unloadable timezone costs this city its outlook, not its reading.
+			baseline = ""
+		}
+
+		var forecast []domain.WeatherForecastDay
+		if baseline != "" {
+			forecast, err = s.forecast.ObtainForecastDays(ctx, city.LocationID, domain.ProviderOpenMeteo, baseline, domain.WeatherOutlookHorizonDays)
+			if err != nil {
+				return nil, fmt.Errorf("forecast for %s: %w", city.LocationID, err)
+			}
+		}
+
+		current = append(current, CurrentCity{City: city, Observation: obs, Forecast: forecast})
 	}
 
 	return current, nil
@@ -295,6 +318,13 @@ type CitiesStore interface {
 // that is an expected answer here, not an error to propagate.
 type ObservationsLoader interface {
 	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
+}
+
+// ForecastLoader reads the stored multi-week outlook for one location from a
+// given city-local day onwards. An empty result is the normal state of a
+// location whose first long-range fetch has not completed, not an error.
+type ForecastLoader interface {
+	ObtainForecastDays(ctx context.Context, locationID, provider, fromDate string, limit int) ([]domain.WeatherForecastDay, error)
 }
 
 const (

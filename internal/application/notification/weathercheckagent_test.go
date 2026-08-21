@@ -17,10 +17,12 @@ import (
 
 var _ weatherCheckCityRepository = (*mockWeatherCheckCityRepo)(nil)
 var _ weatherCheckObsRepository = (*mockWeatherCheckObsRepo)(nil)
+var _ weatherCheckForecastRepository = (*mockWeatherCheckForecastRepo)(nil)
 
 // Compile-time assertions that the concrete repository types satisfy the interfaces.
 var _ weatherCheckCityRepository = &repository.WeatherUserCityRepository{}
 var _ weatherCheckObsRepository = &repository.WeatherObservationRepository{}
+var _ weatherCheckForecastRepository = &repository.WeatherForecastDayRepository{}
 
 func TestNewWeatherCheckAgent(t *testing.T) {
 	t.Parallel()
@@ -30,6 +32,7 @@ func TestNewWeatherCheckAgent(t *testing.T) {
 		a, err := NewWeatherCheckAgent(
 			&mockWeatherCheckCityRepo{},
 			&mockWeatherCheckObsRepo{},
+			&mockWeatherCheckForecastRepo{},
 			&mockCheckEventRepository{},
 			io.Discard,
 		)
@@ -39,19 +42,25 @@ func TestNewWeatherCheckAgent(t *testing.T) {
 
 	t.Run("nil cityRepo returns error", func(t *testing.T) {
 		t.Parallel()
-		_, err := NewWeatherCheckAgent(nil, &mockWeatherCheckObsRepo{}, &mockCheckEventRepository{}, io.Discard)
+		_, err := NewWeatherCheckAgent(nil, &mockWeatherCheckObsRepo{}, &mockWeatherCheckForecastRepo{}, &mockCheckEventRepository{}, io.Discard)
 		require.Error(t, err)
 	})
 
 	t.Run("nil obsRepo returns error", func(t *testing.T) {
 		t.Parallel()
-		_, err := NewWeatherCheckAgent(&mockWeatherCheckCityRepo{}, nil, &mockCheckEventRepository{}, io.Discard)
+		_, err := NewWeatherCheckAgent(&mockWeatherCheckCityRepo{}, nil, &mockWeatherCheckForecastRepo{}, &mockCheckEventRepository{}, io.Discard)
+		require.Error(t, err)
+	})
+
+	t.Run("nil forecastRepo returns error", func(t *testing.T) {
+		t.Parallel()
+		_, err := NewWeatherCheckAgent(&mockWeatherCheckCityRepo{}, &mockWeatherCheckObsRepo{}, nil, &mockCheckEventRepository{}, io.Discard)
 		require.Error(t, err)
 	})
 
 	t.Run("nil eventRepo returns error", func(t *testing.T) {
 		t.Parallel()
-		_, err := NewWeatherCheckAgent(&mockWeatherCheckCityRepo{}, &mockWeatherCheckObsRepo{}, nil, io.Discard)
+		_, err := NewWeatherCheckAgent(&mockWeatherCheckCityRepo{}, &mockWeatherCheckObsRepo{}, &mockWeatherCheckForecastRepo{}, nil, io.Discard)
 		require.Error(t, err)
 	})
 }
@@ -113,10 +122,11 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		eventRepo := &mockCheckEventRepository{}
 
 		a := &WeatherCheckAgent{
-			cityRepo:  cityRepo,
-			obsRepo:   obsRepo,
-			eventRepo: eventRepo,
-			logger:    io.Discard,
+			cityRepo:     cityRepo,
+			obsRepo:      obsRepo,
+			forecastRepo: &mockWeatherCheckForecastRepo{},
+			eventRepo:    eventRepo,
+			logger:       io.Discard,
 		}
 		require.NoError(t, a.Run(t.Context()))
 
@@ -141,10 +151,11 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		eventRepo := &mockCheckEventRepository{}
 
 		a := &WeatherCheckAgent{
-			cityRepo:  cityRepo,
-			obsRepo:   obsRepo,
-			eventRepo: eventRepo,
-			logger:    io.Discard,
+			cityRepo:     cityRepo,
+			obsRepo:      obsRepo,
+			forecastRepo: &mockWeatherCheckForecastRepo{},
+			eventRepo:    eventRepo,
+			logger:       io.Discard,
 		}
 		require.NoError(t, a.Run(t.Context()))
 		require.Empty(t, eventRepo.retained)
@@ -159,10 +170,11 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		eventRepo := &mockCheckEventRepository{}
 
 		a := &WeatherCheckAgent{
-			cityRepo:  cityRepo,
-			obsRepo:   obsRepo,
-			eventRepo: eventRepo,
-			logger:    io.Discard,
+			cityRepo:     cityRepo,
+			obsRepo:      obsRepo,
+			forecastRepo: &mockWeatherCheckForecastRepo{},
+			eventRepo:    eventRepo,
+			logger:       io.Discard,
 		}
 		require.NoError(t, a.Run(t.Context()))
 		require.Empty(t, eventRepo.retained, "no event must be queued when no observation exists")
@@ -187,10 +199,11 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		var logBuf strings.Builder
 
 		a := &WeatherCheckAgent{
-			cityRepo:  cityRepo,
-			obsRepo:   obsRepo,
-			eventRepo: eventRepo,
-			logger:    &logBuf,
+			cityRepo:     cityRepo,
+			obsRepo:      obsRepo,
+			forecastRepo: &mockWeatherCheckForecastRepo{},
+			eventRepo:    eventRepo,
+			logger:       &logBuf,
 		}
 		// Must NOT return an error; bad-tz city is skipped with a log line.
 		require.NoError(t, a.Run(t.Context()))
@@ -208,10 +221,11 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		eventRepo := &mockCheckEventRepository{err: errors.New("db write fail")}
 
 		a := &WeatherCheckAgent{
-			cityRepo:  cityRepo,
-			obsRepo:   obsRepo,
-			eventRepo: eventRepo,
-			logger:    io.Discard,
+			cityRepo:     cityRepo,
+			obsRepo:      obsRepo,
+			forecastRepo: &mockWeatherCheckForecastRepo{},
+			eventRepo:    eventRepo,
+			logger:       io.Discard,
 		}
 		err := a.Run(t.Context())
 		require.Error(t, err)
@@ -221,10 +235,11 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 	t.Run("city repo error is returned immediately", func(t *testing.T) {
 		t.Parallel()
 		a := &WeatherCheckAgent{
-			cityRepo:  &mockWeatherCheckCityRepo{err: errors.New("db down")},
-			obsRepo:   &mockWeatherCheckObsRepo{},
-			eventRepo: &mockCheckEventRepository{},
-			logger:    io.Discard,
+			cityRepo:     &mockWeatherCheckCityRepo{err: errors.New("db down")},
+			obsRepo:      &mockWeatherCheckObsRepo{},
+			forecastRepo: &mockWeatherCheckForecastRepo{},
+			eventRepo:    &mockCheckEventRepository{},
+			logger:       io.Discard,
 		}
 		require.Error(t, a.Run(t.Context()))
 	})
@@ -241,10 +256,11 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		cityRepo := &mockWeatherCheckCityRepo{cities: []domain.WeatherUserCity{city1, city2}}
 
 		a := &WeatherCheckAgent{
-			cityRepo:  cityRepo,
-			obsRepo:   obsRepo,
-			eventRepo: eventRepo,
-			logger:    io.Discard,
+			cityRepo:     cityRepo,
+			obsRepo:      obsRepo,
+			forecastRepo: &mockWeatherCheckForecastRepo{},
+			eventRepo:    eventRepo,
+			logger:       io.Discard,
 		}
 		err := a.Run(t.Context())
 		require.Error(t, err, "joined error must contain the failing location")
@@ -288,7 +304,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 		require.Len(t, eventRepo.retained, 1, "one heat alert event must be queued")
 		assert.Contains(t, eventRepo.retained[0].Message, "Heat alert")
@@ -330,7 +346,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 		require.Empty(t, eventRepo.retained, "a latched, still-met row must not re-fire")
 		require.Empty(t, cityRepo.fired)
@@ -366,7 +382,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 		require.Empty(t, eventRepo.retained, "no event when condition is not met")
 		require.Empty(t, cityRepo.fired)
@@ -394,7 +410,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		obsRepo := &mockWeatherCheckObsRepo{globalErr: internal.ErrNotFound}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 		require.Empty(t, eventRepo.retained, "no event when observation is absent")
 		require.Empty(t, cityRepo.fired, "must not persist when observation absent")
@@ -463,7 +479,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 		require.Len(t, eventRepo.retained, 1)
 		assert.Contains(t, eventRepo.retained[0].Message, "Thunderstorm alert")
@@ -497,7 +513,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 		require.Len(t, eventRepo.retained, 1, "one rain alert event must be queued")
 		assert.Contains(t, eventRepo.retained[0].Message, "Rain alert")
@@ -532,7 +548,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 		require.Empty(t, eventRepo.retained, "a latched, still-met rain row must not re-fire")
 		require.Empty(t, cityRepo.fired)
@@ -563,7 +579,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 		require.Empty(t, eventRepo.retained, "no event when probability below threshold")
 		require.Empty(t, cityRepo.fired)
@@ -592,7 +608,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 		require.Empty(t, eventRepo.retained, "no event when hourly data is absent")
 		require.Empty(t, cityRepo.fired)
@@ -625,7 +641,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 		require.Len(t, eventRepo.retained, 1, "one thaw alert event must be queued")
 		assert.Contains(t, eventRepo.retained[0].Message, "Thaw alert")
@@ -659,7 +675,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 		require.Empty(t, eventRepo.retained, "a latched, still-met thaw row must not re-fire")
 		require.Empty(t, cityRepo.fired)
@@ -694,7 +710,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		err := a.Run(t.Context())
 		require.Error(t, err, "evaluator error for bad city must surface in the returned error")
 		assert.Contains(t, err.Error(), "evaluate", "error must reference the evaluate step")
@@ -778,7 +794,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 			}}
 			obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{domain.ProviderOpenMeteo: obs}}
 			eventRepo := &mockCheckEventRepository{}
-			a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+			a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 			require.NoError(t, a.Run(t.Context()))
 			return eventRepo, cityRepo
 		}
@@ -837,7 +853,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 			}}
 			obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{domain.ProviderOpenMeteo: obs}}
 			eventRepo := &mockCheckEventRepository{}
-			a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+			a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 			require.NoError(t, a.Run(t.Context()))
 			return eventRepo, cityRepo
 		}
@@ -879,7 +895,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{domain.ProviderOpenMeteo: obs}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 		require.Empty(t, eventRepo.retained, "a re-arm must not notify")
 		require.Empty(t, cityRepo.fired)
@@ -903,7 +919,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{domain.ProviderOpenMeteo: obs}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 		require.Empty(t, eventRepo.retained)
 		require.Empty(t, cityRepo.fired)
@@ -928,7 +944,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		obsRepo := &mockWeatherCheckObsRepo{obsByProvider: map[string]*domain.WeatherObservation{domain.ProviderOpenMeteo: obs}}
 		eventRepo := &mockCheckEventRepository{err: errors.New("queue write fail")}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		err := a.Run(t.Context())
 		require.Error(t, err)
 		require.Empty(t, cityRepo.fired, "a queue failure must not mark the alert fired")
@@ -954,7 +970,7 @@ func TestWeatherCheckAgent_Run(t *testing.T) {
 		eventRepo := &mockCheckEventRepository{}
 		var logBuf strings.Builder
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: &logBuf}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: &logBuf}
 		require.NoError(t, a.Run(t.Context()))
 		require.Len(t, eventRepo.retained, 1, "an unparseable forecast_date must never drop the alert")
 		require.Empty(t, cityRepo.fired, "the fire cursor cannot be recorded without a valid forecast_date")
@@ -995,6 +1011,8 @@ type mockWeatherCheckCityRepo struct {
 	advanced  []string    // IDs passed to AdvanceLastNotifiedAt
 	latched   []latchCall // SetWeatherAlertLatched calls, in call order
 	fired     []firedCall // MarkWeatherAlertFired calls, in call order
+	states    []stateCall // SetWeatherNotifyState calls, in call order
+	stateErr  error       // when set, every SetWeatherNotifyState call fails
 }
 
 func (m *mockWeatherCheckCityRepo) ObtainDueWeatherUserCities(_ context.Context, kind domain.WeatherNotifyKind) ([]domain.WeatherUserCity, error) {
@@ -1025,6 +1043,14 @@ func (m *mockWeatherCheckCityRepo) AdvanceLastNotifiedAt(_ context.Context, id s
 
 func (m *mockWeatherCheckCityRepo) SetWeatherAlertLatched(_ context.Context, id string, latched bool) error {
 	m.latched = append(m.latched, latchCall{id: id, latched: latched})
+	return nil
+}
+
+func (m *mockWeatherCheckCityRepo) SetWeatherNotifyState(_ context.Context, id, state string) error {
+	if m.stateErr != nil {
+		return m.stateErr
+	}
+	m.states = append(m.states, stateCall{id: id, state: state})
 	return nil
 }
 
@@ -1134,7 +1160,7 @@ func TestWeatherCheckAgent_MorningFailureDoesNotSuppressAlerts(t *testing.T) {
 		t.Parallel()
 		cityRepo, obsRepo, eventRepo := newStormFixture()
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		err := a.Run(t.Context())
 
 		require.Error(t, err, "the morning failure must still be reported")
@@ -1151,7 +1177,7 @@ func TestWeatherCheckAgent_MorningFailureDoesNotSuppressAlerts(t *testing.T) {
 		frostErr := errors.New("frost read interrupted")
 		cityRepo.errByKind[domain.WeatherNotifyAlertFrost] = frostErr
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		err := a.Run(t.Context())
 
 		require.Error(t, err)
@@ -1197,7 +1223,7 @@ func TestWeatherCheckAgent_RainBothEdges(t *testing.T) {
 		}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 
 		require.Len(t, eventRepo.retained, 1, "leaving the rain condition must notify, not just re-arm silently")
@@ -1229,7 +1255,7 @@ func TestWeatherCheckAgent_RainBothEdges(t *testing.T) {
 		}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 
 		require.Len(t, eventRepo.retained, 1,
@@ -1250,7 +1276,7 @@ func TestWeatherCheckAgent_RainBothEdges(t *testing.T) {
 		}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 
 		assert.Empty(t, eventRepo.retained, "the hysteresis band must not produce a message")
@@ -1271,7 +1297,7 @@ func TestWeatherCheckAgent_RainBothEdges(t *testing.T) {
 		}}
 		eventRepo := &mockCheckEventRepository{err: errors.New("queue down")}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		err := a.Run(t.Context())
 		require.Error(t, err)
 
@@ -1305,11 +1331,316 @@ func TestWeatherCheckAgent_RainBothEdges(t *testing.T) {
 		}}
 		eventRepo := &mockCheckEventRepository{}
 
-		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, eventRepo: eventRepo, logger: io.Discard}
+		a := &WeatherCheckAgent{cityRepo: cityRepo, obsRepo: obsRepo, forecastRepo: &mockWeatherCheckForecastRepo{}, eventRepo: eventRepo, logger: io.Discard}
 		require.NoError(t, a.Run(t.Context()))
 
 		assert.Empty(t, eventRepo.retained, "the forecast_date cap must still hold for heat")
 		require.Len(t, cityRepo.latched, 1, "the suppressed latch edge is still recorded")
 		assert.True(t, cityRepo.latched[0].latched)
 	})
+}
+
+// stateCall records one SetWeatherNotifyState invocation.
+type stateCall struct {
+	id    string
+	state string
+}
+
+// mockWeatherCheckForecastRepo simulates the long-range forecast repository. days is keyed
+// by location_id; a location absent from the map has nothing stored, which is the normal
+// state of a city whose first long-range fetch has not completed.
+type mockWeatherCheckForecastRepo struct {
+	days map[string][]domain.WeatherForecastDay
+	err  error
+}
+
+func (m *mockWeatherCheckForecastRepo) ObtainForecastDays(_ context.Context, locationID, _, fromDate string, limit int) ([]domain.WeatherForecastDay, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	stored := m.days[locationID]
+	out := make([]domain.WeatherForecastDay, 0, len(stored))
+	for _, d := range stored {
+		if d.ForecastDate >= fromDate && len(out) < limit {
+			out = append(out, d)
+		}
+	}
+	return out, nil
+}
+
+func TestWeatherCheckAgent_OutlookPhase(t *testing.T) {
+	t.Parallel()
+
+	// outlookCity returns a forecast_outlook subscription that IsMorningDue always
+	// evaluates true for: UTC, NotifyHour 0, never notified.
+	outlookCity := func(id, locationID, state string) domain.WeatherUserCity {
+		return domain.WeatherUserCity{
+			ID:          id,
+			UserType:    domain.UserTypeTelegram,
+			UserID:      "user1",
+			LocationID:  locationID,
+			DisplayName: "Astana",
+			Timezone:    "UTC",
+			NotifyKind:  domain.WeatherNotifyForecastOutlook,
+			NotifyHour:  0,
+			NotifyState: state,
+		}
+	}
+
+	// window returns a stored forecast anchored on today: a dry baseline plus the given
+	// offsets-from-today, each carrying the rain in millimetres named for it.
+	window := func(rainByOffset map[int]float64) []domain.WeatherForecastDay {
+		base := time.Now().UTC()
+		days := make([]domain.WeatherForecastDay, 0, domain.WeatherOutlookHorizonDays)
+		for offset := range domain.WeatherOutlookHorizonDays {
+			maxTemp, minTemp := 21.5, 11.2
+			day := domain.WeatherForecastDay{
+				Provider:     domain.ProviderOpenMeteo,
+				ForecastDate: base.AddDate(0, 0, offset).Format(time.DateOnly),
+				CapturedAt:   base,
+				TempMax:      &maxTemp,
+				TempMin:      &minTemp,
+			}
+			if rain, ok := rainByOffset[offset]; ok {
+				r := rain
+				day.RainSum = &r
+			}
+			days = append(days, day)
+		}
+		return days
+	}
+
+	agentFor := func(cityRepo *mockWeatherCheckCityRepo, forecastRepo *mockWeatherCheckForecastRepo, eventRepo *mockCheckEventRepository) *WeatherCheckAgent {
+		return &WeatherCheckAgent{
+			cityRepo:     cityRepo,
+			obsRepo:      &mockWeatherCheckObsRepo{},
+			forecastRepo: forecastRepo,
+			eventRepo:    eventRepo,
+			logger:       io.Discard,
+		}
+	}
+
+	outlookOnly := func(cities ...domain.WeatherUserCity) *mockWeatherCheckCityRepo {
+		return &mockWeatherCheckCityRepo{citiesByKind: map[domain.WeatherNotifyKind][]domain.WeatherUserCity{
+			domain.WeatherNotifyForecastOutlook: cities,
+		}}
+	}
+
+	t.Run("a first digest with something to report is queued and both cursors move", func(t *testing.T) {
+		t.Parallel()
+		cityRepo := outlookOnly(outlookCity("o1", "loc1", ""))
+		forecastRepo := &mockWeatherCheckForecastRepo{days: map[string][]domain.WeatherForecastDay{
+			"loc1": window(map[int]float64{3: 4.2}),
+		}}
+		eventRepo := &mockCheckEventRepository{}
+
+		require.NoError(t, agentFor(cityRepo, forecastRepo, eventRepo).Run(t.Context()))
+
+		require.Len(t, eventRepo.retained, 1)
+		assert.Contains(t, eventRepo.retained[0].Message, "Outlook — Astana")
+		assert.Contains(t, eventRepo.retained[0].Message, "4.2 mm")
+		assert.NotContains(t, eventRepo.retained[0].Message, "🆕", "nothing is marked new when there is no previous digest")
+		require.Len(t, cityRepo.states, 1)
+		assert.Equal(t, "o1", cityRepo.states[0].id)
+		assert.NotEmpty(t, cityRepo.states[0].state)
+		assert.Equal(t, []string{"o1"}, cityRepo.advanced)
+	})
+
+	t.Run("a first evaluation with nothing to report stays silent but records the state", func(t *testing.T) {
+		t.Parallel()
+		cityRepo := outlookOnly(outlookCity("o1", "loc1", ""))
+		forecastRepo := &mockWeatherCheckForecastRepo{days: map[string][]domain.WeatherForecastDay{
+			"loc1": window(nil),
+		}}
+		eventRepo := &mockCheckEventRepository{}
+
+		require.NoError(t, agentFor(cityRepo, forecastRepo, eventRepo).Run(t.Context()))
+
+		assert.Empty(t, eventRepo.retained, "an opening message that says nothing is noise")
+		require.Len(t, cityRepo.states, 1)
+		assert.Equal(t, "o1:", cityRepo.states[0].state, "an evaluated-but-empty outlook is not the same as never evaluated")
+		assert.Equal(t, []string{"o1"}, cityRepo.advanced)
+	})
+
+	t.Run("an unchanged outlook sends nothing and still advances the cursor", func(t *testing.T) {
+		t.Parallel()
+		days := window(map[int]float64{3: 4.2})
+		unchanged := domain.NewWeatherOutlook(days, time.Now().UTC().Format(time.DateOnly)).Signature()
+
+		cityRepo := outlookOnly(outlookCity("o1", "loc1", unchanged))
+		forecastRepo := &mockWeatherCheckForecastRepo{days: map[string][]domain.WeatherForecastDay{"loc1": days}}
+		eventRepo := &mockCheckEventRepository{}
+
+		require.NoError(t, agentFor(cityRepo, forecastRepo, eventRepo).Run(t.Context()))
+
+		assert.Empty(t, eventRepo.retained)
+		assert.Empty(t, cityRepo.states, "an unchanged signature needs no write")
+		assert.Equal(t, []string{"o1"}, cityRepo.advanced, "the cursor still moves, so the digest stays once a day")
+	})
+
+	t.Run("a changed outlook marks what moved", func(t *testing.T) {
+		t.Parallel()
+		before := domain.NewWeatherOutlook(window(map[int]float64{3: 4.2}), time.Now().UTC().Format(time.DateOnly)).Signature()
+
+		cityRepo := outlookOnly(outlookCity("o1", "loc1", before))
+		forecastRepo := &mockWeatherCheckForecastRepo{days: map[string][]domain.WeatherForecastDay{
+			"loc1": window(map[int]float64{3: 4.2, 7: 2.0}),
+		}}
+		eventRepo := &mockCheckEventRepository{}
+
+		require.NoError(t, agentFor(cityRepo, forecastRepo, eventRepo).Run(t.Context()))
+
+		require.Len(t, eventRepo.retained, 1)
+		assert.Contains(t, eventRepo.retained[0].Message, "🆕", "the day that appeared must be marked")
+		assert.Equal(t, 1, strings.Count(eventRepo.retained[0].Message, "🆕"), "the day that did not change must not be")
+		require.Len(t, cityRepo.states, 1)
+		assert.NotEqual(t, before, cityRepo.states[0].state)
+	})
+
+	t.Run("an outlook that empties out reports what cleared", func(t *testing.T) {
+		t.Parallel()
+		before := domain.NewWeatherOutlook(window(map[int]float64{3: 4.2}), time.Now().UTC().Format(time.DateOnly)).Signature()
+
+		cityRepo := outlookOnly(outlookCity("o1", "loc1", before))
+		forecastRepo := &mockWeatherCheckForecastRepo{days: map[string][]domain.WeatherForecastDay{"loc1": window(nil)}}
+		eventRepo := &mockCheckEventRepository{}
+
+		require.NoError(t, agentFor(cityRepo, forecastRepo, eventRepo).Run(t.Context()))
+
+		require.Len(t, eventRepo.retained, 1, "an outlook clearing is a change worth reporting")
+		assert.Contains(t, eventRepo.retained[0].Message, "No rain, snow or freezing change")
+		require.Len(t, cityRepo.states, 1)
+		assert.Equal(t, "o1:", cityRepo.states[0].state)
+	})
+
+	t.Run("a location with no forecast yet is skipped without advancing", func(t *testing.T) {
+		t.Parallel()
+		cityRepo := outlookOnly(outlookCity("o1", "loc1", ""))
+		eventRepo := &mockCheckEventRepository{}
+
+		require.NoError(t, agentFor(cityRepo, &mockWeatherCheckForecastRepo{}, eventRepo).Run(t.Context()))
+
+		assert.Empty(t, eventRepo.retained)
+		assert.Empty(t, cityRepo.states)
+		assert.Empty(t, cityRepo.advanced, "the first digest must still fire once collection catches up")
+	})
+
+	t.Run("a city already notified today is not evaluated again", func(t *testing.T) {
+		t.Parallel()
+		city := outlookCity("o1", "loc1", "")
+		city.LastNotifiedAt = time.Now().UTC()
+
+		cityRepo := outlookOnly(city)
+		forecastRepo := &mockWeatherCheckForecastRepo{days: map[string][]domain.WeatherForecastDay{
+			"loc1": window(map[int]float64{3: 4.2}),
+		}}
+		eventRepo := &mockCheckEventRepository{}
+
+		require.NoError(t, agentFor(cityRepo, forecastRepo, eventRepo).Run(t.Context()))
+
+		assert.Empty(t, eventRepo.retained, "one digest per city per local day, whatever the tick rate")
+		assert.Empty(t, cityRepo.advanced)
+	})
+
+	t.Run("a queue failure leaves both cursors untouched so the next tick retries", func(t *testing.T) {
+		t.Parallel()
+		cityRepo := outlookOnly(outlookCity("o1", "loc1", ""))
+		forecastRepo := &mockWeatherCheckForecastRepo{days: map[string][]domain.WeatherForecastDay{
+			"loc1": window(map[int]float64{3: 4.2}),
+		}}
+		eventRepo := &mockCheckEventRepository{err: errors.New("pool is down")}
+
+		err := agentFor(cityRepo, forecastRepo, eventRepo).Run(t.Context())
+
+		require.Error(t, err)
+		assert.Empty(t, cityRepo.states)
+		assert.Empty(t, cityRepo.advanced)
+	})
+
+	t.Run("a forecast read failure is reported and does not advance", func(t *testing.T) {
+		t.Parallel()
+		cityRepo := outlookOnly(outlookCity("o1", "loc1", ""))
+		forecastRepo := &mockWeatherCheckForecastRepo{err: errors.New("database is locked")}
+		eventRepo := &mockCheckEventRepository{}
+
+		err := agentFor(cityRepo, forecastRepo, eventRepo).Run(t.Context())
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "load forecast")
+		assert.Empty(t, cityRepo.advanced)
+	})
+
+	t.Run("an unloadable timezone skips the city without failing the run", func(t *testing.T) {
+		t.Parallel()
+		city := outlookCity("o1", "loc1", "")
+		city.Timezone = "Mars/Olympus_Mons"
+
+		cityRepo := outlookOnly(city)
+		forecastRepo := &mockWeatherCheckForecastRepo{days: map[string][]domain.WeatherForecastDay{
+			"loc1": window(map[int]float64{3: 4.2}),
+		}}
+		eventRepo := &mockCheckEventRepository{}
+
+		require.NoError(t, agentFor(cityRepo, forecastRepo, eventRepo).Run(t.Context()))
+		assert.Empty(t, eventRepo.retained)
+	})
+
+	t.Run("the outlook phase runs even when the morning-summary read fails", func(t *testing.T) {
+		t.Parallel()
+		cityRepo := &mockWeatherCheckCityRepo{
+			citiesByKind: map[domain.WeatherNotifyKind][]domain.WeatherUserCity{
+				domain.WeatherNotifyForecastOutlook: {outlookCity("o1", "loc1", "")},
+			},
+			errByKind: map[domain.WeatherNotifyKind]error{
+				domain.WeatherNotifyMorningSummary: errors.New("morning read failed"),
+			},
+		}
+		forecastRepo := &mockWeatherCheckForecastRepo{days: map[string][]domain.WeatherForecastDay{
+			"loc1": window(map[int]float64{3: 4.2}),
+		}}
+		eventRepo := &mockCheckEventRepository{}
+
+		err := agentFor(cityRepo, forecastRepo, eventRepo).Run(t.Context())
+
+		require.Error(t, err, "the morning failure must still be reported")
+		require.Len(t, eventRepo.retained, 1, "one phase failing must not silence another")
+	})
+}
+
+func TestWeatherCheckAgentOutlookDrainedWindow(t *testing.T) {
+	t.Parallel()
+
+	// A window that holds only the baseline day is what a location looks like after the
+	// collector has been down long enough for retention to drain the front of it.
+	city := domain.WeatherUserCity{
+		ID:          "o1",
+		UserType:    domain.UserTypeTelegram,
+		UserID:      "user1",
+		LocationID:  "loc1",
+		DisplayName: "Astana",
+		Timezone:    "UTC",
+		NotifyKind:  domain.WeatherNotifyForecastOutlook,
+		NotifyHour:  0,
+		NotifyState: "o1:2026-08-23:R+",
+	}
+	cityRepo := &mockWeatherCheckCityRepo{citiesByKind: map[domain.WeatherNotifyKind][]domain.WeatherUserCity{
+		domain.WeatherNotifyForecastOutlook: {city},
+	}}
+	forecastRepo := &mockWeatherCheckForecastRepo{days: map[string][]domain.WeatherForecastDay{
+		"loc1": {{ForecastDate: time.Now().UTC().Format(time.DateOnly), Provider: domain.ProviderOpenMeteo}},
+	}}
+	eventRepo := &mockCheckEventRepository{}
+
+	a := &WeatherCheckAgent{
+		cityRepo:     cityRepo,
+		obsRepo:      &mockWeatherCheckObsRepo{},
+		forecastRepo: forecastRepo,
+		eventRepo:    eventRepo,
+		logger:       io.Discard,
+	}
+	require.NoError(t, a.Run(t.Context()))
+
+	assert.Empty(t, eventRepo.retained, "a window with no future day is not an outlook that cleared")
+	assert.Empty(t, cityRepo.states)
+	assert.Empty(t, cityRepo.advanced, "the digest must resume when collection does")
 }

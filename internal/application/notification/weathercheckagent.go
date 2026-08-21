@@ -33,30 +33,34 @@ import (
 // It reuses the existing FX notification queue (rate_user_events) with an empty
 // SourceName → NULL so there is no FK dependency on rate_sources.
 type WeatherCheckAgent struct {
-	cityRepo  weatherCheckCityRepository
-	obsRepo   weatherCheckObsRepository
-	eventRepo rateCheckEventRepository // reuse the same narrow interface as RateCheckAgent
-	logger    io.Writer
+	cityRepo     weatherCheckCityRepository
+	obsRepo      weatherCheckObsRepository
+	forecastRepo weatherCheckForecastRepository
+	eventRepo    rateCheckEventRepository // reuse the same narrow interface as RateCheckAgent
+	logger       io.Writer
 }
 
-// NewWeatherCheckAgent constructs a WeatherCheckAgent. All arguments are required.
+// NewWeatherCheckAgent constructs a WeatherCheckAgent. All repository arguments are
+// required; a nil logger discards output.
 func NewWeatherCheckAgent(
 	cityRepo weatherCheckCityRepository,
 	obsRepo weatherCheckObsRepository,
+	forecastRepo weatherCheckForecastRepository,
 	eventRepo rateCheckEventRepository,
 	logger io.Writer,
 ) (*WeatherCheckAgent, error) {
-	if cityRepo == nil || obsRepo == nil || eventRepo == nil {
-		return nil, errors.New("weather check agent: cityRepo, obsRepo, and eventRepo are all required")
+	if cityRepo == nil || obsRepo == nil || forecastRepo == nil || eventRepo == nil {
+		return nil, errors.New("weather check agent: cityRepo, obsRepo, forecastRepo, and eventRepo are all required")
 	}
 	if logger == nil {
 		logger = io.Discard
 	}
 	return &WeatherCheckAgent{
-		cityRepo:  cityRepo,
-		obsRepo:   obsRepo,
-		eventRepo: eventRepo,
-		logger:    logger,
+		cityRepo:     cityRepo,
+		obsRepo:      obsRepo,
+		forecastRepo: forecastRepo,
+		eventRepo:    eventRepo,
+		logger:       logger,
 	}, nil
 }
 
@@ -260,10 +264,123 @@ func (a *WeatherCheckAgent) Run(ctx context.Context) error {
 		}
 	}
 
+	outlookQueued, outlookAttempted, outlookQuiet, outlookErrs := a.runOutlookPhase(ctx, now)
+	errs = append(errs, outlookErrs...)
+
 	// Proof-of-execution marker matching RateCheckAgent's pattern.
-	fmt.Fprintf(a.logger, "weather check: queued %d/%d events (alerts: %d/%d suppressed: %d)\n",
-		totalQueued, totalAttempted, alertQueued, alertAttempted, alertSuppressed)
+	fmt.Fprintf(a.logger, "weather check: queued %d/%d events (alerts: %d/%d suppressed: %d) (outlook: %d/%d quiet: %d)\n",
+		totalQueued, totalAttempted, alertQueued, alertAttempted, alertSuppressed,
+		outlookQueued, outlookAttempted, outlookQuiet)
 	return errors.Join(errs...)
+}
+
+// runOutlookPhase delivers the multi-week forecast digest for every forecast_outlook
+// subscription that is due in its own local day, and returns what it did for the run's log
+// line plus every error it survived.
+//
+// The digest is content-gated, not edge-triggered. A day two weeks out changes its mind
+// several times before it arrives, so a latch per condition would either send every flip or,
+// with a dead band wide enough to stop that, say nothing at all. Instead the phase compares
+// the outlook's signature with the one stored on the row and sends only when they differ.
+//
+// The per-day cursor advances on every evaluation that had data, not only on a send. That is
+// what bounds the digest at one message per city per local day regardless of how often the
+// collector refreshes the forecast underneath it — a property the fetch cadence should not be
+// able to take away by changing.
+func (a *WeatherCheckAgent) runOutlookPhase(ctx context.Context, now time.Time) (queued, attempted, quiet int, errs []error) {
+	cities, err := a.cityRepo.ObtainDueWeatherUserCities(ctx, domain.WeatherNotifyForecastOutlook)
+	if err != nil {
+		return 0, 0, 0, []error{errors.Join(
+			fmt.Errorf("weather outlook: load due cities: %w", err),
+			loginjector.NewTraceError(),
+		)}
+	}
+
+	for _, city := range cities {
+		due, tzErr := city.IsMorningDue(now)
+		if tzErr != nil {
+			fmt.Fprintf(a.logger, "weather outlook: city %s: timezone error: %v\n", city.ID, tzErr)
+			continue
+		}
+		if !due {
+			continue
+		}
+
+		baseline, dateErr := city.LocalDate(now)
+		if dateErr != nil {
+			fmt.Fprintf(a.logger, "weather outlook: city %s: local date: %v\n", city.ID, dateErr)
+			continue
+		}
+
+		days, loadErr := a.forecastRepo.ObtainForecastDays(ctx, city.LocationID, domain.ProviderOpenMeteo, baseline, domain.WeatherOutlookHorizonDays)
+		if loadErr != nil {
+			errs = append(errs, fmt.Errorf("weather outlook city=%s: load forecast: %w", city.ID, loadErr))
+			continue
+		}
+		if len(days) == 0 {
+			// Nothing collected for this location yet. Do NOT advance the cursor, so the
+			// first digest fires once the collector has stored a forecast — the same rule
+			// the morning-summary phase follows for a missing observation.
+			fmt.Fprintf(a.logger, "weather outlook: city %s location %s: no forecast yet, skipping\n", city.ID, city.LocationID)
+			continue
+		}
+
+		outlook := domain.NewWeatherOutlook(days, baseline)
+		if outlook.AheadDays() == 0 {
+			// Rows exist but none of them is in the future — a window that has drained
+			// from the front because collection stopped days ago. That is not an outlook
+			// with nothing in it, it is an outlook with nothing to look at, and it is
+			// treated like a missing one: no message, no cursor, resumes when collection
+			// does.
+			fmt.Fprintf(a.logger, "weather outlook: city %s location %s: window holds no future day, skipping\n", city.ID, city.LocationID)
+			continue
+		}
+		signature := outlook.Signature()
+
+		// Two quiet cases. The outlook is unchanged since the last digest; or this is the
+		// first evaluation and there is nothing to report, where an opening message saying
+		// "nothing" would be the worst possible introduction to a notification channel.
+		if signature == city.NotifyState || (city.NotifyState == "" && len(outlook.NotableDays()) == 0) {
+			if city.NotifyState != signature {
+				if setErr := a.cityRepo.SetWeatherNotifyState(ctx, city.ID, signature); setErr != nil {
+					errs = append(errs, fmt.Errorf("weather outlook city=%s: persist state: %w", city.ID, setErr))
+				}
+			}
+			if advErr := a.cityRepo.AdvanceLastNotifiedAt(ctx, city.ID, now); advErr != nil {
+				errs = append(errs, fmt.Errorf("weather outlook city=%s: advance last_notified_at: %w", city.ID, advErr))
+			}
+			quiet++
+			continue
+		}
+
+		msg, renderErr := RenderForecastOutlook(city, outlook, city.NotifyState)
+		if renderErr != nil {
+			errs = append(errs, fmt.Errorf("weather outlook city=%s: render: %w", city.ID, renderErr))
+			continue
+		}
+
+		ev := &domain.RateUserEvent{
+			UserType: domain.UserTypeTelegram,
+			UserID:   city.UserID,
+			Message:  msg,
+			// SourceName empty → stored as NULL; same transport as the morning summary.
+		}
+		attempted++
+		if retainErr := a.eventRepo.RetainRateUserEvent(ctx, ev); retainErr != nil {
+			errs = append(errs, fmt.Errorf("weather outlook city=%s: queue event: %w", city.ID, retainErr))
+			continue // neither the state nor the cursor moves; the next tick retries
+		}
+		queued++
+
+		if setErr := a.cityRepo.SetWeatherNotifyState(ctx, city.ID, signature); setErr != nil {
+			errs = append(errs, fmt.Errorf("weather outlook city=%s: persist state: %w", city.ID, setErr))
+		}
+		if advErr := a.cityRepo.AdvanceLastNotifiedAt(ctx, city.ID, now); advErr != nil {
+			errs = append(errs, fmt.Errorf("weather outlook city=%s: advance last_notified_at: %w", city.ID, advErr))
+		}
+	}
+
+	return queued, attempted, quiet, errs
 }
 
 // loadCachedObservation returns the latest Open-Meteo observation for locationID,
@@ -303,7 +420,14 @@ type weatherCheckCityRepository interface {
 	ObtainDueWeatherUserCities(ctx context.Context, notifyKind domain.WeatherNotifyKind) ([]domain.WeatherUserCity, error)
 	AdvanceLastNotifiedAt(ctx context.Context, id string, when time.Time) error
 	SetWeatherAlertLatched(ctx context.Context, id string, latched bool) error
+	SetWeatherNotifyState(ctx context.Context, id, state string) error
 	MarkWeatherAlertFired(ctx context.Context, id string, firedForDate time.Time) error
+}
+
+// weatherCheckForecastRepository is the narrow long-range-forecast surface the check agent
+// needs for the outlook digest.
+type weatherCheckForecastRepository interface {
+	ObtainForecastDays(ctx context.Context, locationID, provider, fromDate string, limit int) ([]domain.WeatherForecastDay, error)
 }
 
 // weatherCheckObsRepository is the narrow observation-repository surface the check agent needs.

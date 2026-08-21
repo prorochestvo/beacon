@@ -34,6 +34,7 @@ var (
 	_ appsub.ValuesLoader           = (*stubMeRateValueRepo)(nil)
 	_ appweather.CitiesStore        = (*stubWeatherCityRepo)(nil)
 	_ appweather.ObservationsLoader = (*stubWeatherObsRepo)(nil)
+	_ appweather.ForecastLoader     = (*stubWeatherForecastRepo)(nil)
 )
 
 // meRoutes is every method+path under /api/v1/me, the project's only authenticated
@@ -87,7 +88,7 @@ func newAuthTestRouter(t *testing.T) http.Handler {
 		"test",     // server version
 		time.Now(), // server start
 		WeatherGatewayDeps{
-			Service:  appweather.NewService(stubWeatherCityRepo{}, stubWeatherObsRepo{}),
+			Service:  appweather.NewService(stubWeatherCityRepo{}, stubWeatherObsRepo{}, stubWeatherForecastRepo{}),
 			Geocoder: stubGeocoder{},
 		},
 	)
@@ -245,6 +246,12 @@ func (stubGeocoder) Geocode(context.Context, string, int) ([]dto.WeatherCitySear
 type stubWeatherObsRepo struct{}
 
 func (stubWeatherObsRepo) ObtainLatestObservation(context.Context, string, string) (*domain.WeatherObservation, error) {
+	panic("reached the repository without authenticating")
+}
+
+type stubWeatherForecastRepo struct{}
+
+func (stubWeatherForecastRepo) ObtainForecastDays(context.Context, string, string, string, int) ([]domain.WeatherForecastDay, error) {
 	panic("reached the repository without authenticating")
 }
 

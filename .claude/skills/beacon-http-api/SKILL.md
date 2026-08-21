@@ -1,6 +1,6 @@
 ---
 name: beacon-http-api
-description: Beacon's HTTP surface and browser client — endpoint contracts that are not obvious from the router code (chart period whitelist, weather city create validation, the forced alert rows and their 409, liveness vs readiness), the content-hashed WASM asset URLs and the nginx location ordering they depend on, and the Mini App's 2x2 screen navigation. Load before adding or changing anything under internal/gateway, cmd/web, cmd/wasm, cmd/web/static, configs/nginx.*, or any /api/v1/me or /api/v1/public route.
+description: Beacon's HTTP surface and browser client — endpoint contracts that are not obvious from the router code (chart period whitelist, weather city create validation, the forced alert rows and their 409, the multi-week days array on /weather/current, liveness vs readiness), the content-hashed WASM asset URLs and the nginx location ordering they depend on, and the Mini App's 2x2 screen navigation. Load before adding or changing anything under internal/gateway, cmd/web, cmd/wasm, cmd/web/static, configs/nginx.*, dto.WeatherCurrentItem or WeatherForecastDayItem, the forecast_outlook subscription kind, or any /api/v1/me or /api/v1/public route.
 ---
 
 # Beacon HTTP API and Mini App
@@ -68,6 +68,33 @@ deployment that must publish the port passes `--bind 0.0.0.0` explicitly.
 
 Binding loopback is not what stops a *co-hosted* vhost reaching Beacon — that neighbour
 proxies over loopback too. Only the port or the neighbour's upstream settles that.
+
+## The multi-week outlook rides on `/current`
+
+`GET /api/v1/me/weather/current` carries a `days` array per city: one entry per city-local
+calendar day from today, ascending, at most `domain.WeatherOutlookHorizonDays` (16) of them.
+There is no separate forecast endpoint and no second screen — the Mini App's navigation is a
+2×2 matrix (below) and a fifth cell would break it, and one round trip beats two on a phone.
+
+- **`days` is omitted, never sent as `[]`.** A location whose first long-range fetch has not
+  completed renders exactly as it did before the field existed.
+- **It is independent of `has_data`.** The reading and the outlook are collected on
+  different cadences (hourly against once a day), so a city can hold either without the
+  other; the field is attached before the `has_data` gate for that reason.
+- **The verdicts are the server's, not the client's.** `rain` and `snow` are booleans
+  resolved against the day thresholds (≥ 1 mm of rain, ≥ 1 cm of snowfall — different
+  units), `zero_state` is one of `above` / `crossing` / `below` / `""`, and `label` is the
+  date pre-formatted as `Sun 23 Aug`. All three are computed server-side so every client
+  draws the same badge from the same rule and the WASM bundle still needs no tzdata.
+- **`""` for `zero_state` means the day carried no usable pair of temperature bounds.** It
+  is not a fourth category and must not be rendered as one.
+
+The `forecast_outlook` subscription that turns this into a Telegram digest is **opt-in**,
+unlike the two forced kinds below: it is listed in the manage screen's kind dropdown like
+heat and frost. Its numeric input is the **hour picker**, not a threshold — it is timed
+rather than thresholded, exactly like `morning_summary`. The 16-day *view*, by contrast,
+appears for every tracked city whether or not the digest is subscribed, because collection
+is driven by the distinct subscribed locations and is kind-agnostic.
 
 ## Forced weather subscriptions
 

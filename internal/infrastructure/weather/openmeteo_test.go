@@ -662,3 +662,134 @@ func loggedDuration(t *testing.T, text, pattern string) time.Duration {
 	require.NoError(t, err, "%q is not a duration", m[1])
 	return d
 }
+
+func TestOpenMeteo_ForecastRange(t *testing.T) {
+	t.Parallel()
+
+	t.Run("decodes a full 16-day window from a real fixture", func(t *testing.T) {
+		t.Parallel()
+		fixture := loadFixture(t, "forecast_range_astana.json")
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "/v1/forecast", r.URL.Path)
+			assert.Equal(t, "auto", r.URL.Query().Get("timezone"))
+			assert.Equal(t, "16", r.URL.Query().Get("forecast_days"))
+			daily := r.URL.Query().Get("daily")
+			assert.Contains(t, daily, "rain_sum", "the rain/snow split is the question this fetch answers")
+			assert.Contains(t, daily, "snowfall_sum")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(fixture)
+		}))
+		t.Cleanup(srv.Close)
+
+		om := newTestOpenMeteo(t, srv.URL, srv.URL)
+		days, err := om.ForecastRange(t.Context(), 51.1801, 71.446)
+		require.NoError(t, err)
+		require.Len(t, days, 16)
+
+		assert.Equal(t, "open-meteo", days[0].Provider)
+		assert.Equal(t, "2026-08-21", days[0].ForecastDate)
+		assert.Equal(t, "2026-09-05", days[15].ForecastDate)
+		assert.Empty(t, days[0].LocationID, "the caller owns the location key")
+		assert.Empty(t, days[0].ID, "the repository mints the identifier")
+		assert.False(t, days[0].CapturedAt.IsZero())
+
+		require.NotNil(t, days[2].RainSum)
+		assert.InDelta(t, 1.3, *days[2].RainSum, 1e-6)
+		require.NotNil(t, days[2].SnowfallSum)
+		assert.InDelta(t, 0.0, *days[2].SnowfallSum, 1e-6)
+		require.NotNil(t, days[2].TempMax)
+		assert.InDelta(t, 22.0, *days[2].TempMax, 1e-6)
+		require.NotNil(t, days[2].PrecipProbMax)
+		assert.Equal(t, 61, *days[2].PrecipProbMax)
+		require.NotNil(t, days[2].WeatherCode)
+		assert.Equal(t, 53, *days[2].WeatherCode)
+	})
+
+	t.Run("every day of the fixture shares one capture instant", func(t *testing.T) {
+		t.Parallel()
+		days, err := decodeOpenMeteoForecastRange(loadFixture(t, "forecast_range_astana.json"))
+		require.NoError(t, err)
+		require.NotEmpty(t, days)
+		for _, d := range days {
+			assert.True(t, d.CapturedAt.Equal(days[0].CapturedAt), "day %s carries a different capture instant", d.ForecastDate)
+		}
+	})
+
+	t.Run("an empty daily block is an error, not an empty forecast", func(t *testing.T) {
+		t.Parallel()
+		_, err := decodeOpenMeteoForecastRange([]byte(`{"daily":{"time":[]}}`))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "daily[] array is empty")
+	})
+
+	t.Run("malformed JSON is an error", func(t *testing.T) {
+		t.Parallel()
+		_, err := decodeOpenMeteoForecastRange([]byte(`{"daily":`))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "decode response")
+	})
+
+	t.Run("a short measurement array yields nil, never a zero", func(t *testing.T) {
+		t.Parallel()
+		days, err := decodeOpenMeteoForecastRange([]byte(`{"daily":{
+			"time":["2026-08-21","2026-08-22","2026-08-23"],
+			"temperature_2m_max":[21.5],
+			"rain_sum":[0.0,1.3]
+		}}`))
+		require.NoError(t, err)
+		require.Len(t, days, 3)
+		require.NotNil(t, days[0].TempMax)
+		assert.InDelta(t, 21.5, *days[0].TempMax, 1e-6)
+		assert.Nil(t, days[1].TempMax, "a short array must not read back as 0 °C")
+		assert.Nil(t, days[2].TempMax)
+		require.NotNil(t, days[1].RainSum)
+		assert.InDelta(t, 1.3, *days[1].RainSum, 1e-6)
+		assert.Nil(t, days[2].RainSum, "a short array must not read back as 0 mm of rain")
+		assert.Nil(t, days[0].TempMin, "an absent array must not read back as 0 °C")
+	})
+
+	t.Run("a JSON null yields nil, never a zero", func(t *testing.T) {
+		t.Parallel()
+		days, err := decodeOpenMeteoForecastRange([]byte(`{"daily":{
+			"time":["2026-08-21","2026-08-22"],
+			"rain_sum":[null,2.5],
+			"snowfall_sum":[1.5,null],
+			"precipitation_probability_max":[null,40],
+			"weather_code":[null,71]
+		}}`))
+		require.NoError(t, err)
+		require.Len(t, days, 2)
+		assert.Nil(t, days[0].RainSum)
+		assert.Nil(t, days[1].SnowfallSum)
+		assert.Nil(t, days[0].PrecipProbMax)
+		assert.Nil(t, days[0].WeatherCode)
+		require.NotNil(t, days[1].RainSum)
+		assert.InDelta(t, 2.5, *days[1].RainSum, 1e-6)
+		require.NotNil(t, days[1].WeatherCode)
+		assert.Equal(t, 71, *days[1].WeatherCode)
+	})
+
+	t.Run("a day with no calendar date is skipped", func(t *testing.T) {
+		t.Parallel()
+		days, err := decodeOpenMeteoForecastRange([]byte(`{"daily":{
+			"time":["2026-08-21","","2026-08-23"],
+			"rain_sum":[0.0,0.0,3.0]
+		}}`))
+		require.NoError(t, err)
+		require.Len(t, days, 2)
+		assert.Equal(t, "2026-08-21", days[0].ForecastDate)
+		assert.Equal(t, "2026-08-23", days[1].ForecastDate)
+	})
+
+	t.Run("an upstream failure propagates", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+		}))
+		t.Cleanup(srv.Close)
+
+		om := newTestOpenMeteo(t, srv.URL, srv.URL)
+		_, err := om.ForecastRange(t.Context(), 51.1801, 71.446)
+		require.Error(t, err)
+	})
+}
