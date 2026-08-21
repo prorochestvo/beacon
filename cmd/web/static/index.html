@@ -1062,6 +1062,65 @@
       margin-top: 6px;
     }
     /*
+     * Multi-week outlook strip. flex-basis:100% puts it on its own row inside the
+     * card, and the horizontal scroll is confined to this container so a sixteen-day
+     * strip never makes the page itself scroll sideways.
+     */
+    .weather-forecast-strip {
+      flex-basis: 100%;
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      margin-top: 10px;
+      padding-bottom: 4px;
+    }
+    .weather-forecast-day {
+      flex: 0 0 auto;
+      min-width: 58px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      padding: 6px 4px;
+      border-radius: 8px;
+      background: var(--tg-theme-bg-color, #fff);
+      /*
+       * The left border is the freezing-point channel: colour alone would be lost on
+       * a monochrome or colour-blind reading, so the ▲ ↕ ▼ glyph below carries the
+       * same information and this only reinforces it.
+       */
+      border-left: 3px solid transparent;
+    }
+    .weather-forecast-above { border-left-color: #7bb661; }
+    .weather-forecast-crossing { border-left-color: #d9a404; }
+    .weather-forecast-below { border-left-color: #5b8def; }
+    .weather-forecast-unknown { border-left-color: var(--tg-theme-hint-color, #bbb); }
+    .weather-forecast-date {
+      font-size: 11px;
+      white-space: nowrap;
+      color: var(--tg-theme-hint-color, #888);
+    }
+    .weather-forecast-marks {
+      font-size: 14px;
+      line-height: 1.2;
+      min-height: 17px;
+    }
+    .weather-forecast-zero {
+      font-size: 12px;
+      color: var(--tg-theme-text-color, #333);
+    }
+    .weather-forecast-temp {
+      font-size: 11px;
+      white-space: nowrap;
+      color: var(--tg-theme-text-color, #333);
+    }
+    .weather-forecast-amount {
+      font-size: 10px;
+      white-space: nowrap;
+      color: var(--tg-theme-hint-color, #888);
+    }
+    /*
      * Section shell — the two-column Mini App layout: a vertical section rail on
      * the left, the active screen on the right. Neither wrapper may be given
      * position: relative: the manage gear inside the panel is absolutely

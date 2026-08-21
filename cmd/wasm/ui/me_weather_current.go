@@ -60,6 +60,88 @@ func renderWeatherCurrentTopbar() string {
 		`</div>`
 }
 
+// renderWeatherForecastStrip emits the multi-week outlook as a horizontally scrollable row
+// of one chip per day. It answers the three questions the screen exists for at a glance:
+// rain or not, snow or not, and where the day sits against freezing.
+//
+// A dry day still gets a chip. The reader has to be able to tell a dry day from a wet one,
+// and a strip that only showed the wet days would leave them counting gaps.
+//
+// Every server string goes through dom.Escape; numeric fields render only when their
+// pointer is non-nil, so a day the provider had no answer for shows its date and nothing
+// invented. An empty outlook emits nothing at all.
+func renderWeatherForecastStrip(days []dto.WeatherForecastDayItem) string {
+	if len(days) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(`<div class="weather-forecast-strip">`)
+	for _, day := range days {
+		fmt.Fprintf(&b, `<div class="weather-forecast-day weather-forecast-%s">`, dom.Escape(zeroStateClass(day.ZeroState)))
+		fmt.Fprintf(&b, `<div class="weather-forecast-date">%s</div>`, dom.Escape(day.Label))
+
+		b.WriteString(`<div class="weather-forecast-marks">`)
+		switch {
+		case day.Rain && day.Snow:
+			b.WriteString(`🌧❄`)
+		case day.Rain:
+			b.WriteString(`🌧`)
+		case day.Snow:
+			b.WriteString(`❄`)
+		default:
+			// A non-breaking space keeps the dry chips the same height as the wet ones,
+			// so the strip does not jump row to row.
+			b.WriteString(`&nbsp;`)
+		}
+		b.WriteString(`</div>`)
+
+		fmt.Fprintf(&b, `<div class="weather-forecast-zero">%s</div>`, zeroStateSymbol(day.ZeroState))
+
+		if day.TempMax != nil && day.TempMin != nil {
+			fmt.Fprintf(&b, `<div class="weather-forecast-temp">%.0f° / %.0f°</div>`, *day.TempMax, *day.TempMin)
+		}
+
+		if day.Rain && day.RainSum != nil {
+			fmt.Fprintf(&b, `<div class="weather-forecast-amount">%.1f mm</div>`, *day.RainSum)
+		} else if day.Snow && day.SnowfallSum != nil {
+			fmt.Fprintf(&b, `<div class="weather-forecast-amount">%.1f cm</div>`, *day.SnowfallSum)
+		}
+
+		b.WriteString(`</div>`)
+	}
+	b.WriteString(`</div>`)
+	return b.String()
+}
+
+// zeroStateSymbol maps the server's zero_state token to its indicator. An unknown or absent
+// state renders as an em dash rather than a guess: the day carried no usable temperature
+// bounds, which is not the same as sitting on either side of zero.
+func zeroStateSymbol(zeroState string) string {
+	switch zeroState {
+	case "above":
+		return "▲"
+	case "crossing":
+		return "↕"
+	case "below":
+		return "▼"
+	default:
+		return "—"
+	}
+}
+
+// zeroStateClass maps the zero_state token to the chip modifier class. An unrecognised
+// value falls back to "unknown", so a token this build does not know cannot inject a class
+// name of its own.
+func zeroStateClass(zeroState string) string {
+	switch zeroState {
+	case "above", "crossing", "below":
+		return zeroState
+	default:
+		return "unknown"
+	}
+}
+
 // renderWeatherCurrentCard emits one city weather card. When HasData is false,
 // a "data not yet available" placeholder is shown instead of the numeric fields.
 // All string fields from the server are escaped; emoji fields pass through unchanged
@@ -73,6 +155,10 @@ func renderWeatherCurrentCard(item dto.WeatherCurrentItem) string {
 
 	if !item.HasData {
 		b.WriteString(`<p class="weather-current-nodata">Data not yet available.</p>`)
+		// The outlook and the current reading are collected on different cadences, so a
+		// city can hold one without the other. Returning here without the strip would
+		// hide a whole screen of forecast over an unrelated absence.
+		b.WriteString(renderWeatherForecastStrip(item.Days))
 		b.WriteString(`</li>`)
 		return b.String()
 	}
@@ -133,6 +219,8 @@ func renderWeatherCurrentCard(item dto.WeatherCurrentItem) string {
 	if item.CapturedAt != "" {
 		fmt.Fprintf(&b, `<div class="weather-current-captured">Updated: %s</div>`, dom.Escape(item.CapturedAt))
 	}
+
+	b.WriteString(renderWeatherForecastStrip(item.Days))
 
 	b.WriteString(`</li>`)
 	return b.String()
