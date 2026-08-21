@@ -12,6 +12,18 @@ TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 BUILD_OPTIONS := "-s -w -X main.BuildVersion=${BRANCH} -X main.BuildTime=${TIME} -X main.BuildHash=${BUILD}"
 
 GOLANGCI_VERSION := v2.12.2
+
+# Roots the Go toolchain walks. Explicit rather than ./... because .gitignore is
+# invisible to the toolchain: ./tmp/ is untracked but still inside the module, so
+# a stale scratch .go file there turns build, test, lint and format red for
+# reasons unrelated to the change under review — and the cause is hard to find,
+# because nobody looks in a directory git does not track. CI never reproduces it,
+# since tmp/ does not exist in a fresh checkout.
+#
+# An explicit list narrows silently, so scripts/lint-checks.sh fails on any Go
+# package outside these roots that is not under ./tmp/. It derives them from this
+# line rather than restating them; keep the `GO_PKGS :=` form parseable.
+GO_PKGS := ./cmd/... ./internal/... ./migrations/...
 # Revision the adoption gate compares against: only code newer than this is
 # required to be clean while the standing findings are worked off.
 #
@@ -183,7 +195,7 @@ build-wasm:
 
 ## build: format, build the WASM bundle (+gzip), then compile all service binaries into ./build/
 build: format build-wasm
-	go vet ./...
+	go vet $(GO_PKGS)
 	CGO_ENABLED=0 go build -o ./build/collector  -ldflags ${BUILD_OPTIONS} ./cmd/collector/main.go
 	CGO_ENABLED=0 go build -o ./build/notifier   -ldflags ${BUILD_OPTIONS} ./cmd/notifier/main.go
 	CGO_ENABLED=0 go build -o ./build/migrator   -ldflags ${BUILD_OPTIONS} ./cmd/migrator
@@ -203,11 +215,11 @@ audit-help: build
 ## test: format, go vet, the full race-enabled native suite, and the WASM-runtime tests (WASM skipped with a warning if Node is absent)
 test: format
 	go clean -cache
-	CGO_ENABLED=0 go vet ./...
+	CGO_ENABLED=0 go vet $(GO_PKGS)
 	# -race requires cgo: macOS bundles the race runtime so CGO_ENABLED=0 works
 	# there, but Linux (CI) needs a C toolchain. The pure-Go production build
 	# stays CGO_ENABLED=0; this is the documented race-detector exception.
-	CGO_ENABLED=1 go test -race ./...
+	CGO_ENABLED=1 go test -race $(GO_PKGS)
 	@if command -v node >/dev/null 2>&1; then \
 		echo "running WASM tests..."; \
 		CGO_ENABLED=0 GOOS=js GOARCH=wasm go test \
@@ -223,7 +235,7 @@ lint:
 		echo "golangci-lint not found — install $(GOLANGCI_VERSION): https://golangci-lint.run/docs/welcome/install/local/"; \
 		exit 1; \
 	}
-	CGO_ENABLED=0 golangci-lint run ./...
+	CGO_ENABLED=0 golangci-lint run $(GO_PKGS)
 	@scripts/lint-checks.sh
 
 ## lint-new: lint only code changed since $(LINT_BASE); this is the mergeable gate
@@ -232,7 +244,7 @@ lint-new:
 		echo "golangci-lint not found — install $(GOLANGCI_VERSION): https://golangci-lint.run/docs/welcome/install/local/"; \
 		exit 1; \
 	}
-	CGO_ENABLED=0 golangci-lint run --new-from-rev=$(LINT_BASE) ./...
+	CGO_ENABLED=0 golangci-lint run --new-from-rev=$(LINT_BASE) $(GO_PKGS)
 	@scripts/lint-checks.sh $(LINT_BASE)
 
 ## audit: probe seeded rate sources; default audits all sources; override with ARGS="--source halyk_usd" (exits non-zero on any MISS)
@@ -248,7 +260,7 @@ swagger:
 
 ## format: run go fmt across all packages
 format:
-	go fmt ./...
+	go fmt $(GO_PKGS)
 
 
 
