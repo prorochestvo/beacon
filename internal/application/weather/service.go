@@ -102,6 +102,10 @@ func (s *Service) ObtainMeCurrent(ctx context.Context, userID string) ([]Current
 		return nil, err
 	}
 
+	// One clock for the whole response. Read per city instead, two cities either side of a
+	// midnight would be handed baselines a calendar day apart inside one answer.
+	now := time.Now().UTC()
+
 	seen := make(map[string]struct{}, len(cities))
 	current := make([]CurrentCity, 0, len(cities))
 	for _, city := range cities {
@@ -122,7 +126,7 @@ func (s *Service) ObtainMeCurrent(ctx context.Context, userID string) ([]Current
 
 		// The city-local day, not UTC: forecast dates are city-local, so a UTC
 		// baseline would drop today or show yesterday for most of the world.
-		baseline, dateErr := city.LocalDate(time.Now().UTC())
+		baseline, dateErr := city.LocalDate(now)
 		if dateErr != nil {
 			// An unloadable timezone costs this city its outlook, not its reading.
 			baseline = ""
