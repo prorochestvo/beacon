@@ -134,6 +134,21 @@ separate from the current-conditions path.
   five things mean with nothing to report it. The second request costs about one weighted
   API call per location per day against a budget of 10,000. It still routes through
   `OpenMeteo.get`, so it inherits the retry policy unchanged.
+- **The decode is bounded, and the bound is not the clock.**
+  `decodeOpenMeteoForecastRange` truncates at `domain.WeatherOutlookHorizonDays` and drops
+  any date past a window measured from the response's *own* first date — plus an absolute
+  one-year ceiling, the only guard against a permanent row, since retention deletes the past
+  and nothing prunes the far future. Two invariants rest on this and neither is re-checked
+  downstream: the table has no archive tier because it is bounded at locations × 16, and a
+  whole fetch goes into one `BEGIN IMMEDIATE`, so an oversized response holds the WAL write
+  lock against the notifier and the web server for the length of the insert. The window is
+  anchored to the response rather than to `time.Now()` because forecast dates are city-local
+  while the clock is UTC — and on a host with no battery-backed RTC, a boot before time
+  synchronisation would otherwise filter a good response down to nothing. A `daily[]` that
+  yields no storable row is an **error**, never an empty success: reported as success it
+  leaves `captured_at` unmoved, so the daily gate never closes and the location is re-fetched
+  every tick behind a log line reading `fetched=1 failed=0`. This is the path a later
+  ensemble source swap would inherit.
 - **The gate is a UTC calendar day, not 24 elapsed hours.** Against an hourly cron, "at
   least 24 h since the last capture" drifts an hour later every day and eventually lands
   after the subscriber's notify hour, so the digest would read a forecast a day older than
@@ -157,9 +172,18 @@ a latch per condition would either send every flip or, with a dead band wide eno
 that, say nothing at all.
 
 Instead `WeatherCheckAgent.runOutlookPhase` compares `domain.WeatherOutlook.Signature()`
-against the `weather_user_cities.notify_state` column and queues a message only when they
-differ. Three properties are load-bearing:
+against the stored `weather_user_cities.notify_state` *reduced to the days still ahead*, and
+queues a message only when the two differ. Four properties are load-bearing:
 
+- **The stored signature is pruned to today's window before it is compared or rendered**
+  (`domain.PruneWeatherOutlookSignature`); the freshly built one is stored unpruned. A
+  signature spans days strictly after the baseline and the baseline advances every morning,
+  so the day that becomes today leaves the new signature on its own, with nothing in the
+  forecast having changed. Compared raw, that reads as a change: the gate sends, and the diff
+  reports the arriving day as *cleared* — telling a reader on the morning it rains that the
+  rain day cleared. It also fires one message per roll-off day, which in a wet week is the
+  daily-whatever-happens digest the content gate exists to prevent. A second content-gated
+  kind modelled on this one inherits the trap.
 - **The cursor advances on every evaluation that had data**, not only on a send. That is
   what bounds the digest at one message per city per local day *regardless of how often the
   collector refreshes the forecast underneath it* — a guarantee the fetch cadence must not
