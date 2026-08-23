@@ -2,6 +2,7 @@ package weather
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -663,6 +664,56 @@ func loggedDuration(t *testing.T, text, pattern string) time.Duration {
 	d, err := time.ParseDuration(m[1])
 	require.NoError(t, err, "%q is not a duration", m[1])
 	return d
+}
+
+func TestOpenMeteoTransportErrorRedaction(t *testing.T) {
+	t.Parallel()
+
+	// A dead listener forces http.Client.Do to fail at the transport, which is the branch
+	// that returns a *url.Error carrying the whole request URL.
+	deadServer := func(t *testing.T) string {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		addr := srv.URL
+		srv.Close()
+		return addr
+	}
+
+	t.Run("a forecast transport failure carries no coordinates", func(t *testing.T) {
+		t.Parallel()
+		addr := deadServer(t)
+		om := newTestOpenMeteo(t, addr, addr)
+
+		_, err := om.Forecast(t.Context(), 51.169392, 71.449074)
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "51.169392")
+		assert.NotContains(t, err.Error(), "71.449074")
+		assert.NotContains(t, err.Error(), "latitude")
+		assert.Contains(t, err.Error(), "/v1/forecast", "the path still has to say what failed")
+	})
+
+	t.Run("a geocode transport failure carries no search term", func(t *testing.T) {
+		t.Parallel()
+		addr := deadServer(t)
+		om := newTestOpenMeteo(t, addr, addr)
+
+		_, err := om.Geocode(t.Context(), "Karagandy", 3)
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "Karagandy")
+		assert.Contains(t, err.Error(), "/v1/search")
+	})
+
+	t.Run("an error that is not a *url.Error is untouched", func(t *testing.T) {
+		t.Parallel()
+		sentinel := errors.New("nothing to redact")
+		assert.Equal(t, sentinel, redactURLError(sentinel))
+	})
+
+	t.Run("a URL that will not parse redacts to nothing, not to itself", func(t *testing.T) {
+		t.Parallel()
+		got := redactURLError(&url.Error{Op: "Get", URL: "://%zz", Err: errors.New("boom")})
+		assert.NotContains(t, got.Error(), "%zz")
+	})
 }
 
 func TestOpenMeteo_ForecastRange(t *testing.T) {

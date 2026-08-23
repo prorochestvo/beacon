@@ -272,6 +272,31 @@ func (o *OpenMeteo) get(ctx context.Context, rawURL string) ([]byte, error) {
 	)
 }
 
+// redactURLError rebuilds a *url.Error with the query string stripped from its URL.
+//
+// The status-code branch below composes its own message from host and path deliberately, to
+// keep coordinates and search terms out of the logs. A transport failure defeats that on its
+// own: net/http returns a *url.Error whose Error() embeds the URL verbatim, so a plain
+// `dial tcp: i/o timeout` arrives carrying every latitude, longitude and query term the
+// request was built with, and any caller formatting it with %v prints them.
+//
+// It is called on the error http.Client.Do returns, where the *url.Error is the whole chain.
+// Anything else is handed back untouched.
+func redactURLError(err error) error {
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		return err
+	}
+
+	// A URL that will not parse yields the empty string rather than the original: the point
+	// is that nothing unexamined reaches the log.
+	redacted := ""
+	if parsed, parseErr := url.Parse(urlErr.URL); parseErr == nil {
+		redacted = parsed.Host + parsed.Path
+	}
+	return &url.Error{Op: urlErr.Op, URL: redacted, Err: urlErr.Err}
+}
+
 // attempt performs exactly one request. Its errors are classified by retryableError so
 // get can tell an upstream hiccup from an answer that will not change.
 func (o *OpenMeteo) attempt(ctx context.Context, rawURL string) ([]byte, error) {
@@ -286,6 +311,7 @@ func (o *OpenMeteo) attempt(ctx context.Context, rawURL string) ([]byte, error) 
 		// Transport-level failures — timeout, reset, refused — are indistinguishable
 		// from a 5xx from here and just as transient. A cancelled context is not: the
 		// caller asked to stop, and re-sending would ignore that.
+		err = redactURLError(err)
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("open-meteo: do request: %w", err)
 		}
