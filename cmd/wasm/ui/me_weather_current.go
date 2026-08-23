@@ -115,16 +115,15 @@ func renderWeatherForecastStrip(days []dto.WeatherForecastDayItem) string {
 	return b.String()
 }
 
-// zeroStateClass maps the zero_state token to the chip modifier class. An unrecognised
-// value falls back to "unknown", so a token this build does not know cannot inject a class
-// name of its own.
+// zeroStateClass maps the zero_state token to the chip modifier class, going through the
+// domain enum so the classes and the glyphs cannot drift apart the way two hand-written
+// tables already had. An unrecognised value falls back to "unknown": Label only ever returns
+// a token this build knows, so a class name can never be injected through it.
 func zeroStateClass(zeroState string) string {
-	switch zeroState {
-	case "above", "crossing", "below":
-		return zeroState
-	default:
-		return "unknown"
+	if label := domain.ParseWeatherZeroState(zeroState).Label(); label != "" {
+		return label
 	}
+	return "unknown"
 }
 
 // renderWeatherCurrentCard emits one city weather card. When HasData is false,
