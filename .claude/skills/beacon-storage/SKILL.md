@@ -1,12 +1,63 @@
 ---
 name: beacon-storage
-description: Beacon's SQLite storage rules beyond the basics — the hot/archive tiering of rate_values and execution_history (why one file, why reads UNION both tiers and writes touch only hot, roll-over, retention, VACUUM), the migrator contract and the immutable migration filename convention, columns that look droppable but are not, why weather_forecast_days is bounded rather than tiered, why historical migration tests must not seed through a repository, and how to read production data out of a gzipped snapshot. Load before writing or reviewing any query in internal/repository or internal/infrastructure/sqlitedb, adding or altering a migration under ./migrations, touching collection.MaintenanceAgent, sqlitedb.Migrator, Transaction/ReadOnlyTransaction, RetainRateSource, rate_source_health, weather_observations, weather_forecast_days or RetainWeatherForecastDays, writing a test against stubSQLiteDBThrough, or inspecting the production database.
+description: Beacon's SQLite storage rules beyond the basics — the connection PRAGMAs and the two different places they are applied from, the BEGIN IMMEDIATE write / deferred read split that is what makes busy_timeout reachable at all, the repository pattern and its transaction helpers, the hot/archive tiering of rate_values and execution_history (why one file, why reads UNION both tiers and writes touch only hot, roll-over, retention, VACUUM), the foreign keys that cascade a source deletion into its whole history, the migrator contract and the immutable migration filename convention, columns that look droppable but are not, why weather_forecast_days is bounded rather than tiered, why historical migration tests must not seed through a repository, and how to read production data out of a gzipped snapshot. Load before writing or reviewing any query in internal/repository or internal/infrastructure/sqlitedb, adding or altering a migration under ./migrations, touching collection.MaintenanceAgent, sqlitedb.Migrator, sqlitedb.RequireMigratedSchema, NewSQLiteClientEx or connectionOptions, Transaction/ReadOnlyTransaction, SQLiteClient.Rollback or Ping, a DSN _pragma= or _txlock setting, RetainRateSource, RemoveRateSource, rate_source_health, weather_observations, weather_forecast_days or RetainWeatherForecastDays, writing a test against stubSQLiteDBThrough, or inspecting the production database.
 ---
 
 # Beacon storage
 
 Read this before any repository query, any migration, or any attempt to look at
 production data.
+
+## Connection, PRAGMAs and transactions
+
+Engine: SQLite, accessed via the pure-Go `modernc.org/sqlite` driver (no CGO). Three PRAGMAs
+are applied on connection open, from two different places for two different reasons:
+
+- `foreign_keys=ON` and `busy_timeout=5000` are passed as `?_pragma=` query parameters on the
+  DSN (see `connectionOptions` in `config.go`). The `modernc.org/sqlite` driver re-applies
+  them in its `Open` hook on every new connection the `database/sql` pool opens, which is the
+  only way to keep these per-connection settings consistent across `SetMaxOpenConns(N>1)`.
+- `journal_mode=WAL` is persisted in the database file header, so it is set once via `db.Exec`
+  inside `NewSQLiteClientEx`.
+
+`busy_timeout` (5 s) is the driver-level retry window for lock contention; it must stay
+strictly less than the Go-level `Timeout` so the context deadline always fires *after* the
+driver retry expires.
+
+**Writes open `BEGIN IMMEDIATE`; reads stay deferred.** The DSN also carries
+`_txlock=immediate`, and the driver applies that begin mode only when
+`sql.TxOptions.ReadOnly` is false — so `Transaction` takes the WAL write lock at `BEGIN`
+while `ReadOnlyTransaction` keeps a plain deferred `BEGIN` and still runs concurrently with a
+writer.
+
+That split is what makes `busy_timeout` reachable at all. A deferred transaction begins as a
+reader and *promotes* at its first write, and SQLite refuses to invoke the busy handler on a
+promotion — two connections both waiting to promote would deadlock — so it returns
+`SQLITE_BUSY` on the spot. Collector/notifier/web contention therefore lost writes in
+milliseconds while a 5 s retry window sat unused (12 rate values and 5 `execution_history`
+rows in one production log). Taking the lock at `BEGIN` is not a promotion, so the wait is
+real.
+
+Consequences for new code:
+
+- **`Transaction` is for paths that write.** Reads go through `ReadOnlyTransaction` or they
+  serialise against each other for nothing. `SQLiteClient.Rollback` — and `Ping`, and through
+  it the `/health/check` inspector — is read-only for that reason: a readiness probe queued
+  behind a collector tick would report a busy database as a dead one.
+- **Two write transactions cannot be open at once** in one process; the second `BEGIN` waits
+  for the first. Open, write and commit inside one function, as every repository method does.
+
+**The repository pattern.** Each repository type owns its own SQL, migration, and query
+helper functions, and runs them inside explicit transactions — `r.db.Transaction(ctx)` to
+write, `r.db.ReadOnlyTransaction(ctx)` to read. Repositories are passed as interfaces into
+the service and handler layers.
+
+### Deleting a source cascades into its history
+
+Foreign keys point from `rate_values`, `rate_user_subscriptions` and `rate_user_events` to
+`rate_sources(name)` with `ON DELETE CASCADE`, so deleting a source destroys every dependent
+row. Read the warning on `RemoveRateSource` before wiring it to any endpoint. The archive
+tier is deliberately exempt — see `rate_values_archive` under the tiering rules below.
 
 ## Hot / archive tiering
 
@@ -74,6 +125,10 @@ missing or empty `__schema_migrations` table is fatal:
 ```
 log.Fatalf("schema not initialised: run cmd/migrator before starting the service")
 ```
+
+Schema reconciliation is therefore **deploy-time, not startup-time**: `configs/beacon.service`
+deliberately carries no `ExecStartPre` migrator, and the `beacon-migrate` one-shot unit runs
+as root after the release symlink flips, so the CI deploy user never writes the database.
 
 Migration files live at `./migrations/*.sql`. Filename convention:
 `<YYYYMM>.<NNN>.<table>.<description>.sql` (e.g.
