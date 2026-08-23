@@ -246,11 +246,36 @@ type migration struct {
 	content string
 }
 
-// RequireMigratedSchema returns nil only when __schema_migrations exists and
-// has at least one row. Service binaries call it right after opening the DB so a
-// missing migrator step surfaces as a loud startup failure rather than a
-// confusing "no such table" error at the first query.
-func RequireMigratedSchema(ctx context.Context, db Committer) error {
+// RequireMigratedSchema returns nil only when every migration in fsys is recorded in
+// __schema_migrations. Service binaries call it right after opening the DB, so a schema
+// the build does not agree with surfaces as a loud startup failure rather than as a
+// "no such table" or "no such column" at the first query that happens to need one.
+//
+// It compares the whole set rather than asking whether the table is non-empty, because
+// non-empty is true of every partially migrated database. The release flips the channel
+// symlink before it runs the migrator, so for a few seconds the cron binaries resolve to a
+// build newer than the schema; without the comparison they start and die mid-query on the
+// first new column, which is a confusing way to learn the migration has not run yet. A
+// hand-rolled deploy or an interrupted migrator lands in the same state with no window at
+// all.
+//
+// The check is deliberately one-directional. A database carrying migrations this build does
+// not know about is fine and must stay fine: that is what a rollback to the previous
+// artifact looks like, and refusing to start would turn the rollback into an outage.
+//
+// An empty migration file is not treated as missing. It applies nothing and is therefore
+// never recorded, which is a repository defect for Migrator.Verify to report, not a reason
+// to keep a service down.
+func RequireMigratedSchema(ctx context.Context, db Committer, fsys fs.FS) error {
+	expected, err := newDefaultMigrations(fsys)
+	if err != nil {
+		return errors.Join(fmt.Errorf("schema check: read embedded migrations: %w", err), loginjector.NewTraceError())
+	}
+	return requireRecorded(ctx, db, expected)
+}
+
+// requireRecorded is RequireMigratedSchema over an already-read migration set.
+func requireRecorded(ctx context.Context, db Committer, expected []migration) error {
 	var tx *sql.Tx
 	var err error
 	if ro, ok := db.(interface {
@@ -268,17 +293,59 @@ func RequireMigratedSchema(ctx context.Context, db Committer) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var count int
-	if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+migrationTableName).Scan(&count); err != nil {
+	rows, err := tx.QueryContext(ctx, "SELECT filename FROM "+migrationTableName+";")
+	if err != nil {
 		return errors.Join(
 			fmt.Errorf("schema not initialised: run cmd/migrator before starting the service: %w", err),
 			loginjector.NewTraceError(),
 		)
 	}
-	if count == 0 {
+	defer func() { _ = rows.Close() }()
+
+	recorded := make(map[string]struct{})
+	for rows.Next() {
+		var name string
+		if err = rows.Scan(&name); err != nil {
+			return errors.Join(fmt.Errorf("schema check: scan filename: %w", err), loginjector.NewTraceError())
+		}
+		recorded[name] = struct{}{}
+	}
+	if err = rows.Err(); err != nil {
+		return errors.Join(fmt.Errorf("schema check: iterate %s: %w", migrationTableName, err), loginjector.NewTraceError())
+	}
+
+	if len(recorded) == 0 {
 		return errors.New("schema not initialised: run cmd/migrator before starting the service")
 	}
+
+	var missing []string
+	for _, item := range expected {
+		if item.content == "" {
+			continue
+		}
+		if _, ok := recorded[item.name]; !ok {
+			missing = append(missing, item.name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf(
+			"schema is behind this build: run cmd/migrator before starting the service; %d migration(s) not recorded in %s: %s",
+			len(missing), migrationTableName, strings.Join(summarise(missing, maxReportedMigrations), ", "))
+	}
 	return nil
+}
+
+// maxReportedMigrations caps how many names a schema-behind error lists. A fresh database
+// is behind by every migration there is, and a startup log line naming all of them buries
+// the sentence that says what to do.
+const maxReportedMigrations = 5
+
+// summarise trims a list to at most limit entries, replacing the tail with a count.
+func summarise(items []string, limit int) []string {
+	if len(items) <= limit {
+		return items
+	}
+	return append(items[:limit:limit], fmt.Sprintf("and %d more", len(items)-limit))
 }
 
 func newDefaultMigrations(fsys fs.FS) ([]migration, error) {

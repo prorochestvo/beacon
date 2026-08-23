@@ -194,7 +194,7 @@ returns partial history without erroring. Schema lives at `./migrations/*.sql` a
 filenames are **immutable**. Both, plus roll-over, retention, VACUUM and how to read a
 production snapshot: **skill `beacon-storage`**. `cmd/migrator` is the only thing that
 mutates schema; service binaries call `sqlitedb.RequireMigratedSchema` and refuse to start
-against an unmigrated database.
+against a schema behind their own build.
 
 ### Environment Variables
 
