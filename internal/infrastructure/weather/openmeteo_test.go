@@ -805,6 +805,22 @@ func TestOpenMeteo_ForecastRange(t *testing.T) {
 		assert.Len(t, days, domain.WeatherOutlookHorizonDays)
 	})
 
+	t.Run("a window the clock disagrees with still decodes whole", func(t *testing.T) {
+		t.Parallel()
+		// The window is bounded from the response's own first date, not from the wall clock.
+		// Anchored to the clock instead, a stored fixture and a host that has not yet
+		// synchronised its time both filter down to nothing and surface as a decoder error.
+		base := time.Now().UTC().AddDate(0, 6, 0)
+		quoted := make([]string, 0, domain.WeatherOutlookHorizonDays)
+		for offset := range domain.WeatherOutlookHorizonDays {
+			quoted = append(quoted, fmt.Sprintf("%q", base.AddDate(0, 0, offset).Format(time.DateOnly)))
+		}
+
+		days, err := decodeOpenMeteoForecastRange(fmt.Appendf(nil, `{"daily":{"time":[%s]}}`, strings.Join(quoted, ",")))
+		require.NoError(t, err)
+		assert.Len(t, days, domain.WeatherOutlookHorizonDays)
+	})
+
 	t.Run("a day past the horizon is dropped", func(t *testing.T) {
 		t.Parallel()
 		// Retention deletes the past and nothing prunes the far future, so a row dated a year

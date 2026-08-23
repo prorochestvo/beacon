@@ -589,15 +589,24 @@ func decodeOpenMeteoForecastRange(body []byte) ([]domain.WeatherForecastDay, err
 
 	// Bound the window here rather than trusting forecast_days=16 to have been honoured.
 	// Nothing downstream re-checks it, and two invariants rest on it. The table has no
-	// archive tier because it is a bounded working set of locations x 16, and retention only
-	// deletes the past — so a row dated years out would be permanent and would sit in the
-	// read window forever. And every row of a fetch is written in one BEGIN IMMEDIATE, which
-	// takes the WAL write lock at BEGIN: an oversized response would hold it against the
-	// notifier and the web server for the length of the whole insert.
+	// archive tier because it is a bounded working set of locations x 16, and every row of a
+	// fetch is written in one BEGIN IMMEDIATE, which takes the WAL write lock at BEGIN — an
+	// oversized response would hold it against the notifier and the web server for the length
+	// of the whole insert.
 	//
-	// The extra day of slack is the timezone. Forecast dates are city-local and a city can be
-	// a calendar day ahead of UTC.
-	horizonEnd := capturedAt.AddDate(0, 0, domain.WeatherOutlookHorizonDays+1).Format(time.DateOnly)
+	// The window is measured from the response's own first date, not from the clock. Forecast
+	// dates are city-local and capturedAt is UTC, so comparing the two needs a slack day and
+	// still misreads a host whose clock has not synchronised: on a machine with no
+	// battery-backed RTC, a boot before timesyncd converges would filter a perfectly good
+	// response down to nothing. The first date is in the same frame as the rest, so the
+	// comparison is exact and needs no clock at all.
+	windowEnd := forecastRangeWindowEnd(resp.Daily.Time)
+
+	// An absolute ceiling still applies, for the one thing a relative bound cannot catch.
+	// Retention deletes the past and nothing prunes the far future, so a row dated years out
+	// would be permanent and would sit at the head of the read window forever. A year of
+	// headroom is far past any plausible clock skew and far short of a junk date.
+	permanenceCeiling := capturedAt.AddDate(1, 0, 0).Format(time.DateOnly)
 
 	days := make([]domain.WeatherForecastDay, 0, domain.WeatherOutlookHorizonDays)
 	for i, date := range resp.Daily.Time {
@@ -607,8 +616,11 @@ func decodeOpenMeteoForecastRange(body []byte) ([]domain.WeatherForecastDay, err
 		if date == "" {
 			continue // a day with no calendar date has no natural key to be stored under
 		}
-		if date > horizonEnd {
-			continue // past anything this feature asked for; see horizonEnd above
+		if windowEnd != "" && date > windowEnd {
+			continue // outside the window the response itself anchors; see windowEnd above
+		}
+		if date > permanenceCeiling {
+			continue // see permanenceCeiling above
 		}
 		days = append(days, domain.WeatherForecastDay{
 			Provider:      domain.ProviderOpenMeteo,
@@ -636,6 +648,23 @@ func decodeOpenMeteoForecastRange(body []byte) ([]domain.WeatherForecastDay, err
 	}
 
 	return days, nil
+}
+
+// forecastRangeWindowEnd returns the last calendar date a long-range response may carry,
+// measured from its own first dated entry so the bound stays inside the city-local frame the
+// dates are written in.
+//
+// It returns the empty string when no entry carries a parseable date, which the caller reads
+// as "no relative bound available" and falls back to the row count alone.
+func forecastRangeWindowEnd(times []string) string {
+	for _, date := range times {
+		first, err := time.Parse(time.DateOnly, date)
+		if err != nil {
+			continue
+		}
+		return first.AddDate(0, 0, domain.WeatherOutlookHorizonDays).Format(time.DateOnly)
+	}
+	return ""
 }
 
 func isRetryable(err error) bool {
