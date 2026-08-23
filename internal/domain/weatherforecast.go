@@ -113,7 +113,9 @@ func (s WeatherZeroState) Label() string {
 	}
 }
 
-// Symbol returns the single-character indicator used in rendered output.
+// Symbol returns the single-character indicator used in rendered output. An unknown state
+// renders as an em dash rather than a question mark: the day carried no usable temperature
+// bounds, which is a gap in the data and not a question being asked of the reader.
 func (s WeatherZeroState) Symbol() string {
 	switch s {
 	case WeatherZeroStateAbove:
@@ -123,9 +125,29 @@ func (s WeatherZeroState) Symbol() string {
 	case WeatherZeroStateBelow:
 		return "▼"
 	case WeatherZeroStateUnknown:
-		return "?"
+		return "—"
 	default:
-		return "?"
+		return "—"
+	}
+}
+
+// ParseWeatherZeroState is the inverse of Label: it turns the wire token back into the
+// state. Any token this build does not know, the empty string included, is Unknown.
+//
+// It exists so the browser client can render a day from the same enum the server classified
+// it with, instead of keeping a second table mapping the same three tokens to the same three
+// glyphs — two tables that had already drifted apart on what to show for a day with no
+// bounds.
+func ParseWeatherZeroState(token string) WeatherZeroState {
+	switch token {
+	case "above":
+		return WeatherZeroStateAbove
+	case "crossing":
+		return WeatherZeroStateCrossing
+	case "below":
+		return WeatherZeroStateBelow
+	default:
+		return WeatherZeroStateUnknown
 	}
 }
 

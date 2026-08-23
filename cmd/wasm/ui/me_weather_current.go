@@ -6,6 +6,7 @@ import (
 
 	"github.com/seilbekskindirov/beacon/cmd/wasm/application"
 	"github.com/seilbekskindirov/beacon/cmd/wasm/dom"
+	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/dto"
 )
 
@@ -96,7 +97,7 @@ func renderWeatherForecastStrip(days []dto.WeatherForecastDayItem) string {
 		}
 		b.WriteString(`</div>`)
 
-		fmt.Fprintf(&b, `<div class="weather-forecast-zero">%s</div>`, zeroStateSymbol(day.ZeroState))
+		fmt.Fprintf(&b, `<div class="weather-forecast-zero">%s</div>`, domain.ParseWeatherZeroState(day.ZeroState).Symbol())
 
 		if day.TempMax != nil && day.TempMin != nil {
 			fmt.Fprintf(&b, `<div class="weather-forecast-temp">%.0f° / %.0f°</div>`, *day.TempMax, *day.TempMin)
@@ -112,22 +113,6 @@ func renderWeatherForecastStrip(days []dto.WeatherForecastDayItem) string {
 	}
 	b.WriteString(`</div>`)
 	return b.String()
-}
-
-// zeroStateSymbol maps the server's zero_state token to its indicator. An unknown or absent
-// state renders as an em dash rather than a guess: the day carried no usable temperature
-// bounds, which is not the same as sitting on either side of zero.
-func zeroStateSymbol(zeroState string) string {
-	switch zeroState {
-	case "above":
-		return "▲"
-	case "crossing":
-		return "↕"
-	case "below":
-		return "▼"
-	default:
-		return "—"
-	}
 }
 
 // zeroStateClass maps the zero_state token to the chip modifier class. An unrecognised
