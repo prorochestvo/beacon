@@ -66,3 +66,12 @@ lines already include `chat=<chat_id>` for observability and that is fine. Do no
 `@username`, message body content, or any other off-limits field. The access-log format
 `middleware [200] GET /api/v1/me/subscriptions` intentionally omits the
 `X-Telegram-Init-Data` header for the same reason.
+
+**An outbound URL is a log field too.** Open-Meteo requests carry a user-selected city's
+coordinates, and geocoding requests carry the search term the user typed. Both are
+pre-approved data, so this is hygiene rather than policy — but neither belongs in a log line
+by accident. `internal/infrastructure/weather/openmeteo.go` composes its status-code errors
+from host and path only, and runs transport errors through `redactURLError`, because
+`net/http` returns a `*url.Error` whose `Error()` embeds the request URL verbatim and any
+caller printing it with `%v` prints the query string with it. A new outbound client wraps its
+own transport errors the same way.
