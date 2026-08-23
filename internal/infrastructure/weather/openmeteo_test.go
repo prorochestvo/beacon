@@ -781,6 +781,12 @@ func TestOpenMeteo_ForecastRange(t *testing.T) {
 		require.Len(t, days, 2)
 		assert.Equal(t, "2026-08-21", days[0].ForecastDate)
 		assert.Equal(t, "2026-08-23", days[1].ForecastDate)
+
+		// The measurement arrays are parallel to daily.time and must stay indexed against it.
+		// A decoder reading them by output position instead would pin the skipped day's 0.0
+		// to 23 Aug and satisfy every assertion above.
+		require.NotNil(t, days[1].RainSum)
+		assert.InDelta(t, 3.0, *days[1].RainSum, 1e-6)
 	})
 
 	t.Run("a response longer than the horizon is truncated to it", func(t *testing.T) {
