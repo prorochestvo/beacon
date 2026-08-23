@@ -21,20 +21,25 @@ import (
 func TestWireWeather(t *testing.T) {
 	t.Parallel()
 
-	t.Run("always builds a runner", func(t *testing.T) {
+	t.Run("always builds both runners", func(t *testing.T) {
 		t.Parallel()
 		// Repos are constructed with a nil db and never Run in this test — they only need
-		// to be non-nil so NewWeatherAgent's required-arg check passes and wireWeather
-		// returns the assembled runner. Open-Meteo is hardcoded always-on: there is no
-		// "inactive" state to test.
+		// to be non-nil so the agents' required-arg checks pass and wireWeather returns the
+		// assembled runners. Open-Meteo is hardcoded always-on: there is no "inactive"
+		// state to test.
 		cityRepo, err := repository.NewWeatherUserCityRepository(nil)
 		require.NoError(t, err)
 		obsRepo, err := repository.NewWeatherObservationRepository(nil)
 		require.NoError(t, err)
-
-		agent, err := wireWeather(cityRepo, obsRepo, nil)
+		forecastRepo, err := repository.NewWeatherForecastDayRepository(nil)
 		require.NoError(t, err)
-		assert.NotNil(t, agent, "Open-Meteo is hardcoded always-on and must always produce a weather runner")
+
+		agents, err := wireWeather(cityRepo, obsRepo, forecastRepo, nil)
+		require.NoError(t, err)
+		require.Len(t, agents, 2, "current conditions and the long-range forecast are separate runners")
+		for i, agent := range agents {
+			assert.NotNil(t, agent, "Open-Meteo is hardcoded always-on and must always produce runner %d", i)
+		}
 	})
 
 	t.Run("weather collection is direct", func(t *testing.T) {
@@ -47,10 +52,12 @@ func TestWireWeather(t *testing.T) {
 		require.NoError(t, err)
 		obsRepo, err := repository.NewWeatherObservationRepository(nil)
 		require.NoError(t, err)
-
-		agent, err := wireWeather(cityRepo, obsRepo, nil)
+		forecastRepo, err := repository.NewWeatherForecastDayRepository(nil)
 		require.NoError(t, err)
-		assert.NotNil(t, agent)
+
+		agents, err := wireWeather(cityRepo, obsRepo, forecastRepo, nil)
+		require.NoError(t, err)
+		assert.NotEmpty(t, agents)
 	})
 
 }
@@ -70,10 +77,12 @@ func TestWeatherIgnoresProxyEnv(t *testing.T) {
 	require.NoError(t, err)
 	obsRepo, err := repository.NewWeatherObservationRepository(nil)
 	require.NoError(t, err)
+	forecastRepo, err := repository.NewWeatherForecastDayRepository(nil)
+	require.NoError(t, err)
 
-	agent, err := wireWeather(cityRepo, obsRepo, nil)
+	agents, err := wireWeather(cityRepo, obsRepo, forecastRepo, nil)
 	require.NoError(t, err, "a proxy setting in the environment must be inert for weather")
-	assert.NotNil(t, agent)
+	assert.NotEmpty(t, agents)
 }
 
 // TestProxyEnvAloneDoesNotRouteCollection pins the deploy-time half of the two-level

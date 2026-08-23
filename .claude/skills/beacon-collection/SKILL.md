@@ -1,6 +1,6 @@
 ---
 name: beacon-collection
-description: How Beacon's collector reaches upstreams and what it does with the results — per-source proxy opt-in and why direct is the default, batched sources sharing one fetch (the 20 Yahoo rows), the Open-Meteo weather provider with its retry policy and alert edge semantics, and the source-health alerting that reports a source gone silent. Load before touching cmd/collector, internal/tools/rateextractor, internal/application/collection, internal/infrastructure/weather, notification.SourceHealthAgent, any rate_sources row or seed migration, anything involving BEACON_PROXY_URL or options.use_proxy, weather alert kinds, or the rain/thaw/heat/frost latches.
+description: How Beacon's collector reaches upstreams and what it does with the results — per-source proxy opt-in and why direct is the default, batched sources sharing one fetch (the 20 Yahoo rows), the Open-Meteo weather provider with its retry policy and alert edge semantics, the 16-day long-range forecast on its own daily gate and the content-gated outlook digest, and the source-health alerting that reports a source gone silent. Load before touching cmd/collector, internal/tools/rateextractor, internal/application/collection, internal/infrastructure/weather, notification.SourceHealthAgent, any rate_sources row or seed migration, anything involving BEACON_PROXY_URL or options.use_proxy, weather alert kinds, the rain/thaw/heat/frost latches, collection.WeatherForecastAgent, OpenMeteo.Forecast or ForecastRange, or the forecast_outlook notify kind and its notify_state signature.
 ---
 
 # Beacon collection
@@ -119,6 +119,86 @@ at 500 ms. Five attempts is not a round number: it is the largest budget whose s
 waiting still fits inside `weatherGeoTimeout`, the 5 s deadline the Mini App city search
 puts on the *same* client. Raising the budget means moving that deadline in the same change,
 and `TestRetryScheduleFitsTheTightestCaller` is what says so out loud.
+
+## The long-range forecast
+
+`WeatherForecastAgent` (collector, its own runner beside `WeatherAgent`) stores 16 daily
+rows per subscribed location in `weather_forecast_days`. Everything about it is deliberately
+separate from the current-conditions path.
+
+- **A separate HTTP request, not a wider one.** `OpenMeteo.ForecastRange` issues its own
+  call; `Forecast` and `decodeOpenMeteoForecast` are untouched. `Forecast` decodes daily
+  index `[0]`, and that index *is* today for the morning summary and for `alert_heat`,
+  `alert_frost`, `alert_thunderstorm` and `alert_thaw` — all four read `obs.TempMax` /
+  `TempMin` / `WeatherCode`. Widening the request or the decode risks shifting what those
+  five things mean with nothing to report it. The second request costs about one weighted
+  API call per location per day against a budget of 10,000. It still routes through
+  `OpenMeteo.get`, so it inherits the retry policy unchanged.
+- **The decode is bounded, and the bound is not the clock.**
+  `decodeOpenMeteoForecastRange` truncates at `domain.WeatherOutlookHorizonDays` and drops
+  any date past a window measured from the response's *own* first date — plus an absolute
+  one-year ceiling, the only guard against a permanent row, since retention deletes the past
+  and nothing prunes the far future. Two invariants rest on this and neither is re-checked
+  downstream: the table has no archive tier because it is bounded at locations × 16, and a
+  whole fetch goes into one `BEGIN IMMEDIATE`, so an oversized response holds the WAL write
+  lock against the notifier and the web server for the length of the insert. The window is
+  anchored to the response rather than to `time.Now()` because forecast dates are city-local
+  while the clock is UTC — and on a host with no battery-backed RTC, a boot before time
+  synchronisation would otherwise filter a good response down to nothing. A `daily[]` that
+  yields no storable row is an **error**, never an empty success: reported as success it
+  leaves `captured_at` unmoved, so the daily gate never closes and the location is re-fetched
+  every tick behind a log line reading `fetched=1 failed=0`. This is the path a later
+  ensemble source swap would inherit.
+- **The gate is a UTC calendar day, not 24 elapsed hours.** Against an hourly cron, "at
+  least 24 h since the last capture" drifts an hour later every day and eventually lands
+  after the subscriber's notify hour, so the digest would read a forecast a day older than
+  it needed to be. A calendar day pins the fetch to the first tick after midnight UTC.
+- **Retention keeps one day of slack.** `RemoveForecastDaysBefore` runs on every tick
+  whatever the fetches did, with a cutoff of yesterday UTC: offsets run from −12 to +14, so
+  one extra day is what makes "past" unambiguous for every subscriber.
+- **The units are not interchangeable.** Open-Meteo reports `rain_sum` in **millimetres**
+  and `snowfall_sum` in **centimetres**. A rain day is ≥ 1 mm, a snow day ≥ 1 cm; the two
+  thresholds are numerically equal and dimensionally different, so a single shared constant
+  is a bug.
+- **The bar is not `> 0`.** Models smear small amounts across most days of a long-range run,
+  so at any trace above zero nearly every day of a 16-day window comes back wet.
+
+## The outlook digest is content-gated, not latched
+
+`forecast_outlook` is the one notify kind outside the latch model entirely: it is absent
+from `alertKinds`, `UsesForecastDateCap` is false for it, and it never reaches
+`EvaluateLatched`. A day two weeks out changes its mind several times before it arrives, so
+a latch per condition would either send every flip or, with a dead band wide enough to stop
+that, say nothing at all.
+
+Instead `WeatherCheckAgent.runOutlookPhase` compares `domain.WeatherOutlook.Signature()`
+against the stored `weather_user_cities.notify_state` *reduced to the days still ahead*, and
+queues a message only when the two differ. Four properties are load-bearing:
+
+- **The stored signature is pruned to today's window before it is compared or rendered**
+  (`domain.PruneWeatherOutlookSignature`); the freshly built one is stored unpruned. A
+  signature spans days strictly after the baseline and the baseline advances every morning,
+  so the day that becomes today leaves the new signature on its own, with nothing in the
+  forecast having changed. Compared raw, that reads as a change: the gate sends, and the diff
+  reports the arriving day as *cleared* — telling a reader on the morning it rains that the
+  rain day cleared. It also fires one message per roll-off day, which in a wet week is the
+  daily-whatever-happens digest the content gate exists to prevent. A second content-gated
+  kind modelled on this one inherits the trap.
+- **The cursor advances on every evaluation that had data**, not only on a send. That is
+  what bounds the digest at one message per city per local day *regardless of how often the
+  collector refreshes the forecast underneath it* — a guarantee the fetch cadence must not
+  be able to take away by changing.
+- **An empty signature means "never evaluated"** and is distinct from an evaluated outlook
+  with nothing in it, which encodes as the version prefix alone (`o1:`). The distinction is
+  what keeps a first digest from opening with "nothing to report".
+- **A day is notable if it brings rain, snow, or a change in the freezing regime** relative
+  to the last classified day before it. Reporting every cold day would fill a Kazakh winter
+  digest with the fact that February is cold; what the reader needs is the day the regime
+  turns.
+
+The `o1:` prefix on the signature exists so a future change to the encoding re-notifies
+every subscriber exactly once rather than diffing two encodings that do not mean the same
+thing. Bump it when the encoding changes meaning.
 
 ## Weather alert edge semantics
 

@@ -1,6 +1,7 @@
 package notification
 
 import (
+	"strings"
 	"testing"
 	"time"
 	_ "time/tzdata" // embedded IANA tzdata so LoadLocation works without system tzdata
@@ -390,3 +391,103 @@ func TestRenderWeatherAlertEdges(t *testing.T) {
 		}
 	})
 }
+
+func TestRenderForecastOutlook(t *testing.T) {
+	t.Parallel()
+
+	outlookOf := func(days ...domain.WeatherForecastDay) domain.WeatherOutlook {
+		baseline := domain.WeatherForecastDay{ForecastDate: "2026-08-21", TempMax: fptr(21.5), TempMin: fptr(11.2)}
+		return domain.NewWeatherOutlook(append([]domain.WeatherForecastDay{baseline}, days...), "2026-08-21")
+	}
+
+	city := domain.WeatherUserCity{
+		ID:          "o1",
+		DisplayName: "Astana",
+		Timezone:    "UTC",
+		NotifyKind:  domain.WeatherNotifyForecastOutlook,
+	}
+
+	t.Run("renders a notable day with its date, amount and temperatures", func(t *testing.T) {
+		t.Parallel()
+		wet := domain.WeatherForecastDay{ForecastDate: "2026-08-23", TempMax: fptr(22.0), TempMin: fptr(14.6), RainSum: fptr(1.3)}
+		msg, err := RenderForecastOutlook(city, outlookOf(wet), "")
+		require.NoError(t, err)
+
+		assert.Contains(t, msg, "<b>Outlook — Astana</b>")
+		assert.Contains(t, msg, "Sun 23 Aug")
+		assert.Contains(t, msg, "🌧 1.3 mm")
+		assert.Contains(t, msg, "+22.0°C")
+		assert.Contains(t, msg, "▲")
+	})
+
+	t.Run("renders snow in centimetres and a freezing day below zero", func(t *testing.T) {
+		t.Parallel()
+		snowy := domain.WeatherForecastDay{ForecastDate: "2026-08-25", TempMax: fptr(-2.0), TempMin: fptr(-9.0), SnowfallSum: fptr(4.0)}
+		msg, err := RenderForecastOutlook(city, outlookOf(snowy), "")
+		require.NoError(t, err)
+
+		assert.Contains(t, msg, "❄ 4.0 cm")
+		assert.Contains(t, msg, "▼")
+		assert.Contains(t, msg, "−9.0°C", "negative temperatures use the Unicode minus sign")
+	})
+
+	t.Run("an empty outlook says so instead of listing nothing", func(t *testing.T) {
+		t.Parallel()
+		msg, err := RenderForecastOutlook(city, outlookOf(), "o1:2026-08-23:R+")
+		require.NoError(t, err)
+		assert.Contains(t, msg, "No rain, snow or freezing change")
+		assert.NotContains(t, msg, "🌧")
+	})
+
+	t.Run("only the days that changed are marked", func(t *testing.T) {
+		t.Parallel()
+		kept := domain.WeatherForecastDay{ForecastDate: "2026-08-23", TempMax: fptr(22.0), TempMin: fptr(14.6), RainSum: fptr(1.3)}
+		added := domain.WeatherForecastDay{ForecastDate: "2026-08-27", TempMax: fptr(19.0), TempMin: fptr(9.0), RainSum: fptr(2.0)}
+		msg, err := RenderForecastOutlook(city, outlookOf(kept, added), "o1:2026-08-23:R+")
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, strings.Count(msg, "🆕"))
+		assert.Contains(t, msg, "🆕 <b>Thu 27 Aug</b>")
+	})
+
+	t.Run("days that stopped being notable are listed as cleared", func(t *testing.T) {
+		t.Parallel()
+		kept := domain.WeatherForecastDay{ForecastDate: "2026-08-23", TempMax: fptr(22.0), TempMin: fptr(14.6), RainSum: fptr(1.3)}
+		msg, err := RenderForecastOutlook(city, outlookOf(kept), "o1:2026-08-23:R+;2026-08-27:R+")
+		require.NoError(t, err)
+
+		assert.Contains(t, msg, "Cleared: Thu 27 Aug")
+	})
+
+	t.Run("the city name is HTML-escaped", func(t *testing.T) {
+		t.Parallel()
+		hostile := city
+		hostile.DisplayName = `Astana <script>alert("x")</script>`
+		wet := domain.WeatherForecastDay{ForecastDate: "2026-08-23", TempMax: fptr(22.0), TempMin: fptr(14.6), RainSum: fptr(1.3)}
+
+		msg, err := RenderForecastOutlook(hostile, outlookOf(wet), "")
+		require.NoError(t, err)
+		assert.NotContains(t, msg, "<script>")
+		assert.Contains(t, msg, "&lt;script&gt;")
+	})
+
+	t.Run("the wrong notify kind is a wiring bug, not a message", func(t *testing.T) {
+		t.Parallel()
+		wrong := city
+		wrong.NotifyKind = domain.WeatherNotifyAlertHeat
+		_, err := RenderForecastOutlook(wrong, outlookOf(), "")
+		require.Error(t, err)
+	})
+
+	t.Run("an unparseable forecast date degrades to the raw date", func(t *testing.T) {
+		t.Parallel()
+		broken := domain.WeatherForecastDay{ForecastDate: "not-a-date", TempMax: fptr(2.0), TempMin: fptr(-3.0), RainSum: fptr(5.0)}
+		out := domain.NewWeatherOutlook([]domain.WeatherForecastDay{broken}, "2026-08-21")
+		msg, err := RenderForecastOutlook(city, out, "")
+		require.NoError(t, err)
+		assert.Contains(t, msg, "not-a-date", "the reader loses a weekday name, not the warning")
+	})
+}
+
+// fptr returns a pointer to v so table cases can express an absent measurement as nil.
+func fptr(v float64) *float64 { return &v }

@@ -78,9 +78,10 @@ func (r *WeatherUserCityRepository) RetainWeatherUserCity(ctx context.Context, r
 		lastNotifiedAt = &s
 	}
 
-	// AlertLatched is insert-only: it is deliberately absent from the ON CONFLICT
-	// DO UPDATE SET clause below, so a re-subscribe or ensure-thaw retain never stomps
-	// a real latch state back to the caller's default.
+	// AlertLatched and NotifyState are insert-only: both are deliberately absent from the
+	// ON CONFLICT DO UPDATE SET clause below, so a re-subscribe or ensure-thaw retain never
+	// stomps real notification state back to the caller's default — which for NotifyState
+	// would replay a digest the user has already read.
 	var alertLatched int
 	if record.AlertLatched {
 		alertLatched = 1
@@ -102,9 +103,10 @@ func (r *WeatherUserCityRepository) RetainWeatherUserCity(ctx context.Context, r
 		weatherUserCityConditionValueFieldName + ", " +
 		weatherUserCityLastNotifiedAtFieldName + ", " +
 		weatherUserCityAlertLatchedFieldName + ", " +
+		weatherUserCityNotifyStateFieldName + ", " +
 		weatherUserCityUpdatedAtFieldName + ", " +
 		weatherUserCityCreatedAtFieldName +
-		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
 		"ON CONFLICT(" +
 		weatherUserCityUserTypeFieldName + ", " +
 		weatherUserCityUserIDFieldName + ", " +
@@ -141,6 +143,7 @@ func (r *WeatherUserCityRepository) RetainWeatherUserCity(ctx context.Context, r
 		record.ConditionValue,
 		lastNotifiedAt,
 		alertLatched,
+		record.NotifyState,
 		record.UpdatedAt.Format(time.RFC3339),
 		record.CreatedAt.Format(time.RFC3339),
 	).Scan(&record.ID); err != nil {
@@ -359,6 +362,30 @@ func (r *WeatherUserCityRepository) SetWeatherAlertLatched(ctx context.Context, 
 	return nil
 }
 
+// SetWeatherNotifyState stores the content gate for a forecast_outlook subscription: the
+// signature of the digest just delivered on this row. Does not touch updated_at, which
+// tracks user-visible settings rather than notification bookkeeping. Call only after the
+// notification is successfully enqueued, or a queue failure would silence the retry.
+func (r *WeatherUserCityRepository) SetWeatherNotifyState(ctx context.Context, id, state string) error {
+	tx, err := r.db.Transaction(ctx)
+	if err != nil {
+		return errors.Join(err, loginjector.NewTraceError())
+	}
+	defer printRollbackError(tx)
+
+	cmd := "UPDATE " + weatherUserCityTableName +
+		" SET " + weatherUserCityNotifyStateFieldName + " = ?" +
+		" WHERE " + weatherUserCityIDFieldName + " = ?;"
+	if _, err := tx.ExecContext(ctx, cmd, state, id); err != nil {
+		return errors.Join(err, fmt.Errorf("SQL: %s", cmd), loginjector.NewTraceError())
+	}
+
+	if err := tx.Commit(); err != nil {
+		return errors.Join(err, loginjector.NewTraceError())
+	}
+	return nil
+}
+
 // MarkWeatherAlertFired records that an alert fired for a given forecast_date: it sets
 // alert_latched = 1 and stores firedForDate in last_notified_at (the per-forecast_date fire
 // cursor for alert kinds). Pass domain.ForecastDateKey(obs.ForecastDate) as firedForDate.
@@ -401,6 +428,7 @@ const (
 	weatherUserCityConditionValueFieldName = "condition_value"
 	weatherUserCityLastNotifiedAtFieldName = "last_notified_at"
 	weatherUserCityAlertLatchedFieldName   = "alert_latched"
+	weatherUserCityNotifyStateFieldName    = "notify_state"
 	weatherUserCityUpdatedAtFieldName      = "updated_at"
 	weatherUserCityCreatedAtFieldName      = "created_at"
 
@@ -420,6 +448,7 @@ const (
 		weatherUserCityConditionValueFieldName + ", " +
 		weatherUserCityLastNotifiedAtFieldName + ", " +
 		weatherUserCityAlertLatchedFieldName + ", " +
+		weatherUserCityNotifyStateFieldName + ", " +
 		weatherUserCityUpdatedAtFieldName + ", " +
 		weatherUserCityCreatedAtFieldName +
 		" FROM " + weatherUserCityTableName
@@ -478,6 +507,7 @@ func weatherUserCityScan(s weatherUserCityScanner) (domain.WeatherUserCity, erro
 		&item.ConditionValue,
 		&lastNotifiedAt,
 		&alertLatched,
+		&item.NotifyState,
 		&updatedAt,
 		&createdAt,
 	); err != nil {

@@ -168,6 +168,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("repositories: %s", err.Error())
 	}
+	weatherForecastRepo, err := repository.NewWeatherForecastDayRepository(db)
+	if err != nil {
+		log.Fatalf("repositories: %s", err.Error())
+	}
 	log.Println("repositories: initiated")
 
 	restAPI, err := service.NewRateRestAPI(
@@ -193,7 +197,7 @@ func main() {
 	// PublicSourcesLoader (ObtainPublicChart).
 	chartSvc := appchart.NewService(subscriptionRepo, sourceRepo, rateValueRepo, rateValueRepo, sourceRepo, time.Now)
 	subSvc := appsub.NewService(subscriptionRepo, sourceRepo, rateValueRepo)
-	weatherSvc := appweather.NewService(weatherCityRepo, weatherObsRepo)
+	weatherSvc := appweather.NewService(weatherCityRepo, weatherObsRepo, weatherForecastRepo)
 	profileSvc := appprofile.NewService(profileRepo)
 
 	// Open-Meteo geocoder for city search. cmd/web always uses a direct connection

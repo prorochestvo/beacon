@@ -1,6 +1,7 @@
 package ui_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -170,5 +171,91 @@ func TestRenderMeWeatherCurrent(t *testing.T) {
 			}},
 		})
 		assert.NotContains(t, html, "weather-current-feels")
+	})
+}
+
+func TestRenderMeWeatherCurrentForecastStrip(t *testing.T) {
+	t.Parallel()
+
+	render := func(days []dto.WeatherForecastDayItem, hasData bool) string {
+		return ui.RenderMeWeatherCurrent(application.WeatherCurrentState{Items: []dto.WeatherCurrentItem{{
+			LocationID:  "1234",
+			DisplayName: "Astana",
+			Timezone:    "Asia/Almaty",
+			HasData:     hasData,
+			TempCurrent: ptrOf(21.5),
+			Days:        days,
+		}}})
+	}
+
+	t.Run("renders one chip per day with its badges and temperatures", func(t *testing.T) {
+		t.Parallel()
+		html := render([]dto.WeatherForecastDayItem{
+			{Date: "2026-08-21", Label: "Fri 21 Aug", TempMax: ptrOf(21.5), TempMin: ptrOf(11.2), ZeroState: "above"},
+			{Date: "2026-08-22", Label: "Sat 22 Aug", TempMax: ptrOf(2.0), TempMin: ptrOf(-3.0), Rain: true, RainSum: ptrOf(4.2), ZeroState: "crossing"},
+			{Date: "2026-08-23", Label: "Sun 23 Aug", TempMax: ptrOf(-2.0), TempMin: ptrOf(-9.0), Snow: true, SnowfallSum: ptrOf(3.5), ZeroState: "below"},
+		}, true)
+
+		require.Contains(t, html, "weather-forecast-strip")
+		assert.Equal(t, 3, strings.Count(html, `class="weather-forecast-day`))
+		assert.Contains(t, html, "Fri 21 Aug")
+		assert.Contains(t, html, "weather-forecast-above")
+		assert.Contains(t, html, "weather-forecast-crossing")
+		assert.Contains(t, html, "weather-forecast-below")
+		assert.Contains(t, html, "4.2 mm")
+		assert.Contains(t, html, "3.5 cm")
+		assert.Contains(t, html, "▲")
+		assert.Contains(t, html, "↕")
+		assert.Contains(t, html, "▼")
+	})
+
+	t.Run("a dry day still gets a chip so wet days are countable", func(t *testing.T) {
+		t.Parallel()
+		html := render([]dto.WeatherForecastDayItem{
+			{Date: "2026-08-21", Label: "Fri 21 Aug", TempMax: ptrOf(21.5), TempMin: ptrOf(11.2), ZeroState: "above"},
+		}, true)
+
+		assert.Contains(t, html, "Fri 21 Aug")
+		assert.Contains(t, html, "22° / 11°", "the chip rounds to whole degrees")
+		assert.NotContains(t, html, "mm")
+	})
+
+	t.Run("no outlook emits no strip at all", func(t *testing.T) {
+		t.Parallel()
+		html := render(nil, true)
+		assert.NotContains(t, html, "weather-forecast-strip")
+	})
+
+	t.Run("the strip survives a city with no reading yet", func(t *testing.T) {
+		t.Parallel()
+		html := render([]dto.WeatherForecastDayItem{
+			{Date: "2026-08-22", Label: "Sat 22 Aug", Rain: true, RainSum: ptrOf(4.2), ZeroState: "above"},
+		}, false)
+
+		assert.Contains(t, html, "weather-current-nodata")
+		assert.Contains(t, html, "weather-forecast-strip")
+		assert.Contains(t, html, "Sat 22 Aug")
+	})
+
+	t.Run("a day with no bounds shows neither a temperature nor a guessed zero state", func(t *testing.T) {
+		t.Parallel()
+		html := render([]dto.WeatherForecastDayItem{
+			{Date: "2026-08-22", Label: "Sat 22 Aug"},
+		}, true)
+
+		assert.Contains(t, html, "weather-forecast-unknown")
+		assert.Contains(t, html, "—")
+		assert.NotContains(t, html, "weather-forecast-temp")
+	})
+
+	t.Run("server-supplied strings are escaped", func(t *testing.T) {
+		t.Parallel()
+		html := render([]dto.WeatherForecastDayItem{
+			{Date: "x", Label: `<script>alert("x")</script>`, ZeroState: `" onload="x`},
+		}, true)
+
+		assert.NotContains(t, html, "<script>")
+		assert.NotContains(t, html, `onload="x`)
+		assert.Contains(t, html, "weather-forecast-unknown", "an unrecognised state must not become a class name of its own")
 	})
 }

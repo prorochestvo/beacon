@@ -57,8 +57,6 @@ func TestWeatherUserCityBackfillAlertThawMigration(t *testing.T) {
 	t.Run("one thaw row per distinct city with multiple non-thaw rows", func(t *testing.T) {
 		t.Parallel()
 		sqlDB := stubSQLiteDBThrough(t, backfillAlertThawFilename)
-		repo, err := NewWeatherUserCityRepository(sqlDB)
-		require.NoError(t, err)
 
 		// Three non-thaw rows for the same (user, location) — the backfill must
 		// collapse them to exactly one thaw row (GROUP BY), not three.
@@ -67,7 +65,7 @@ func TestWeatherUserCityBackfillAlertThawMigration(t *testing.T) {
 			domain.WeatherNotifyAlertHeat,
 			domain.WeatherNotifyAlertFrost,
 		} {
-			require.NoError(t, repo.RetainWeatherUserCity(t.Context(), &domain.WeatherUserCity{
+			require.NoError(t, seedHistoricalWeatherUserCity(t.Context(), sqlDB, &domain.WeatherUserCity{
 				UserType:    domain.UserTypeTelegram,
 				UserID:      "u1",
 				LocationID:  "loc1",
@@ -84,7 +82,7 @@ func TestWeatherUserCityBackfillAlertThawMigration(t *testing.T) {
 
 		runBackfillAlertThaw(t, sqlDB)
 
-		all, err := repo.ObtainWeatherUserCitiesByUserID(t.Context(), domain.UserTypeTelegram, "u1")
+		all, err := obtainHistoricalWeatherUserCities(t.Context(), sqlDB, domain.UserTypeTelegram, "u1")
 		require.NoError(t, err)
 
 		var thawRows []domain.WeatherUserCity
@@ -113,10 +111,8 @@ func TestWeatherUserCityBackfillAlertThawMigration(t *testing.T) {
 	t.Run("rerun is a no-op", func(t *testing.T) {
 		t.Parallel()
 		sqlDB := stubSQLiteDBThrough(t, backfillAlertThawFilename)
-		repo, err := NewWeatherUserCityRepository(sqlDB)
-		require.NoError(t, err)
 
-		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), &domain.WeatherUserCity{
+		require.NoError(t, seedHistoricalWeatherUserCity(t.Context(), sqlDB, &domain.WeatherUserCity{
 			UserType:   domain.UserTypeTelegram,
 			UserID:     "u2",
 			LocationID: "loc2",
@@ -125,12 +121,12 @@ func TestWeatherUserCityBackfillAlertThawMigration(t *testing.T) {
 		}))
 
 		runBackfillAlertThaw(t, sqlDB)
-		firstPass, err := repo.ObtainWeatherUserCitiesByUserID(t.Context(), domain.UserTypeTelegram, "u2")
+		firstPass, err := obtainHistoricalWeatherUserCities(t.Context(), sqlDB, domain.UserTypeTelegram, "u2")
 		require.NoError(t, err)
 		require.Len(t, firstPass, 2, "morning_summary + one backfilled thaw row")
 
 		runBackfillAlertThaw(t, sqlDB)
-		secondPass, err := repo.ObtainWeatherUserCitiesByUserID(t.Context(), domain.UserTypeTelegram, "u2")
+		secondPass, err := obtainHistoricalWeatherUserCities(t.Context(), sqlDB, domain.UserTypeTelegram, "u2")
 		require.NoError(t, err)
 		assert.Len(t, secondPass, 2, "rerunning the migration must insert nothing new")
 	})
@@ -138,10 +134,8 @@ func TestWeatherUserCityBackfillAlertThawMigration(t *testing.T) {
 	t.Run("city that already has a thaw row is left untouched", func(t *testing.T) {
 		t.Parallel()
 		sqlDB := stubSQLiteDBThrough(t, backfillAlertThawFilename)
-		repo, err := NewWeatherUserCityRepository(sqlDB)
-		require.NoError(t, err)
 
-		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), &domain.WeatherUserCity{
+		require.NoError(t, seedHistoricalWeatherUserCity(t.Context(), sqlDB, &domain.WeatherUserCity{
 			UserType:   domain.UserTypeTelegram,
 			UserID:     "u3",
 			LocationID: "loc3",
@@ -155,11 +149,11 @@ func TestWeatherUserCityBackfillAlertThawMigration(t *testing.T) {
 			Timezone:   "UTC",
 			NotifyKind: domain.WeatherNotifyAlertThaw,
 		}
-		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), existingThaw))
+		require.NoError(t, seedHistoricalWeatherUserCity(t.Context(), sqlDB, existingThaw))
 
 		runBackfillAlertThaw(t, sqlDB)
 
-		all, err := repo.ObtainWeatherUserCitiesByUserID(t.Context(), domain.UserTypeTelegram, "u3")
+		all, err := obtainHistoricalWeatherUserCities(t.Context(), sqlDB, domain.UserTypeTelegram, "u3")
 		require.NoError(t, err)
 
 		var thawRows []domain.WeatherUserCity
@@ -175,11 +169,9 @@ func TestWeatherUserCityBackfillAlertThawMigration(t *testing.T) {
 	t.Run("distinct users at the same location each get their own thaw row", func(t *testing.T) {
 		t.Parallel()
 		sqlDB := stubSQLiteDBThrough(t, backfillAlertThawFilename)
-		repo, err := NewWeatherUserCityRepository(sqlDB)
-		require.NoError(t, err)
 
 		for _, userID := range []string{"u4", "u5"} {
-			require.NoError(t, repo.RetainWeatherUserCity(t.Context(), &domain.WeatherUserCity{
+			require.NoError(t, seedHistoricalWeatherUserCity(t.Context(), sqlDB, &domain.WeatherUserCity{
 				UserType:   domain.UserTypeTelegram,
 				UserID:     userID,
 				LocationID: "shared-loc",
@@ -191,7 +183,7 @@ func TestWeatherUserCityBackfillAlertThawMigration(t *testing.T) {
 		runBackfillAlertThaw(t, sqlDB)
 
 		for _, userID := range []string{"u4", "u5"} {
-			all, err := repo.ObtainWeatherUserCitiesByUserID(t.Context(), domain.UserTypeTelegram, userID)
+			all, err := obtainHistoricalWeatherUserCities(t.Context(), sqlDB, domain.UserTypeTelegram, userID)
 			require.NoError(t, err)
 			var thawCount int
 			for _, c := range all {

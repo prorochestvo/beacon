@@ -194,7 +194,7 @@ func TestWeatherGismeteoRemovalMigrations(t *testing.T) {
 			"id", "user_type", "user_id", "location_id", "display_name",
 			"latitude", "longitude", "timezone", "country", "admin1",
 			"notify_kind", "notify_hour", "condition_value", "last_notified_at",
-			"alert_latched", "updated_at", "created_at",
+			"alert_latched", "notify_state", "updated_at", "created_at",
 		}, cols, "every surviving column must be carried forward, nothing else lost or added")
 
 		// SQLite gives a TEXT PRIMARY KEY its own implicit autoindex (origin "pk"),

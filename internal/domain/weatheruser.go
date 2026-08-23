@@ -40,6 +40,17 @@ const (
 	// Open-Meteo hourly data.
 	WeatherNotifyAlertRain WeatherNotifyKind = "rain_alert"
 
+	// WeatherNotifyForecastOutlook delivers a once-a-day digest of the multi-week
+	// forecast: the days ahead that bring rain, snow, or a change in the freezing regime.
+	// ConditionValue is empty — no numeric threshold applies.
+	//
+	// It is not an alert kind and does not go through EvaluateLatched. A far-out day flips
+	// several times before it arrives, so a latch per condition would either spam or, with
+	// hysteresis wide enough to stop that, say nothing. The gate is content instead: the
+	// digest is sent when the outlook signature differs from the one stored in NotifyState,
+	// and NotifyHour times it exactly as it times the morning summary.
+	WeatherNotifyForecastOutlook WeatherNotifyKind = "forecast_outlook"
+
 	// WeatherNotifyAlertThaw fires when the forecast day itself crosses zero:
 	// TempMin ≤ 0 °C and TempMax > 0 °C ("froze overnight, thawed during the
 	// day"). ConditionValue is empty — no numeric threshold applies, same as
@@ -96,6 +107,11 @@ const (
 // AlertLatched is the system-managed edge-trigger latch for alert kinds: true means an
 // alert already fired and the condition has not yet cleared, so the row will not fire again
 // until it re-arms. Never set from user input; ignored for morning_summary.
+//
+// NotifyState is the system-managed content gate for forecast_outlook: the signature of the
+// digest last delivered on this row (domain.WeatherOutlook.Signature). Empty means nothing
+// has been evaluated yet, which is deliberately distinct from an evaluated outlook with
+// nothing in it. Never set from user input; unused by every other kind.
 type WeatherUserCity struct {
 	ID             string
 	UserType       UserType
@@ -112,6 +128,7 @@ type WeatherUserCity struct {
 	ConditionValue string
 	LastNotifiedAt time.Time
 	AlertLatched   bool
+	NotifyState    string
 	UpdatedAt      time.Time
 	CreatedAt      time.Time
 }
@@ -135,7 +152,7 @@ func (c *WeatherUserCity) Validate() error {
 			return fmt.Errorf("condition_value for %s must be a temperature in °C in [-100, 100]", string(c.NotifyKind))
 		}
 		return nil
-	case WeatherNotifyAlertThunderstorm, WeatherNotifyAlertThaw:
+	case WeatherNotifyAlertThunderstorm, WeatherNotifyAlertThaw, WeatherNotifyForecastOutlook:
 		return nil
 	case WeatherNotifyAlertRain:
 		v, err := strconv.ParseFloat(c.ConditionValue, 64)
@@ -247,6 +264,24 @@ func (c *WeatherUserCity) EvaluateRain(obs WeatherObservation, now time.Time) (b
 	}
 	cond, reason := evaluateRainCondition(obs, now, threshold)
 	return cond == alertConditionMet, reason, nil
+}
+
+// LocalDate returns the city-local calendar day (YYYY-MM-DD) for the UTC instant now.
+//
+// It is the baseline an outlook is anchored on. forecast_date values are city-local by
+// construction (Open-Meteo is queried with timezone=auto), so comparing them against a UTC
+// date would shift the window by a day for most of the world and, near midnight, would drop
+// or duplicate the day the reader is standing on. Returns an error if the stored timezone is
+// missing or not loadable.
+func (c *WeatherUserCity) LocalDate(now time.Time) (string, error) {
+	if c.Timezone == "" {
+		return "", fmt.Errorf("weather city %s: timezone is empty", c.ID)
+	}
+	loc, err := time.LoadLocation(c.Timezone)
+	if err != nil {
+		return "", fmt.Errorf("weather city %s: load timezone %q: %w", c.ID, c.Timezone, err)
+	}
+	return now.In(loc).Format(time.DateOnly), nil
 }
 
 // IsMorningDue reports whether the daily morning summary should fire now,

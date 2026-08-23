@@ -673,3 +673,89 @@ func TestWeatherUserCityRepository_CheckUP(t *testing.T) {
 		require.Error(t, repo.CheckUP(t.Context()))
 	})
 }
+
+func TestWeatherUserCityRepository_SetWeatherNotifyState(t *testing.T) {
+	t.Parallel()
+
+	t.Run("stores and reads back the outlook signature", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		city := &domain.WeatherUserCity{
+			UserType:   domain.UserTypeTelegram,
+			UserID:     "u1",
+			LocationID: "loc1",
+			Timezone:   "UTC",
+			NotifyKind: domain.WeatherNotifyForecastOutlook,
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
+
+		stored, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.Empty(t, stored.NotifyState, "a new row has never been evaluated")
+
+		require.NoError(t, repo.SetWeatherNotifyState(t.Context(), city.ID, "o1:2026-08-23:R+"))
+
+		stored, err = repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "o1:2026-08-23:R+", stored.NotifyState)
+	})
+
+	t.Run("an evaluated-but-empty outlook is distinguishable from never evaluated", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		city := &domain.WeatherUserCity{
+			UserType:   domain.UserTypeTelegram,
+			UserID:     "u2",
+			LocationID: "loc2",
+			Timezone:   "UTC",
+			NotifyKind: domain.WeatherNotifyForecastOutlook,
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
+		require.NoError(t, repo.SetWeatherNotifyState(t.Context(), city.ID, "o1:"))
+
+		stored, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "o1:", stored.NotifyState)
+		assert.NotEmpty(t, stored.NotifyState)
+	})
+
+	t.Run("re-subscribing does not replay a digest the user has already read", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		city := &domain.WeatherUserCity{
+			UserType:   domain.UserTypeTelegram,
+			UserID:     "u3",
+			LocationID: "loc3",
+			Timezone:   "UTC",
+			NotifyKind: domain.WeatherNotifyForecastOutlook,
+			NotifyHour: 7,
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
+		require.NoError(t, repo.SetWeatherNotifyState(t.Context(), city.ID, "o1:2026-08-23:R+"))
+
+		// Same natural key, so this is the upsert path the "+ Add alert" form takes.
+		again := &domain.WeatherUserCity{
+			UserType:   domain.UserTypeTelegram,
+			UserID:     "u3",
+			LocationID: "loc3",
+			Timezone:   "UTC",
+			NotifyKind: domain.WeatherNotifyForecastOutlook,
+			NotifyHour: 9,
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), again))
+
+		stored, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 9, stored.NotifyHour, "settings are rewritten")
+		assert.Equal(t, "o1:2026-08-23:R+", stored.NotifyState, "notification state is insert-only")
+	})
+}

@@ -635,3 +635,133 @@ func TestHandler_GetMeWeatherCurrent(t *testing.T) {
 		require.Empty(t, resp.Items)
 	})
 }
+
+// TestHandler_GetMeWeatherCurrentDays covers the multi-week outlook the handler attaches
+// to each city: the badge verdicts, the freezing classification and the date label are all
+// resolved server-side so every client draws the same thing from the same rule.
+func TestHandler_GetMeWeatherCurrentDays(t *testing.T) {
+	t.Parallel()
+
+	const callerUserID = int64(42)
+
+	city := domain.WeatherUserCity{
+		ID:          "city-1234",
+		UserType:    domain.UserTypeTelegram,
+		UserID:      "42",
+		LocationID:  "1234",
+		DisplayName: "Astana",
+		Timezone:    "Asia/Almaty",
+		NotifyKind:  domain.WeatherNotifyMorningSummary,
+	}
+
+	day := func(date string, maxTemp, minTemp, rain, snow float64) domain.WeatherForecastDay {
+		code := 71
+		return domain.WeatherForecastDay{
+			LocationID:   "1234",
+			Provider:     domain.ProviderOpenMeteo,
+			ForecastDate: date,
+			TempMax:      &maxTemp,
+			TempMin:      &minTemp,
+			RainSum:      &rain,
+			SnowfallSum:  &snow,
+			WeatherCode:  &code,
+		}
+	}
+
+	get := func(t *testing.T, svc meWeatherService) *httptest.ResponseRecorder {
+		t.Helper()
+		h := newWeatherHandler(t, svc, &mockWeatherGeocoder{})
+		rr := httptest.NewRecorder()
+		h.GetMeWeatherCurrent(rr, withCaller(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/me/weather/current", http.NoBody), callerUserID))
+		return rr
+	}
+
+	t.Run("renders the day threshold verdicts, the zero state and a label", func(t *testing.T) {
+		t.Parallel()
+		svc := &mockMeWeatherSvc{current: []appweather.CurrentCity{{
+			City: city,
+			Forecast: []domain.WeatherForecastDay{
+				day("2026-08-21", 21.5, 11.2, 0.9, 0),   // drizzle, not a rain day; above zero
+				day("2026-08-22", 2.0, -3.0, 1.0, 1.0),  // both bars met exactly; crosses zero
+				day("2026-08-23", -2.0, -9.0, 0.0, 0.9), // dusting, not a snow day; below zero
+			},
+		}}}
+		rr := get(t, svc)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		var resp dto.WeatherCurrentResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		require.Len(t, resp.Items, 1)
+		days := resp.Items[0].Days
+		require.Len(t, days, 3)
+
+		assert.Equal(t, "2026-08-21", days[0].Date)
+		assert.Equal(t, "Fri 21 Aug", days[0].Label)
+		assert.False(t, days[0].Rain, "0.9 mm is drizzle, not a rain day")
+		assert.Equal(t, "above", days[0].ZeroState)
+
+		assert.True(t, days[1].Rain)
+		assert.True(t, days[1].Snow)
+		assert.Equal(t, "crossing", days[1].ZeroState)
+
+		assert.False(t, days[2].Snow, "0.9 cm is a dusting, not a snow day")
+		assert.Equal(t, "below", days[2].ZeroState)
+		assert.Equal(t, "❄️", days[2].ConditionEmoji)
+	})
+
+	t.Run("a city with no outlook omits the field entirely", func(t *testing.T) {
+		t.Parallel()
+		rr := get(t, &mockMeWeatherSvc{current: []appweather.CurrentCity{{City: city}}})
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		assert.NotContains(t, rr.Body.String(), `"days"`,
+			"an always-present empty array would change the wire shape for every existing client")
+	})
+
+	t.Run("the outlook survives a city that has no reading yet", func(t *testing.T) {
+		t.Parallel()
+		svc := &mockMeWeatherSvc{current: []appweather.CurrentCity{{
+			City:     city,
+			Forecast: []domain.WeatherForecastDay{day("2026-08-22", 2.0, -3.0, 4.0, 0)},
+		}}}
+		rr := get(t, svc)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		var resp dto.WeatherCurrentResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		require.Len(t, resp.Items, 1)
+		assert.False(t, resp.Items[0].HasData, "the two are collected on different cadences")
+		require.Len(t, resp.Items[0].Days, 1)
+	})
+
+	t.Run("a day with no temperature bounds carries no zero state rather than a guess", func(t *testing.T) {
+		t.Parallel()
+		svc := &mockMeWeatherSvc{current: []appweather.CurrentCity{{
+			City:     city,
+			Forecast: []domain.WeatherForecastDay{{ForecastDate: "2026-08-22", Provider: domain.ProviderOpenMeteo}},
+		}}}
+		rr := get(t, svc)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		var resp dto.WeatherCurrentResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		require.Len(t, resp.Items[0].Days, 1)
+		assert.Empty(t, resp.Items[0].Days[0].ZeroState)
+		assert.Nil(t, resp.Items[0].Days[0].TempMax)
+	})
+
+	t.Run("an unparseable date degrades to the raw date rather than dropping the day", func(t *testing.T) {
+		t.Parallel()
+		svc := &mockMeWeatherSvc{current: []appweather.CurrentCity{{
+			City:     city,
+			Forecast: []domain.WeatherForecastDay{day("not-a-date", 2.0, -3.0, 4.0, 0)},
+		}}}
+		rr := get(t, svc)
+
+		require.Equal(t, http.StatusOK, rr.Code)
+		var resp dto.WeatherCurrentResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		require.Len(t, resp.Items[0].Days, 1)
+		assert.Equal(t, "not-a-date", resp.Items[0].Days[0].Label)
+	})
+}

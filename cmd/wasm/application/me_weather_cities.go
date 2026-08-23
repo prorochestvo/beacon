@@ -266,11 +266,12 @@ func (p *MeWeatherCitiesPage) SavePendingAlert(ctx context.Context) error {
 		NotifyKind:  p.state.AlertFormKind,
 	}
 
-	// morning_summary reuses the numeric form input as a 0–23 local hour, not a
-	// threshold. Blank → omit NotifyHour so the server applies its default (07:00).
-	// A non-numeric hour is rejected here rather than POSTed as garbage; the 0–23
-	// range itself is validated server-side (single source of truth).
-	if p.state.AlertFormKind == "morning_summary" {
+	// morning_summary and forecast_outlook reuse the numeric form input as a 0–23
+	// local hour, not a threshold: both are timed rather than thresholded. Blank →
+	// omit NotifyHour so the server applies its default (07:00). A non-numeric hour is
+	// rejected here rather than POSTed as garbage; the 0–23 range itself is validated
+	// server-side (single source of truth).
+	if p.state.AlertFormKind == "morning_summary" || p.state.AlertFormKind == "forecast_outlook" {
 		if hourStr := strings.TrimSpace(p.state.AlertFormValue); hourStr != "" {
 			hour, err := strconv.Atoi(hourStr)
 			if err != nil {
