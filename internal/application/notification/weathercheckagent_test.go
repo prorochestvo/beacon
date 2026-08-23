@@ -1350,11 +1350,13 @@ type stateCall struct {
 // by location_id; a location absent from the map has nothing stored, which is the normal
 // state of a city whose first long-range fetch has not completed.
 type mockWeatherCheckForecastRepo struct {
-	days map[string][]domain.WeatherForecastDay
-	err  error
+	days  map[string][]domain.WeatherForecastDay
+	err   error
+	calls int
 }
 
 func (m *mockWeatherCheckForecastRepo) ObtainForecastDays(_ context.Context, locationID, _, fromDate string, limit int) ([]domain.WeatherForecastDay, error) {
+	m.calls++
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -1501,6 +1503,28 @@ func TestWeatherCheckAgent_OutlookPhase(t *testing.T) {
 		require.Len(t, cityRepo.states, 1, "the stored signature still moves to today's window")
 		assert.Equal(t, today, cityRepo.states[0].state)
 		assert.Equal(t, []string{"o1"}, cityRepo.advanced)
+	})
+
+	t.Run("cities sharing a location read the forecast once", func(t *testing.T) {
+		t.Parallel()
+		// The read count has to grow with locations, not with subscribers: two users watching
+		// the same city, due on the same tick, were each paying a read transaction for
+		// byte-identical rows.
+		cityRepo := outlookOnly(
+			outlookCity("o1", "loc1", ""),
+			outlookCity("o2", "loc1", ""),
+			outlookCity("o3", "loc2", ""),
+		)
+		forecastRepo := &mockWeatherCheckForecastRepo{days: map[string][]domain.WeatherForecastDay{
+			"loc1": window(map[int]float64{3: 4.2}),
+			"loc2": window(map[int]float64{5: 2.0}),
+		}}
+		eventRepo := &mockCheckEventRepository{}
+
+		require.NoError(t, agentFor(cityRepo, forecastRepo, eventRepo).Run(t.Context()))
+
+		assert.Len(t, eventRepo.retained, 3, "every subscriber still gets their own digest")
+		assert.Equal(t, 2, forecastRepo.calls, "one read per distinct location, not per subscription")
 	})
 
 	t.Run("a changed outlook marks what moved", func(t *testing.T) {

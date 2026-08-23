@@ -296,6 +296,13 @@ func (a *WeatherCheckAgent) runOutlookPhase(ctx context.Context, now time.Time) 
 		)}
 	}
 
+	// The forecast window is cached for the length of the phase, the way the alert phase
+	// caches observations: two users subscribed to the same city and due on the same tick
+	// would otherwise each pay a read transaction for the same sixteen rows, and the count
+	// grows with subscribers rather than with locations.
+	forecastCache := make(map[string][]domain.WeatherForecastDay)
+	forecastCached := make(map[string]bool)
+
 	for _, city := range cities {
 		due, tzErr := city.IsMorningDue(now)
 		if tzErr != nil {
@@ -312,7 +319,7 @@ func (a *WeatherCheckAgent) runOutlookPhase(ctx context.Context, now time.Time) 
 			continue
 		}
 
-		days, loadErr := a.forecastRepo.ObtainForecastDays(ctx, city.LocationID, domain.ProviderOpenMeteo, baseline, domain.WeatherOutlookHorizonDays)
+		days, loadErr := a.loadCachedForecastDays(ctx, city.LocationID, baseline, forecastCache, forecastCached)
 		if loadErr != nil {
 			errs = append(errs, fmt.Errorf("weather outlook city=%s: load forecast: %w", city.ID, loadErr))
 			continue
@@ -387,6 +394,36 @@ func (a *WeatherCheckAgent) runOutlookPhase(ctx context.Context, now time.Time) 
 	}
 
 	return queued, attempted, quiet, errs
+}
+
+// loadCachedForecastDays returns the stored forecast window for locationID as seen from
+// baseline, reading it at most once per (location, baseline) pair inside one phase. The
+// baseline is part of the key because it bounds the query, and two cities sharing a location
+// can sit in different timezones and therefore on different local days.
+//
+// The cached slice is handed to every caller for the same key. Nothing mutates it —
+// domain.NewWeatherOutlook copies into a window of its own — so it is shared rather than
+// cloned.
+func (a *WeatherCheckAgent) loadCachedForecastDays(
+	ctx context.Context,
+	locationID, baseline string,
+	cache map[string][]domain.WeatherForecastDay,
+	cached map[string]bool,
+) ([]domain.WeatherForecastDay, error) {
+	// An empty window is a real answer and caches like any other, so presence is tracked in
+	// its own map rather than inferred from a nil slice.
+	key := locationID + "|" + baseline
+	if cached[key] {
+		return cache[key], nil
+	}
+
+	days, err := a.forecastRepo.ObtainForecastDays(ctx, locationID, domain.ProviderOpenMeteo, baseline, domain.WeatherOutlookHorizonDays)
+	if err != nil {
+		return nil, err
+	}
+	cache[key] = days
+	cached[key] = true
+	return days, nil
 }
 
 // loadCachedObservation returns the latest Open-Meteo observation for locationID,
