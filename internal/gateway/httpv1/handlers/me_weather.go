@@ -317,7 +317,7 @@ func weatherForecastDayItems(days []domain.WeatherForecastDay) []dto.WeatherFore
 	for _, day := range days {
 		item := dto.WeatherForecastDayItem{
 			Date:        day.ForecastDate,
-			Label:       weatherForecastDayLabel(day.ForecastDate),
+			Label:       domain.FormatWeatherForecastDate(day.ForecastDate),
 			TempMax:     day.TempMax,
 			TempMin:     day.TempMin,
 			RainSum:     day.RainSum,
@@ -334,17 +334,6 @@ func weatherForecastDayItems(days []domain.WeatherForecastDay) []dto.WeatherFore
 		items = append(items, item)
 	}
 	return items
-}
-
-// weatherForecastDayLabel formats a YYYY-MM-DD city-local date as "Sun 23 Aug". The date
-// is already local, so it is parsed as a bare calendar day and never converted; one that
-// will not parse is passed through rather than dropped.
-func weatherForecastDayLabel(forecastDate string) string {
-	t, err := time.Parse(time.DateOnly, forecastDate)
-	if err != nil {
-		return forecastDate
-	}
-	return t.Format("Mon 2 Jan")
 }
 
 const (

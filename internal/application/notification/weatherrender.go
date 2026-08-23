@@ -210,7 +210,7 @@ func RenderForecastOutlook(city domain.WeatherUserCity, outlook domain.WeatherOu
 		if change.Changed[day.ForecastDate] {
 			sb.WriteString("🆕 ")
 		}
-		fmt.Fprintf(&sb, "<b>%s</b>", html.EscapeString(formatForecastDate(day.ForecastDate)))
+		fmt.Fprintf(&sb, "<b>%s</b>", html.EscapeString(domain.FormatWeatherForecastDate(day.ForecastDate)))
 		if day.IsRainDay() && day.RainSum != nil {
 			fmt.Fprintf(&sb, "  🌧 %.1f mm", *day.RainSum)
 		}
@@ -226,21 +226,10 @@ func RenderForecastOutlook(city domain.WeatherUserCity, outlook domain.WeatherOu
 	if len(change.Cleared) > 0 {
 		labels := make([]string, 0, len(change.Cleared))
 		for _, date := range change.Cleared {
-			labels = append(labels, html.EscapeString(formatForecastDate(date)))
+			labels = append(labels, html.EscapeString(domain.FormatWeatherForecastDate(date)))
 		}
 		fmt.Fprintf(&sb, "\n\nCleared: %s", strings.Join(labels, ", "))
 	}
 
 	return sb.String(), nil
-}
-
-// formatForecastDate turns a YYYY-MM-DD forecast date into "Sun 23 Aug". The date is already
-// city-local, so it is parsed as a bare calendar day and never converted; an unparseable one
-// is returned verbatim rather than dropped.
-func formatForecastDate(forecastDate string) string {
-	t, err := time.Parse(time.DateOnly, forecastDate)
-	if err != nil {
-		return forecastDate
-	}
-	return t.Format("Mon 2 Jan")
 }

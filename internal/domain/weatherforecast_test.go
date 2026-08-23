@@ -260,6 +260,21 @@ func TestCompareWeatherOutlookSignatures(t *testing.T) {
 	})
 }
 
+func TestFormatWeatherForecastDate(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a calendar day becomes a weekday label", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "Sun 23 Aug", FormatWeatherForecastDate("2026-08-23"))
+	})
+
+	t.Run("a date that will not parse passes through", func(t *testing.T) {
+		t.Parallel()
+		// The reader loses a weekday name, not the warning the line carries.
+		assert.Equal(t, "not-a-date", FormatWeatherForecastDate("not-a-date"))
+	})
+}
+
 func TestPruneWeatherOutlookSignature(t *testing.T) {
 	t.Parallel()
 

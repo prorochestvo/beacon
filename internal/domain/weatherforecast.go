@@ -147,6 +147,22 @@ func (s WeatherZeroState) signatureToken() string {
 	}
 }
 
+// FormatWeatherForecastDate turns a YYYY-MM-DD forecast date into "Sun 23 Aug".
+//
+// The date is already city-local, so it is parsed as a bare calendar day and never
+// converted; one that will not parse is returned verbatim rather than dropped, since a
+// reader losing a weekday name beats a reader losing the warning.
+//
+// It lives here because the Telegram digest and the Mini App chip label the same day, and
+// two copies of the layout string are two things to change and one to forget.
+func FormatWeatherForecastDate(forecastDate string) string {
+	t, err := time.Parse(time.DateOnly, forecastDate)
+	if err != nil {
+		return forecastDate
+	}
+	return t.Format("Mon 2 Jan")
+}
+
 // WeatherOutlook is one location's long-range forecast, reduced to the days worth telling
 // a user about. Construct it with NewWeatherOutlook.
 type WeatherOutlook struct {
