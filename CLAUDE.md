@@ -48,12 +48,10 @@ it for failures that do not announce themselves: a read that skips a storage tie
 partial history without erroring, and an identity-adjacent column is far cheaper to prevent
 than to revert from production.
 
-**Measure, never estimate.** This file is mostly contracts and identifiers, which do not
-compress — only the prose around them does, so a guess at what a rewrite will save runs
-high. Count with `wc -c` before and after. After moving content, prove nothing was dropped
-rather than assuming it: extract every backticked span and figure from the old text, confirm
-each still appears somewhere in the new set, and account for every apparent casualty by
-name.
+**Measure, never estimate.** Count with `wc -c` before and after: this file is mostly
+contracts and identifiers, which do not compress, so a guess runs high. After moving
+content, extract every backticked span and figure from the old text, confirm each still
+appears somewhere in the new set, and account for every casualty by name.
 
 ## Build & Run Commands
 
@@ -108,7 +106,6 @@ morning summary and all four daily-metric latches. The multi-week fetch is a sep
 - **Repository pattern** — each repository type owns its own SQL, migration, and query helper functions. Queries execute inside explicit transactions (`r.db.Transaction(ctx)` to write, `r.db.ReadOnlyTransaction(ctx)` to read). Repositories are passed as interfaces into service and handler layers.
 - **Configuration injection** — `BEACON_SQLITEDB_DSN` and `BEACON_TELEGRAMBOT_DSN` are read via `dsninjector.Unmarshal(envName)` at startup in `cmd/web/main.go` and live in the systemd `EnvironmentFile`. The public HTTPS origin is passed via the `--api-dsn` CLI flag (format: `https://<host>/`, parsed by `dsninjector.Parse`) and is hardcoded in the systemd unit's `ExecStart` line — never in `.env`. All three configs must be present at startup; the binary calls `log.Fatalf` on any missing value.
 - **Startup ordering** — anything that logs or can `log.Fatalf` on bad config belongs in `main` *after* the logger exists, never in a package initialiser: the cron wrappers discard stderr, so a line emitted earlier is attributable to nothing. Operators grep the marker sequence `logger -> settings -> dependencies -> repositories -> runners`.
-- **Embedded assets** — `cmd/web/main.go` embeds the `static/` directory via `//go:embed static`. All static files served by `http.FileServer` live under `cmd/web/static/`.
 - **Auth: Telegram WebApp initData HMAC** — the `/api/v1/me/...` endpoint family authenticates callers by verifying the Telegram WebApp `initData` HMAC-SHA256 signature. The signing algorithm uses `secret_key = HMAC_SHA256("WebAppData", botToken)` (the string literal is the key; the token is the message). Implementation lives in `internal/tools/tgwebapp/initdata.go`. The check runs **once**, in `middleware.TelegramInitData`, mounted over `routes.MePrefix` — **a new authenticated route belongs on that inner mux; putting it on the outer one is a bypass, and nothing will say so.** Handlers read the caller via `middleware.UserIDFrom` and refuse without it. No other endpoint requires this auth.
 
 ### HTTP surface
@@ -132,44 +129,18 @@ readiness and probes every dependency for real. Both are unauthenticated.
 ### Database
 
 Engine: SQLite, accessed via the pure-Go `modernc.org/sqlite` driver (no CGO).
+`foreign_keys=ON` and `busy_timeout=5000` ride on the DSN as `?_pragma=` parameters;
+`journal_mode=WAL` is persisted in the file header.
 
-Three PRAGMAs are applied on connection open:
-- `foreign_keys=ON` and `busy_timeout=5000` are passed as `?_pragma=`
-  query parameters on the DSN (see `connectionOptions` in
-  `config.go`). The `modernc.org/sqlite` driver re-applies them in
-  its `Open` hook on every new connection the `database/sql` pool
-  opens, which is the only way to keep these per-connection settings
-  consistent across `SetMaxOpenConns(N>1)`.
-- `journal_mode=WAL` is persisted in the database file header and is
-  set once via `db.Exec` inside `NewSQLiteClientEx`.
-
-`busy_timeout` (5 s) is the driver-level retry window for lock
-contention; it must stay strictly less than the Go-level `Timeout` so
-the context deadline always fires after the driver retry expires.
-
-**Writes open `BEGIN IMMEDIATE`; reads stay deferred.** The DSN also carries
-`_txlock=immediate`, and the driver applies that begin mode only when
-`sql.TxOptions.ReadOnly` is false — so `Transaction` takes the WAL write lock at
-`BEGIN` while `ReadOnlyTransaction` keeps a plain deferred `BEGIN` and still runs
-concurrently with a writer.
-
-That split is what makes `busy_timeout` reachable at all. A deferred transaction
-begins as a reader and *promotes* at its first write, and SQLite refuses to invoke
-the busy handler on a promotion — two connections both waiting to promote would
-deadlock — so it returns `SQLITE_BUSY` on the spot. Collector/notifier/web
-contention therefore lost writes in milliseconds while a 5 s retry window sat
-unused (12 rate values and 5 `execution_history` rows in one production log).
-Taking the lock at `BEGIN` is not a promotion, so the wait is real.
-
-Consequences for new code:
-
-- **`Transaction` is for paths that write.** Reads go through `ReadOnlyTransaction` or
-  they serialise against each other for nothing. `SQLiteClient.Rollback` — and `Ping`, and
-  through it the `/health/check` inspector — is read-only for that reason: a readiness
-  probe queued behind a collector tick would report a busy database as a dead one.
-- **Two write transactions cannot be open at once** in one process; the second `BEGIN`
-  waits for the first. Open, write and commit inside one function, as every repository
-  method does.
+**Writes go through `Transaction` (`BEGIN IMMEDIATE`), reads through
+`ReadOnlyTransaction`.** A read on the write path serialises against every other read and
+never says so — including `SQLiteClient.Rollback`, `Ping` and the `/health/check` inspector,
+which are read-only precisely so a readiness probe queued behind a collector tick cannot
+report a busy database as a dead one. A deferred transaction that *promotes* at its first
+write is refused the busy handler and gets `SQLITE_BUSY` on the spot, so the 5 s retry
+window never applies to it. **Two write transactions cannot be open at once** in one
+process: open, write and commit inside one function. The PRAGMA details and the production
+numbers behind all of this: **skill `beacon-storage`**.
 
 Foreign keys point from `rate_values`, `rate_user_subscriptions`, and
 `rate_user_events` to `rate_sources(name)` with `ON DELETE CASCADE` —
@@ -200,7 +171,7 @@ against a schema behind their own build.
 
 - `BEACON_SQLITEDB_DSN` — SQLite connection string, parsed via `dsninjector.Unmarshal`. Format: `sqlite://<path-to-db-file>`
 - `BEACON_TELEGRAMBOT_DSN` — Telegram bot credentials parsed via `dsninjector.Unmarshal`. Format: `<adminChatID>:<botToken>@<host>` where `Addr()` returns the token and `Login()` returns the admin chat ID.
-- `BEACON_PROXY_URL` — optional outbound proxy URL. Format: `<scheme>://<host>:<port>` (e.g. `http://127.0.0.1:7788`). Resolved through `proxyutil.ResolveURL`. `cmd/doctor` proxies through it unconditionally; `cmd/collector` routes nothing through it on its own — see the egress rule above and the `beacon-collection` skill. Telegram Bot API traffic bypasses any proxy unconditionally, enforced by a hardcoded `Proxy: nil` transport in `internal/infrastructure/telegrambot/tbotclient.go`. Do not configure `HTTPS_PROXY`, `HTTP_PROXY`, or `NO_PROXY` — no component in this project consults them.
+- `BEACON_PROXY_URL` — optional outbound proxy. Format: `<scheme>://<host>:<port>` (e.g. `http://127.0.0.1:7788`), resolved through `proxyutil.ResolveURL`. `cmd/doctor` proxies unconditionally; `cmd/collector` routes nothing through it on its own — see the egress rule above. Telegram Bot API traffic bypasses any proxy, enforced by a hardcoded `Proxy: nil` transport in `internal/infrastructure/telegrambot/tbotclient.go`. `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` are consulted by no component here.
 - `BEACON_CHROMIUM_PATH` — optional absolute path to the Chromium/Chrome binary for `fetcher_kind='chromedp'` sources. Read by `cmd/collector` and `cmd/doctor`. When unset, chromedp searches PATH (`chromium`, `chromium-browser`, `google-chrome`, `chrome`).
 - `BEACON_AI_PRIMARY_DSN` (required) and `BEACON_AI_FALLBACK_DSN` (optional) — AI provider DSNs read only by `cmd/doctor rulegen`. See `cmd/doctor/README.md` for the DSN format and provider details.
 
@@ -210,7 +181,17 @@ against a schema behind their own build.
 
 ### Deployment
 
-Standard release layout: immutable `/opt/beacon/artifacts/<VERSION_ID>/` build sets and a `bin/release` channel symlink the units run through. **Security boundary**: the CI deploy user may write only under `artifacts/` and `bin/`; `.env`, the DB, and the base dir are root-owned and out of reach. The `release.yml` job (on an `r_*` tag) uploads a new `artifacts/<VERSION_ID>/`, flips the symlink, runs migrations via the **`beacon-migrate` one-shot unit (root, so the deploy user never writes the DB)**, restarts `beacon`, and health-gates on `/health/check` with one-symlink rollback. Schema reconciliation is deploy-time, not startup-time — the service unit has no `ExecStartPre` migrator. `make init` provisions the layout, both units, the narrow sudoers grants, and the nginx vhost; `make deploy-configs` ships later `configs/` changes passwordlessly, except the two sudoers files and the installer script itself — those stay with `init` because an installer that could rewrite its own grant would be passwordless root. See `deploy/README.md`.
+Immutable `/opt/beacon/artifacts/<VERSION_ID>/` build sets behind a `bin/release` channel
+symlink. **Security boundary**: the CI deploy user may write only under `artifacts/` and
+`bin/`; `.env`, the DB and the base dir are root-owned and out of reach. The `release.yml`
+job (on an `r_*` tag) uploads an artifact set, flips the symlink, migrates via the
+**`beacon-migrate` one-shot unit (root, so the deploy user never writes the DB)**, restarts
+`beacon`, and health-gates on `/health/check` with one-symlink rollback — reconciliation is
+deploy-time, and the service unit has no `ExecStartPre` migrator. `make init` provisions the
+layout, both units, the sudoers grants and the nginx vhost; `make deploy-configs` ships later
+`configs/` changes passwordlessly, except the two sudoers files and the installer itself,
+which stay with `init` because an installer that could rewrite its own grant would be
+passwordless root. See `deploy/README.md`.
 
 An **`s_*` tag runs the gate only** — lint, tests, production-shape build, no host contact —
 for when the full gate will not run locally. Everything below is about `r_*`.
