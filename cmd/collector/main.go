@@ -116,7 +116,7 @@ func main() {
 
 	runners, err := buildRunners(
 		sourceRepo, historyRepo, rateValueRepo,
-		weatherCityRepo, weatherObsRepo, weatherForecastRepo,
+		weatherCityRepo, weatherObsRepo, weatherForecastRepo, metaRepo,
 		l.WriterAs(internal.LogLevelWarning),
 	)
 	if err != nil {
@@ -267,6 +267,7 @@ func buildRunners(
 	weatherCity *repository.WeatherUserCityRepository,
 	weatherObs *repository.WeatherObservationRepository,
 	weatherForecast *repository.WeatherForecastDayRepository,
+	meta *repository.ServiceMetaRepository,
 	logger io.Writer,
 ) ([]runner, error) {
 	// Passing the proxy URL does not route anything through it: the extractor builds a
@@ -285,7 +286,7 @@ func buildRunners(
 		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 
-	weatherAgents, err := wireWeather(weatherCity, weatherObs, weatherForecast, logger)
+	weatherAgents, err := wireWeather(weatherCity, weatherObs, weatherForecast, meta, logger)
 	if err != nil {
 		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
@@ -309,6 +310,7 @@ func wireWeather(
 	weatherCity *repository.WeatherUserCityRepository,
 	weatherObs *repository.WeatherObservationRepository,
 	weatherForecast *repository.WeatherForecastDayRepository,
+	meta *repository.ServiceMetaRepository,
 	logger io.Writer,
 ) ([]runner, error) {
 	openMeteoProvider, err := weatherinfra.NewOpenMeteo("", logger)
@@ -326,7 +328,7 @@ func wireWeather(
 	}
 
 	forecastAgent, err := collection.NewWeatherForecastAgent(
-		openMeteoProvider, weatherCity, weatherForecast,
+		openMeteoProvider, weatherCity, weatherForecast, meta,
 		logger,
 	)
 	if err != nil {
