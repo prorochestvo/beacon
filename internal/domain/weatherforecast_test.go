@@ -260,6 +260,65 @@ func TestCompareWeatherOutlookSignatures(t *testing.T) {
 	})
 }
 
+func TestPruneWeatherOutlookSignature(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a day that has become the baseline is pruned away", func(t *testing.T) {
+		t.Parallel()
+		got := PruneWeatherOutlookSignature("o1:2026-08-25:R+;2026-08-28:S-", "2026-08-25")
+		assert.Equal(t, "o1:2026-08-28:S-", got)
+	})
+
+	t.Run("pruning every entry leaves the version prefix, not the empty string", func(t *testing.T) {
+		t.Parallel()
+		// The empty string means "never evaluated" and must stay reachable only that way.
+		got := PruneWeatherOutlookSignature("o1:2026-08-25:R+", "2026-08-25")
+		assert.Equal(t, "o1:", got)
+	})
+
+	t.Run("surviving entries stay ascending by date", func(t *testing.T) {
+		t.Parallel()
+		got := PruneWeatherOutlookSignature("o1:2026-08-24:R+;2026-08-31:S-;2026-08-27:R~", "2026-08-25")
+		assert.Equal(t, "o1:2026-08-27:R~;2026-08-31:S-", got)
+	})
+
+	t.Run("a never-evaluated signature is returned unchanged", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, PruneWeatherOutlookSignature("", "2026-08-25"))
+	})
+
+	t.Run("a signature of another version is returned unchanged", func(t *testing.T) {
+		t.Parallel()
+		got := PruneWeatherOutlookSignature("o0:2026-08-25:R+", "2026-08-25")
+		assert.Equal(t, "o0:2026-08-25:R+", got)
+	})
+
+	t.Run("the calendar advancing over an unchanged forecast is not a change", func(t *testing.T) {
+		t.Parallel()
+		// The regression this function exists for. The same stored rows, read on two
+		// consecutive mornings: without pruning, the day that becomes the baseline drops out
+		// of the new signature on its own, the content gate reads that as a change and sends,
+		// and the diff calls the arriving day cleared.
+		days := []WeatherForecastDay{
+			warmDay("2026-08-24"),
+			{ForecastDate: "2026-08-25", RainSum: f(4.2), TempMin: f(9.0), TempMax: f(17.0)},
+			warmDay("2026-08-26"),
+			{ForecastDate: "2026-08-28", SnowfallSum: f(3.0), TempMin: f(-5.0), TempMax: f(-1.0)},
+		}
+
+		yesterday := NewWeatherOutlook(days, "2026-08-24").Signature()
+		today := NewWeatherOutlook(days, "2026-08-25")
+		require.NotEqual(t, yesterday, today.Signature(), "the raw signatures must differ, or the case proves nothing")
+
+		pruned := PruneWeatherOutlookSignature(yesterday, "2026-08-25")
+		assert.Equal(t, today.Signature(), pruned, "a day rolling out of the window is not a change")
+
+		change := CompareWeatherOutlookSignatures(pruned, today.Signature())
+		assert.Empty(t, change.Changed)
+		assert.Empty(t, change.Cleared, "the arriving day must never be reported as cleared")
+	})
+}
+
 // f returns a pointer to v, so table cases can express "absent" as nil.
 func f(v float64) *float64 { return &v }
 

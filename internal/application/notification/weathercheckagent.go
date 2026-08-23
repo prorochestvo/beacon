@@ -337,10 +337,16 @@ func (a *WeatherCheckAgent) runOutlookPhase(ctx context.Context, now time.Time) 
 		}
 		signature := outlook.Signature()
 
+		// Compare against the stored signature reduced to the days still ahead of today.
+		// Yesterday's signature still names the day that has since become the baseline, and
+		// letting that difference through would send a digest every morning of a wet stretch
+		// and announce the arriving day as cleared.
+		prevSignature := domain.PruneWeatherOutlookSignature(city.NotifyState, baseline)
+
 		// Two quiet cases. The outlook is unchanged since the last digest; or this is the
 		// first evaluation and there is nothing to report, where an opening message saying
 		// "nothing" would be the worst possible introduction to a notification channel.
-		if signature == city.NotifyState || (city.NotifyState == "" && len(outlook.NotableDays()) == 0) {
+		if signature == prevSignature || (city.NotifyState == "" && len(outlook.NotableDays()) == 0) {
 			if city.NotifyState != signature {
 				if setErr := a.cityRepo.SetWeatherNotifyState(ctx, city.ID, signature); setErr != nil {
 					errs = append(errs, fmt.Errorf("weather outlook city=%s: persist state: %w", city.ID, setErr))
@@ -353,7 +359,7 @@ func (a *WeatherCheckAgent) runOutlookPhase(ctx context.Context, now time.Time) 
 			continue
 		}
 
-		msg, renderErr := RenderForecastOutlook(city, outlook, city.NotifyState)
+		msg, renderErr := RenderForecastOutlook(city, outlook, prevSignature)
 		if renderErr != nil {
 			errs = append(errs, fmt.Errorf("weather outlook city=%s: render: %w", city.ID, renderErr))
 			continue

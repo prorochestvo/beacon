@@ -1478,6 +1478,31 @@ func TestWeatherCheckAgent_OutlookPhase(t *testing.T) {
 		assert.Equal(t, []string{"o1"}, cityRepo.advanced, "the cursor still moves, so the digest stays once a day")
 	})
 
+	t.Run("the day that becomes today rolls out without sending or clearing", func(t *testing.T) {
+		t.Parallel()
+		// Yesterday's digest covered a rain day today and another three days out. Nothing
+		// about the forecast has changed since — only the calendar has. Before the stored
+		// signature was pruned to the window, the day dropping out of it read as a change:
+		// this sent a digest every morning of a wet stretch, announcing the day it rains as
+		// cleared on the morning it rains.
+		days := window(map[int]float64{0: 4.2, 3: 2.0})
+		yesterday := time.Now().UTC().AddDate(0, 0, -1).Format(time.DateOnly)
+		stored := domain.NewWeatherOutlook(days, yesterday).Signature()
+		today := domain.NewWeatherOutlook(days, time.Now().UTC().Format(time.DateOnly)).Signature()
+		require.NotEqual(t, stored, today, "the raw signatures must differ, or the case proves nothing")
+
+		cityRepo := outlookOnly(outlookCity("o1", "loc1", stored))
+		forecastRepo := &mockWeatherCheckForecastRepo{days: map[string][]domain.WeatherForecastDay{"loc1": days}}
+		eventRepo := &mockCheckEventRepository{}
+
+		require.NoError(t, agentFor(cityRepo, forecastRepo, eventRepo).Run(t.Context()))
+
+		assert.Empty(t, eventRepo.retained, "a day leaving the window is the calendar moving, not the forecast changing")
+		require.Len(t, cityRepo.states, 1, "the stored signature still moves to today's window")
+		assert.Equal(t, today, cityRepo.states[0].state)
+		assert.Equal(t, []string{"o1"}, cityRepo.advanced)
+	})
+
 	t.Run("a changed outlook marks what moved", func(t *testing.T) {
 		t.Parallel()
 		before := domain.NewWeatherOutlook(window(map[int]float64{3: 4.2}), time.Now().UTC().Format(time.DateOnly)).Signature()

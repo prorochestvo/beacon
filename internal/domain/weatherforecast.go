@@ -293,6 +293,46 @@ func CompareWeatherOutlookSignatures(prev, next string) WeatherOutlookChange {
 	return change
 }
 
+// PruneWeatherOutlookSignature reduces a stored signature to the days still ahead of
+// baseline, re-encoded so it can be compared byte-for-byte against a freshly built one.
+//
+// A signature only ever spans days after the baseline, and the baseline advances every
+// morning. Without this the day that becomes today drops out of the new signature on its
+// own: the content gate reads the difference as a change and sends, and the diff reports
+// that day as cleared, on the morning it arrives. Neither is true. A day leaving the window
+// is the calendar moving, not the forecast changing.
+//
+// A signature that is empty or carries a different version is returned unchanged: there is
+// nothing comparable to prune, and the caller must go on treating it as "no comparable
+// previous state".
+func PruneWeatherOutlookSignature(signature, baseline string) string {
+	entries, ok := parseWeatherOutlookSignature(signature)
+	if !ok {
+		return signature
+	}
+
+	dates := make([]string, 0, len(entries))
+	for date := range entries {
+		if date > baseline {
+			dates = append(dates, date)
+		}
+	}
+	slices.Sort(dates)
+
+	var b strings.Builder
+	b.WriteString(weatherOutlookSignatureVersion)
+	b.WriteByte(':')
+	for i, date := range dates {
+		if i > 0 {
+			b.WriteByte(';')
+		}
+		b.WriteString(date)
+		b.WriteByte(':')
+		b.WriteString(entries[date])
+	}
+	return b.String()
+}
+
 // weatherOutlookSignatureVersion prefixes every outlook signature. Bump it whenever the
 // encoding below changes meaning: the mismatch is what forces one clean re-notification
 // instead of a silently wrong diff.
