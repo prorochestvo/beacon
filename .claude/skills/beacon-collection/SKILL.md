@@ -1,11 +1,20 @@
 ---
 name: beacon-collection
-description: How Beacon's collector reaches upstreams and what it does with the results — per-source proxy opt-in and why direct is the default, batched sources sharing one fetch (the 20 Yahoo rows), the Open-Meteo weather provider with its retry policy and alert edge semantics, the 16-day long-range forecast on its own daily gate and the content-gated outlook digest, and the source-health alerting that reports a source gone silent. Load before touching cmd/collector, internal/tools/rateextractor, internal/application/collection, internal/infrastructure/weather, notification.SourceHealthAgent, any rate_sources row or seed migration, anything involving BEACON_PROXY_URL or options.use_proxy, weather alert kinds, the rain/thaw/heat/frost latches, collection.WeatherForecastAgent, OpenMeteo.Forecast or ForecastRange, or the forecast_outlook notify kind and its notify_state signature.
+description: Beacon's collection pipeline — source kinds (BID/ASK/LAST) and the options JSON column, per-source proxy opt-in (direct by default; the Telegram bot always bypasses), batched sources sharing one fetch, the Open-Meteo client and its retry policy, the 16-day forecast and its daily gate, the content-gated outlook digest, weather alert latches, source-health alerting, and the cmd/doctor operator umbrella. Load before touching cmd/collector, cmd/doctor, internal/tools/rateextractor or proxyutil, internal/application/collection, internal/infrastructure/weather or telegrambot, any rate_sources row or seed migration, domain.RateSourceOptions, WeatherForecastAgent, BEACON_PROXY_URL or options.use_proxy (HTTPS_PROXY/HTTP_PROXY/NO_PROXY do nothing here), BEACON_CHROMIUM_PATH or fetcher_kind='chromedp' sources, the rain/thaw/heat/frost alert kinds, or the forecast_outlook notify kind.
 ---
 
 # Beacon collection
 
 Everything the collector fetches, and what it does with the answer.
+
+## Source rows: `kind` and `options`
+
+A `rate_sources` row carries a `kind` of `BID`, `ASK`, or `LAST` (equity / last-traded
+price). Per-source fetch behaviour — header overrides, the proxy opt-in — lives in the
+`options` JSON column, typed as `domain.RateSourceOptions`.
+
+Several sources may share one URL and therefore one fetch; that batching is load-bearing and
+easy to break — see "Batched sources share one fetch" below.
 
 ## Egress: direct by default, per-source opt-in
 
@@ -33,6 +42,16 @@ worth not reversing casually:
 
 `cmd/doctor` still honours the proxy unconditionally: it talks to AI providers, which is a
 different question with different exposure.
+
+**Telegram Bot API traffic bypasses any proxy unconditionally**, and does so in code rather
+than by configuration: a hardcoded `Proxy: nil` transport in
+`internal/infrastructure/telegrambot/tbotclient.go`. No env var can route the bot through a
+proxy, which is deliberate — the bot is the channel that reports collection failures, so it
+must not share a failure mode with the thing it reports on.
+
+The standard `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` variables are consulted by **no**
+component in this project; `BEACON_PROXY_URL`, resolved through `proxyutil.ResolveURL`, is the
+only knob. Setting the standard ones changes nothing and looks like it should.
 
 Two things stay direct regardless of the flag. **Chromedp** takes its proxy as a
 browser-launch argument on one Chromium subprocess shared by the whole tick, so it cannot
@@ -260,3 +279,18 @@ stopped anyone hearing about it.
   180 days.
 - Weather locations are **not** covered: they write no `execution_history`, so there is no
   persisted per-location outcome to measure a gap against.
+
+## Operator tooling: `cmd/doctor`
+
+`cmd/doctor` is the operator-only umbrella for LLM rule (re)generation and source auditing:
+`rulegen` for a single source or `--all`, and `audit --all` / `audit --source <name>`. No
+service binary calls it — it runs by hand or from cron, which is why it may take liberties
+(the unconditional proxy above) that the collector may not.
+
+Usage, exit codes, the AI DSN formats and the chromedp/Chromium setup live in
+`cmd/doctor/README.md` and the package godoc; `make audit`, `make doctor-help` and
+`make audit-help` wrap the common invocations.
+
+One cross-cutting consequence: `rulegen` persists through `RetainRateSource`, which rewrites
+source rows **wholesale**. Anything runtime-valued that has been added to `rate_sources` is
+destroyed by an unrelated `rulegen` run — see `beacon-storage`.

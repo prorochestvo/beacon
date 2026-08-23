@@ -1,6 +1,6 @@
 ---
 name: beacon-http-api
-description: Beacon's HTTP surface and browser client — endpoint contracts that are not obvious from the router code (chart period whitelist, weather city create validation, the forced alert rows and their 409, the multi-week days array on /weather/current, liveness vs readiness), the content-hashed WASM asset URLs and the nginx location ordering they depend on, and the Mini App's 2x2 screen navigation. Load before adding or changing anything under internal/gateway, cmd/web, cmd/wasm, cmd/web/static, configs/nginx.*, dto.WeatherCurrentItem or WeatherForecastDayItem, the forecast_outlook subscription kind, or any /api/v1/me or /api/v1/public route.
+description: Beacon's HTTP surface and browser client — endpoint contracts not obvious from the router code (chart period whitelist, the forced alert rows and their 409, the multi-week days array on /weather/current), Telegram WebApp initData HMAC auth and its single middleware mount, where cmd/web binds and the --api-dsn flag, the PublicError contract and the three assertions every controller error test owes, content-hashed WASM asset URLs and nginx location ordering, and the Mini App's 2x2 navigation. Load before changing anything under internal/gateway, cmd/web, cmd/wasm, cmd/web/static or configs/nginx.*, internal/tools/tgwebapp/initdata.go, middleware.TelegramInitData or routes.MePrefix, internal.PublicError or internal/errors.go, dto.WeatherCurrentItem or WeatherForecastDayItem, or any /api/v1/me or /api/v1/public route.
 ---
 
 # Beacon HTTP API and Mini App
@@ -13,9 +13,12 @@ are written down here.
 
 - **Auth** — the `/api/v1/me/*` family is the only authenticated surface. The signed Telegram
   WebApp `initData` is accepted **only** in the `X-Telegram-Init-Data` header, never via
-  query string (a signed payload in the URL leaks into access logs and `Referer`). The HMAC
-  algorithm is in CLAUDE.md's Key Patterns; implementation in
-  `internal/tools/tgwebapp/initdata.go`.
+  query string (a signed payload in the URL leaks into access logs and `Referer`).
+
+  **The HMAC scheme.** The signature is HMAC-SHA256 under
+  `secret_key = HMAC_SHA256("WebAppData", botToken)` — the string literal is the *key* and
+  the bot token is the *message*, which is the way round that is easy to get backwards.
+  Implementation lives in `internal/tools/tgwebapp/initdata.go`.
 
   **How it is enforced.** `NewRouter` registers the family on a private `ServeMux` and mounts
   it once at `routes.MePrefix` behind `middleware.TelegramInitData`. A route is authenticated
@@ -68,6 +71,28 @@ deployment that must publish the port passes `--bind 0.0.0.0` explicitly.
 
 Binding loopback is not what stops a *co-hosted* vhost reaching Beacon — that neighbour
 proxies over loopback too. Only the port or the neighbour's upstream settles that.
+
+**The public HTTPS origin is a CLI flag, not an env var.** `--api-dsn` (format
+`https://<host>/`, parsed by `dsninjector.Parse`) is hardcoded in the systemd unit's
+`ExecStart` line and never in `.env`, so it travels with the deployment rather than with the
+secrets file. `cmd/web/main.go` reads `BEACON_SQLITEDB_DSN` and `BEACON_TELEGRAMBOT_DSN` via
+`dsninjector.Unmarshal(envName)` at startup, from the systemd `EnvironmentFile`; all three
+configs must be present or the binary calls `log.Fatalf`.
+
+## Error rendering: what an end user may see
+
+`internal.PublicError` (in `internal/errors.go`, alongside `TraceError`, `StackTraceError`,
+`HttpCodeError`, and the `ErrNotFound` sentinel) carries messages **safe to show to end
+users**. Wrap at the point the error is created — the service layer — with
+`internal.NewPublicError("...")` when the failure meaningfully tells the user something;
+return a plain `error` for everything else (DB down, unexpected nil, ...). The controller
+catches every sub-handler error and sends `PublicError.Details()` for a public error, else a
+generic fallback constant.
+
+Every controller test on an error branch must assert three things: (1) a response was
+actually sent, so the user is not left in silence; (2) its text equals `PublicError.Details()`
+for a public error; (3) its text equals the fallback constant for a plain error. The first is
+the one that catches a handler returning early without writing anything at all.
 
 ## The multi-week outlook rides on `/current`
 
