@@ -71,10 +71,9 @@ The `web` binary serves a REST API plus an embedded dashboard (HTML and a WASM b
 and routes Telegram callbacks. `migrator` applies schema migrations; `doctor` provides
 operator tooling (LLM rule generation and source auditing).
 
-Sources use a `kind` of `BID`, `ASK`, or `LAST` (equity / last-traded price). Per-source
-fetch behaviour — header overrides, the proxy opt-in — lives in the `options` JSON column
-(`domain.RateSourceOptions`). Several sources may share one URL and therefore one fetch;
-that batching is load-bearing and easy to break. **Skill: `beacon-collection`.**
+Several sources may share one URL and therefore one fetch; that batching is load-bearing and
+easy to break. Source `kind`, the `options` JSON column and `cmd/doctor`, the operator-only
+umbrella for rule generation and source auditing: **skill `beacon-collection`.**
 
 **Collection egress is direct by default.** Two levels must agree before anything is
 proxied: `BEACON_PROXY_URL` says a proxy exists, `rate_sources.options.use_proxy` says the
@@ -84,8 +83,6 @@ source wants it. No source is opted in today, and the default is a measured deci
 **Never widen `OpenMeteo.Forecast`'s `daily` block.** Its index `[0]` *is* today for the
 morning summary and all four daily-metric latches. The multi-week fetch is a separate call
 (`ForecastRange`, its own table, its own daily cadence) for exactly that reason.
-
-> `cmd/doctor` is the operator-only umbrella for LLM rule (re)generation and source auditing (`rulegen` single/`--all`, `audit --all`/`--source`). Usage, exit codes, and env vars: `cmd/doctor/README.md` + godoc.
 
 ### Layer Responsibilities
 
@@ -103,10 +100,8 @@ morning summary and all four daily-metric latches. The multi-week fetch is a sep
 
 ### Key Patterns
 
-- **Repository pattern** — each repository type owns its own SQL, migration, and query helper functions. Queries execute inside explicit transactions (`r.db.Transaction(ctx)` to write, `r.db.ReadOnlyTransaction(ctx)` to read). Repositories are passed as interfaces into service and handler layers.
-- **Configuration injection** — `BEACON_SQLITEDB_DSN` and `BEACON_TELEGRAMBOT_DSN` are read via `dsninjector.Unmarshal(envName)` at startup in `cmd/web/main.go` and live in the systemd `EnvironmentFile`. The public HTTPS origin is passed via the `--api-dsn` CLI flag (format: `https://<host>/`, parsed by `dsninjector.Parse`) and is hardcoded in the systemd unit's `ExecStart` line — never in `.env`. All three configs must be present at startup; the binary calls `log.Fatalf` on any missing value.
 - **Startup ordering** — anything that logs or can `log.Fatalf` on bad config belongs in `main` *after* the logger exists, never in a package initialiser: the cron wrappers discard stderr, so a line emitted earlier is attributable to nothing. Operators grep the marker sequence `logger -> settings -> dependencies -> repositories -> runners`.
-- **Auth: Telegram WebApp initData HMAC** — the `/api/v1/me/...` endpoint family authenticates callers by verifying the Telegram WebApp `initData` HMAC-SHA256 signature. The signing algorithm uses `secret_key = HMAC_SHA256("WebAppData", botToken)` (the string literal is the key; the token is the message). Implementation lives in `internal/tools/tgwebapp/initdata.go`. The check runs **once**, in `middleware.TelegramInitData`, mounted over `routes.MePrefix` — **a new authenticated route belongs on that inner mux; putting it on the outer one is a bypass, and nothing will say so.** Handlers read the caller via `middleware.UserIDFrom` and refuse without it. No other endpoint requires this auth.
+- **Auth: Telegram WebApp initData HMAC** — the `/api/v1/me/...` family verifies the signed `initData`, and the check runs **once**, in `middleware.TelegramInitData` mounted over `routes.MePrefix` — **a new authenticated route belongs on that inner mux; putting it on the outer one is a bypass, and nothing will say so.** Handlers read the caller via `middleware.UserIDFrom` and refuse without it. No other endpoint requires this auth. The HMAC scheme and its easily-inverted key/message order: **skill `beacon-http-api`.**
 
 ### HTTP surface
 
@@ -142,10 +137,9 @@ window never applies to it. **Two write transactions cannot be open at once** in
 process: open, write and commit inside one function. The PRAGMA details and the production
 numbers behind all of this: **skill `beacon-storage`**.
 
-Foreign keys point from `rate_values`, `rate_user_subscriptions`, and
-`rate_user_events` to `rate_sources(name)` with `ON DELETE CASCADE` —
-deleting a source destroys all dependent rows. See the warning on
-`RemoveRateSource` before wiring it to any endpoint.
+**Deleting a source destroys its history**: `rate_values`, `rate_user_subscriptions` and
+`rate_user_events` cascade from `rate_sources(name)`. Read the warning on `RemoveRateSource`
+before wiring it to any endpoint.
 
 Two things that look free to change and are not. **`weather_observations.provider` only
 ever holds `'open-meteo'` but partitions two composite indexes** — dropping the vestigial
@@ -203,9 +197,13 @@ live. Remote hosts are read-freely, mutate-never without explicit per-action app
 
 ## Error Handling
 
-`internal.PublicError` (in `internal/errors.go`, alongside `TraceError`, `StackTraceError`, `HttpCodeError`, and the `ErrNotFound` sentinel) carries messages **safe to show to end users**. Wrap at the point the error is created (service layer) with `internal.NewPublicError("...")` when the failure meaningfully tells the user something; return a plain `error` for everything else (DB down, unexpected nil, ...). The controller catches every sub-handler error and sends `PublicError.Details()` for a public error, else a generic fallback constant.
-
-Every controller test on an error branch must assert: (1) a response was actually sent (user not left in silence), (2) its text equals `PublicError.Details()` for a public error, (3) its text equals the fallback constant for a plain error.
+`internal.PublicError` (in `internal/errors.go`, alongside `TraceError`, `StackTraceError`,
+`HttpCodeError` and the `ErrNotFound` sentinel) carries messages **safe to show to end
+users**: wrap where the error is created, return a plain `error` for everything else, and the
+controller renders `Details()` or a generic fallback. **Every controller test on an error
+branch owes three assertions** — a response was sent at all, its text for a public error, its
+text for a plain one. The first is the one that catches a handler returning without writing
+anything. Full contract: **skill `beacon-http-api`.**
 
 ## Data & Privacy
 
