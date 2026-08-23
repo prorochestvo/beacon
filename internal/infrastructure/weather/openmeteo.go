@@ -587,10 +587,28 @@ func decodeOpenMeteoForecastRange(body []byte) ([]domain.WeatherForecastDay, err
 	// the future, and the collector's daily gate compares against exactly this value.
 	capturedAt := time.Now().UTC()
 
-	days := make([]domain.WeatherForecastDay, 0, len(resp.Daily.Time))
+	// Bound the window here rather than trusting forecast_days=16 to have been honoured.
+	// Nothing downstream re-checks it, and two invariants rest on it. The table has no
+	// archive tier because it is a bounded working set of locations x 16, and retention only
+	// deletes the past — so a row dated years out would be permanent and would sit in the
+	// read window forever. And every row of a fetch is written in one BEGIN IMMEDIATE, which
+	// takes the WAL write lock at BEGIN: an oversized response would hold it against the
+	// notifier and the web server for the length of the whole insert.
+	//
+	// The extra day of slack is the timezone. Forecast dates are city-local and a city can be
+	// a calendar day ahead of UTC.
+	horizonEnd := capturedAt.AddDate(0, 0, domain.WeatherOutlookHorizonDays+1).Format(time.DateOnly)
+
+	days := make([]domain.WeatherForecastDay, 0, domain.WeatherOutlookHorizonDays)
 	for i, date := range resp.Daily.Time {
+		if len(days) == domain.WeatherOutlookHorizonDays {
+			break
+		}
 		if date == "" {
 			continue // a day with no calendar date has no natural key to be stored under
+		}
+		if date > horizonEnd {
+			continue // past anything this feature asked for; see horizonEnd above
 		}
 		days = append(days, domain.WeatherForecastDay{
 			Provider:      domain.ProviderOpenMeteo,
@@ -604,6 +622,17 @@ func decodeOpenMeteoForecastRange(body []byte) ([]domain.WeatherForecastDay, err
 			PrecipProbMax: valueAt(resp.Daily.PrecipitationProbMax, i),
 			WeatherCode:   valueAt(resp.Daily.WeatherCode, i),
 		})
+	}
+
+	// A non-empty daily[] that yields nothing storable is a failure, not an empty forecast.
+	// Returning it as a success would have the collector record the fetch, write no row, and
+	// leave captured_at where it was — so the daily gate stays open and the location is
+	// re-fetched on every tick from then on, under a log line reading fetched=1 failed=0.
+	if len(days) == 0 {
+		return nil, errors.Join(
+			errors.New("open-meteo forecast range: daily[] holds no storable day"),
+			loginjector.NewTraceError(),
+		)
 	}
 
 	return days, nil

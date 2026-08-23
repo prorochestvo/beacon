@@ -18,6 +18,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
 // loadFixture reads a JSON fixture file from testdata/.
@@ -779,6 +781,45 @@ func TestOpenMeteo_ForecastRange(t *testing.T) {
 		require.Len(t, days, 2)
 		assert.Equal(t, "2026-08-21", days[0].ForecastDate)
 		assert.Equal(t, "2026-08-23", days[1].ForecastDate)
+	})
+
+	t.Run("a response longer than the horizon is truncated to it", func(t *testing.T) {
+		t.Parallel()
+		// The table carries no archive tier because it is bounded at locations x 16, and a
+		// whole fetch is written under one WAL write lock. A provider that ignores
+		// forecast_days must not be able to take either of those away.
+		base := time.Now().UTC()
+		quoted := make([]string, 0, domain.WeatherOutlookHorizonDays*2)
+		for offset := range domain.WeatherOutlookHorizonDays * 2 {
+			quoted = append(quoted, fmt.Sprintf("%q", base.AddDate(0, 0, offset).Format(time.DateOnly)))
+		}
+
+		days, err := decodeOpenMeteoForecastRange(fmt.Appendf(nil, `{"daily":{"time":[%s]}}`, strings.Join(quoted, ",")))
+		require.NoError(t, err)
+		assert.Len(t, days, domain.WeatherOutlookHorizonDays)
+	})
+
+	t.Run("a day past the horizon is dropped", func(t *testing.T) {
+		t.Parallel()
+		// Retention deletes the past and nothing prunes the far future, so a row dated a year
+		// out would outlive every real one and sit in the read window forever.
+		base := time.Now().UTC()
+		near := base.AddDate(0, 0, 1).Format(time.DateOnly)
+		far := base.AddDate(0, 0, 400).Format(time.DateOnly)
+
+		days, err := decodeOpenMeteoForecastRange(fmt.Appendf(nil, `{"daily":{"time":[%q,%q]}}`, near, far))
+		require.NoError(t, err)
+		require.Len(t, days, 1)
+		assert.Equal(t, near, days[0].ForecastDate)
+	})
+
+	t.Run("a daily block with no storable day is an error", func(t *testing.T) {
+		t.Parallel()
+		// Not the same as an empty forecast. Reported as a success it would have the collector
+		// record a fetch, write nothing, and leave captured_at where it was — so the daily
+		// gate never closes and the location is re-fetched every tick behind a healthy log.
+		_, err := decodeOpenMeteoForecastRange([]byte(`{"daily":{"time":["",""]}}`))
+		require.Error(t, err)
 	})
 
 	t.Run("an upstream failure propagates", func(t *testing.T) {
