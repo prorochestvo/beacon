@@ -26,26 +26,32 @@ func TestNewWeatherForecastAgent(t *testing.T) {
 
 	t.Run("valid construction", func(t *testing.T) {
 		t.Parallel()
-		a, err := NewWeatherForecastAgent(&mockWeatherRangeProvider{}, &mockWeatherCityRepo{}, &mockWeatherForecastDayRepo{}, io.Discard)
+		a, err := NewWeatherForecastAgent(&mockWeatherRangeProvider{}, &mockWeatherCityRepo{}, &mockWeatherForecastDayRepo{}, newFakeMetaRepo(), io.Discard)
 		require.NoError(t, err)
 		require.NotNil(t, a)
 	})
 
 	t.Run("nil provider returns error", func(t *testing.T) {
 		t.Parallel()
-		_, err := NewWeatherForecastAgent(nil, &mockWeatherCityRepo{}, &mockWeatherForecastDayRepo{}, io.Discard)
+		_, err := NewWeatherForecastAgent(nil, &mockWeatherCityRepo{}, &mockWeatherForecastDayRepo{}, newFakeMetaRepo(), io.Discard)
 		require.Error(t, err)
 	})
 
 	t.Run("nil cityRepo returns error", func(t *testing.T) {
 		t.Parallel()
-		_, err := NewWeatherForecastAgent(&mockWeatherRangeProvider{}, nil, &mockWeatherForecastDayRepo{}, io.Discard)
+		_, err := NewWeatherForecastAgent(&mockWeatherRangeProvider{}, nil, &mockWeatherForecastDayRepo{}, newFakeMetaRepo(), io.Discard)
 		require.Error(t, err)
 	})
 
 	t.Run("nil dayRepo returns error", func(t *testing.T) {
 		t.Parallel()
-		_, err := NewWeatherForecastAgent(&mockWeatherRangeProvider{}, &mockWeatherCityRepo{}, nil, io.Discard)
+		_, err := NewWeatherForecastAgent(&mockWeatherRangeProvider{}, &mockWeatherCityRepo{}, nil, newFakeMetaRepo(), io.Discard)
+		require.Error(t, err)
+	})
+
+	t.Run("nil meta returns error", func(t *testing.T) {
+		t.Parallel()
+		_, err := NewWeatherForecastAgent(&mockWeatherRangeProvider{}, &mockWeatherCityRepo{}, &mockWeatherForecastDayRepo{}, nil, io.Discard)
 		require.Error(t, err)
 	})
 }
@@ -171,12 +177,210 @@ func TestWeatherForecastAgent_Run(t *testing.T) {
 			&mockWeatherRangeProvider{days: []domain.WeatherForecastDay{{ForecastDate: "2026-08-21"}}},
 			&mockWeatherCityRepo{locations: locations("loc1")},
 			dayRepo,
+			newFakeMetaRepo(),
 			&log,
 		)
 		require.NoError(t, err)
 		require.NoError(t, a.Run(t.Context()))
-		assert.Contains(t, log.String(), "weather forecast: fetched=1 skipped=0 failed=0 total=1")
+		assert.Contains(t, log.String(), "weather forecast: fetched=1 skipped=0 deferred=0 failed=0 total=1")
 	})
+}
+
+func TestWeatherForecastAgentAttemptBudget(t *testing.T) {
+	t.Parallel()
+
+	key := forecastAttemptKey("loc1")
+
+	// agentWith builds an agent over one always-failing location and the given marker state.
+	agentWith := func(t *testing.T, meta *fakeMetaRepo, log io.Writer) (*WeatherForecastAgent, *mockWeatherRangeProvider) {
+		t.Helper()
+		provider := &mockWeatherRangeProvider{failOnLat: 1}
+		a, err := NewWeatherForecastAgent(
+			provider,
+			&mockWeatherCityRepo{locations: locations("loc1")},
+			&mockWeatherForecastDayRepo{captureErr: internal.ErrNotFound},
+			meta,
+			log,
+		)
+		require.NoError(t, err)
+		return a, provider
+	}
+
+	t.Run("a failed fetch records the attempt", func(t *testing.T) {
+		t.Parallel()
+		meta := newFakeMetaRepo()
+		a, provider := agentWith(t, meta, io.Discard)
+
+		require.Error(t, a.Run(t.Context()))
+		assert.Equal(t, 1, provider.calls)
+
+		marker, err := parseForecastAttempt(meta.values[key])
+		require.NoError(t, err, "the failure must leave a parseable marker")
+		assert.Equal(t, time.Now().UTC().Format(time.DateOnly), marker.day)
+		assert.Equal(t, 1, marker.count)
+	})
+
+	t.Run("a retain failure records the attempt too", func(t *testing.T) {
+		t.Parallel()
+		// The fetch was paid for either way; only the store failed.
+		meta := newFakeMetaRepo()
+		a, err := NewWeatherForecastAgent(
+			&mockWeatherRangeProvider{days: []domain.WeatherForecastDay{{ForecastDate: "2026-08-21"}}},
+			&mockWeatherCityRepo{locations: locations("loc1")},
+			&mockWeatherForecastDayRepo{captureErr: internal.ErrNotFound, retainErr: errors.New("disk on fire")},
+			meta,
+			io.Discard,
+		)
+		require.NoError(t, err)
+
+		require.Error(t, a.Run(t.Context()))
+		assert.NotEmpty(t, meta.values[key])
+	})
+
+	t.Run("a spent budget defers the location instead of refetching", func(t *testing.T) {
+		t.Parallel()
+		// The whole point: before this, a location that could not be fetched stayed due and
+		// was retried on every tick for the rest of the day.
+		var log strings.Builder
+		meta := newFakeMetaRepo()
+		meta.values[key] = formatForecastAttempt(forecastAttemptMarker{
+			day:    time.Now().UTC().Format(time.DateOnly),
+			count:  weatherForecastMaxDailyAttempts,
+			lastAt: time.Now().UTC().Add(-24 * time.Hour),
+		})
+		a, provider := agentWith(t, meta, &log)
+
+		require.NoError(t, a.Run(t.Context()))
+		assert.Zero(t, provider.calls, "the budget is spent; nothing may reach the provider")
+		assert.Contains(t, log.String(), "deferred=1")
+		assert.Contains(t, log.String(), "skipped=0", "backing off is not the same state as already fetched")
+	})
+
+	t.Run("a marker from another day is a fresh budget", func(t *testing.T) {
+		t.Parallel()
+		meta := newFakeMetaRepo()
+		meta.values[key] = formatForecastAttempt(forecastAttemptMarker{
+			day:    time.Now().UTC().AddDate(0, 0, -1).Format(time.DateOnly),
+			count:  weatherForecastMaxDailyAttempts,
+			lastAt: time.Now().UTC().Add(-24 * time.Hour),
+		})
+		a, provider := agentWith(t, meta, io.Discard)
+
+		require.Error(t, a.Run(t.Context()))
+		assert.Equal(t, 1, provider.calls)
+	})
+
+	t.Run("a marker that cannot be read or parsed never blocks collection", func(t *testing.T) {
+		t.Parallel()
+		for name, meta := range map[string]*fakeMetaRepo{
+			"read fails": {values: map[string]string{}, readErr: errors.New("meta unavailable")},
+			"garbage":    {values: map[string]string{key: "last tuesday"}},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				a, provider := agentWith(t, meta, io.Discard)
+				require.Error(t, a.Run(t.Context()))
+				assert.Equal(t, 1, provider.calls, "bookkeeping must not be what stops a fetch")
+			})
+		}
+	})
+
+	t.Run("today's stored forecast still wins over any marker", func(t *testing.T) {
+		t.Parallel()
+		meta := newFakeMetaRepo()
+		provider := &mockWeatherRangeProvider{}
+		a, err := NewWeatherForecastAgent(
+			provider,
+			&mockWeatherCityRepo{locations: locations("loc1")},
+			&mockWeatherForecastDayRepo{capture: time.Now().UTC()},
+			meta,
+			io.Discard,
+		)
+		require.NoError(t, err)
+
+		require.NoError(t, a.Run(t.Context()))
+		assert.Zero(t, provider.calls)
+		assert.Empty(t, meta.values[key], "a location that never failed writes no marker")
+	})
+}
+
+func TestWeatherForecastAgentRetryWindow(t *testing.T) {
+	t.Parallel()
+
+	// retryWindowOpen takes now explicitly, so the timing cases need no clock seam.
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	key := forecastAttemptKey("loc1")
+
+	agentWithMarker := func(t *testing.T, marker forecastAttemptMarker) *WeatherForecastAgent {
+		t.Helper()
+		meta := newFakeMetaRepo()
+		meta.values[key] = formatForecastAttempt(marker)
+		a, err := NewWeatherForecastAgent(
+			&mockWeatherRangeProvider{}, &mockWeatherCityRepo{}, &mockWeatherForecastDayRepo{}, meta, io.Discard)
+		require.NoError(t, err)
+		return a
+	}
+
+	cases := []struct {
+		name  string
+		count int
+		since time.Duration // how long ago the last attempt was
+		open  bool
+	}{
+		{"one failure, half an hour ago", 1, 30 * time.Minute, false},
+		{"one failure, an hour ago", 1, time.Hour, true},
+		{"two failures, an hour ago", 2, time.Hour, false},
+		{"two failures, two hours ago", 2, 2 * time.Hour, true},
+		{"three failures, three hours ago", 3, 3 * time.Hour, false},
+		{"three failures, four hours ago", 3, 4 * time.Hour, true},
+		{"budget spent, however long ago", weatherForecastMaxDailyAttempts, 24 * time.Hour, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			a := agentWithMarker(t, forecastAttemptMarker{
+				day:    now.Format(time.DateOnly),
+				count:  c.count,
+				lastAt: now.Add(-c.since),
+			})
+			assert.Equal(t, c.open, a.retryWindowOpen(t.Context(), "loc1", now))
+		})
+	}
+}
+
+func TestForecastAttemptMarker(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a marker round-trips", func(t *testing.T) {
+		t.Parallel()
+		want := forecastAttemptMarker{
+			day:    "2026-08-23",
+			count:  3,
+			lastAt: time.Date(2026, 8, 23, 7, 15, 0, 0, time.UTC),
+		}
+		got, err := parseForecastAttempt(formatForecastAttempt(want))
+		require.NoError(t, err)
+		assert.Equal(t, want, got)
+	})
+
+	for _, raw := range []string{"", "2026-08-23", "2026-08-23|two|2026-08-23T07:15:00Z", "2026-08-23|1|yesterday"} {
+		t.Run("malformed: "+raw, func(t *testing.T) {
+			t.Parallel()
+			_, err := parseForecastAttempt(raw)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestForecastRetryWait(t *testing.T) {
+	t.Parallel()
+
+	// Doubling from the base, so the day's attempts land at roughly 0, 1, 3, 7 and 15 hours.
+	assert.Zero(t, forecastRetryWait(0))
+	assert.Equal(t, weatherForecastRetryBase, forecastRetryWait(1))
+	assert.Equal(t, 2*weatherForecastRetryBase, forecastRetryWait(2))
+	assert.Equal(t, 4*weatherForecastRetryBase, forecastRetryWait(3))
+	assert.Equal(t, 8*weatherForecastRetryBase, forecastRetryWait(4))
 }
 
 // locations builds the distinct-location rows the collector iterates, one per id, each with
@@ -196,7 +400,7 @@ func locations(ids ...string) []domain.WeatherUserCity {
 // newForecastAgent constructs an agent with a discarding logger.
 func newForecastAgent(t *testing.T, provider weatherRangeProvider, cityRepo weatherCollectionCityRepo, dayRepo weatherForecastDayRepo) *WeatherForecastAgent {
 	t.Helper()
-	a, err := NewWeatherForecastAgent(provider, cityRepo, dayRepo, io.Discard)
+	a, err := NewWeatherForecastAgent(provider, cityRepo, dayRepo, newFakeMetaRepo(), io.Discard)
 	require.NoError(t, err)
 	return a
 }

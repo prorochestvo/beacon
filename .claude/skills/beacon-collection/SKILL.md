@@ -153,6 +153,19 @@ separate from the current-conditions path.
   least 24 h since the last capture" drifts an hour later every day and eventually lands
   after the subscriber's notify hour, so the digest would read a forecast a day older than
   it needed to be. A calendar day pins the fetch to the first tick after midnight UTC.
+- **The gate throttles failures too, or it throttles nothing.** A capture is only written on
+  success, so on its own the calendar-day gate leaves a location that cannot be fetched due
+  for the rest of the day and retried on every tick — each retry being another
+  `openMeteoMaxAttempts` requests. A per-location marker under
+  `repository.ServiceMetaKeyForecastAttemptPrefix` in `service_meta` counts the day's failed
+  attempts and doubles the wait after each, so tries land at roughly 0, 1, 3, 7 and 15 hours
+  and then stop: the spacing matters because the outages measured against this provider run
+  about three hours per location, and a budget burned in the first few ticks would miss the
+  recovery. A failing location is logged as `deferred=`, never as `skipped=` — the two are
+  opposite states, and conflating them is what made the unthrottled version look healthy.
+  Every uncertainty about the marker resolves to "fetch": unreadable, unparseable, or from
+  another day all mean a fresh budget, because a wrong "yes" costs one request and a wrong
+  "no" is a location that silently stops updating.
 - **Retention keeps one day of slack.** `RemoveForecastDaysBefore` runs on every tick
   whatever the fetches did, with a cutoff of yesterday UTC: offsets run from −12 to +14, so
   one extra day is what makes "past" unambiguous for every subscriber.

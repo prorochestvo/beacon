@@ -33,8 +33,10 @@ func TestWireWeather(t *testing.T) {
 		require.NoError(t, err)
 		forecastRepo, err := repository.NewWeatherForecastDayRepository(nil)
 		require.NoError(t, err)
+		metaRepo, err := repository.NewServiceMetaRepository(nil)
+		require.NoError(t, err)
 
-		agents, err := wireWeather(cityRepo, obsRepo, forecastRepo, nil)
+		agents, err := wireWeather(cityRepo, obsRepo, forecastRepo, metaRepo, nil)
 		require.NoError(t, err)
 		require.Len(t, agents, 2, "current conditions and the long-range forecast are separate runners")
 		for i, agent := range agents {
@@ -54,8 +56,10 @@ func TestWireWeather(t *testing.T) {
 		require.NoError(t, err)
 		forecastRepo, err := repository.NewWeatherForecastDayRepository(nil)
 		require.NoError(t, err)
+		metaRepo, err := repository.NewServiceMetaRepository(nil)
+		require.NoError(t, err)
 
-		agents, err := wireWeather(cityRepo, obsRepo, forecastRepo, nil)
+		agents, err := wireWeather(cityRepo, obsRepo, forecastRepo, metaRepo, nil)
 		require.NoError(t, err)
 		assert.NotEmpty(t, agents)
 	})
@@ -79,8 +83,10 @@ func TestWeatherIgnoresProxyEnv(t *testing.T) {
 	require.NoError(t, err)
 	forecastRepo, err := repository.NewWeatherForecastDayRepository(nil)
 	require.NoError(t, err)
+	metaRepo, err := repository.NewServiceMetaRepository(nil)
+	require.NoError(t, err)
 
-	agents, err := wireWeather(cityRepo, obsRepo, forecastRepo, nil)
+	agents, err := wireWeather(cityRepo, obsRepo, forecastRepo, metaRepo, nil)
 	require.NoError(t, err, "a proxy setting in the environment must be inert for weather")
 	assert.NotEmpty(t, agents)
 }

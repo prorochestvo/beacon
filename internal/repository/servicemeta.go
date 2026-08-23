@@ -96,4 +96,10 @@ const (
 	// ServiceMetaKeyLastVacuum records when VACUUM last completed. It gates the cadence,
 	// so it is written only after a successful run.
 	ServiceMetaKeyLastVacuum = "last_vacuum_at"
+
+	// ServiceMetaKeyForecastAttemptPrefix prefixes one key per location, holding that
+	// location's long-range fetch attempts for the current UTC day. It bounds what a
+	// provider outage costs: without it a location that cannot be fetched stays due all day
+	// and is retried on every tick.
+	ServiceMetaKeyForecastAttemptPrefix = "weather_forecast_attempt:"
 )
