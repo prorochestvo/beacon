@@ -60,6 +60,7 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/infrastructure/sqlitedb"
 	"github.com/seilbekskindirov/beacon/internal/repository"
 	"github.com/seilbekskindirov/beacon/internal/tools/proxyutil"
+	"github.com/seilbekskindirov/beacon/migrations"
 	_ "modernc.org/sqlite"
 )
 
@@ -245,7 +246,7 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 		}
 	}()
 
-	if err = sqlitedb.RequireMigratedSchema(context.Background(), db); err != nil {
+	if err = sqlitedb.RequireMigratedSchema(context.Background(), db, migrations.MigrationsFS); err != nil {
 		infraFail("schema check: %v", err)
 		return 3
 	}

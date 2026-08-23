@@ -41,6 +41,7 @@ import (
 	weatherinfra "github.com/seilbekskindirov/beacon/internal/infrastructure/weather"
 	"github.com/seilbekskindirov/beacon/internal/repository"
 	"github.com/seilbekskindirov/beacon/internal/tools/hashedassets"
+	"github.com/seilbekskindirov/beacon/migrations"
 	_ "modernc.org/sqlite"
 )
 
@@ -103,7 +104,7 @@ func main() {
 		log.Fatalf("dependencies: %s", err.Error())
 		return
 	}
-	if err = sqlitedb.RequireMigratedSchema(context.Background(), db); err != nil {
+	if err = sqlitedb.RequireMigratedSchema(context.Background(), db, migrations.MigrationsFS); err != nil {
 		log.Fatalf("dependencies: schema check: %s", err.Error())
 		return
 	}

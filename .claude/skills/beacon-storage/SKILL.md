@@ -67,13 +67,31 @@ invisible no-op). The `beacon-migrate` unit is `Type=oneshot` with `RemainAfterE
 `systemctl start` propagates that exit code and the release job fails — schema drift
 surfaces at deploy time rather than at the first query against a missing column.
 
-Service binaries (`cmd/web`, `cmd/collector`, `cmd/notifier`) DO NOT migrate on startup.
-They call `sqlitedb.RequireMigratedSchema(ctx, db)` immediately after opening the DB; a
-missing or empty `__schema_migrations` table is fatal:
+Service binaries (`cmd/web`, `cmd/collector`, `cmd/notifier`, and `cmd/doctor rulegen`) DO
+NOT migrate on startup. They call
+`sqlitedb.RequireMigratedSchema(ctx, db, migrations.MigrationsFS)` immediately after opening
+the DB, and a schema that does not account for every migration the build embeds is fatal:
 
 ```
 log.Fatalf("schema not initialised: run cmd/migrator before starting the service")
+log.Fatalf("schema is behind this build: ... 1 migration(s) not recorded in __schema_migrations: ...")
 ```
+
+**It compares the whole set, not the row count.** Non-empty is true of every partially
+migrated database, and the release flips the `bin/release` symlink *before* it runs the
+migrator — so for a few seconds the cron binaries resolve to a build newer than the schema.
+Without the comparison they start and die mid-query on the first new column, which is a
+confusing way to learn that the migration has not run yet; an interrupted migrator or a
+hand-rolled deploy lands in the same state with no window at all. The deploy ordering is
+left alone deliberately: migrating first would run the *old* binary against the *new*
+schema for the duration, which is only safe while every migration stays additive.
+
+**The check is one-directional, and must stay that way.** A database carrying migrations
+this build does not know about is fine — that is exactly what a rollback to the previous
+artifact looks like, and refusing to start would turn a rollback into an outage. An empty
+migration file is not counted as missing either: it applies nothing, so it is never
+recorded, and that is `Migrator.Verify`'s complaint to make rather than a reason to keep a
+service down.
 
 Migration files live at `./migrations/*.sql`. Filename convention:
 `<YYYYMM>.<NNN>.<table>.<description>.sql` (e.g.

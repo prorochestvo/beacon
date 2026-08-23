@@ -7,6 +7,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
@@ -213,14 +214,18 @@ func TestMigrator_Run(t *testing.T) {
 func TestRequireMigratedSchema(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns nil when schema is migrated", func(t *testing.T) {
+	// newTestClient applies exactly this one file, so it is the set a migrated test
+	// database is expected to carry.
+	appliedFS := func() fstest.MapFS {
+		return fstest.MapFS{
+			"stub_init.sql": {Data: []byte("CREATE TABLE IF NOT EXISTS stub_init (id INTEGER PRIMARY KEY);")},
+		}
+	}
+
+	t.Run("returns nil when every migration is recorded", func(t *testing.T) {
 		t.Parallel()
-		// newTestClient applies a one-file stub migration, enough to satisfy
-		// the gate's COUNT(*) > 0 check on __schema_migrations without the full
-		// application schema.
 		c := newTestClient(t)
-		err := RequireMigratedSchema(t.Context(), c)
-		require.NoError(t, err)
+		require.NoError(t, RequireMigratedSchema(t.Context(), c, appliedFS()))
 	})
 
 	t.Run("returns error when schema is unmigrated", func(t *testing.T) {
@@ -233,9 +238,64 @@ func TestRequireMigratedSchema(t *testing.T) {
 		c, err := NewSQLiteClientEx(mem)
 		require.NoError(t, err)
 
-		err = RequireMigratedSchema(t.Context(), c)
+		err = RequireMigratedSchema(t.Context(), c, appliedFS())
 		require.Error(t, err)
 		require.ErrorContains(t, err, "schema not initialised")
+	})
+
+	t.Run("returns error when the build expects a migration the database lacks", func(t *testing.T) {
+		t.Parallel()
+		// The deploy window: the channel symlink already points at a build newer than the
+		// schema. Before the set was compared, a non-empty table was enough to start, and
+		// the binary died on the first query naming a new column instead.
+		c := newTestClient(t)
+		ahead := appliedFS()
+		ahead["stub_later.sql"] = &fstest.MapFile{Data: []byte("CREATE TABLE IF NOT EXISTS stub_later (id INTEGER PRIMARY KEY);")}
+
+		err := RequireMigratedSchema(t.Context(), c, ahead)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "schema is behind this build")
+		require.ErrorContains(t, err, "stub_later.sql")
+	})
+
+	t.Run("a database ahead of the build is accepted", func(t *testing.T) {
+		t.Parallel()
+		// What a rollback to the previous artifact looks like. Refusing here would turn a
+		// rollback into an outage, so the check is one-directional on purpose.
+		c := newTestClient(t)
+		require.NoError(t, RequireMigratedSchema(t.Context(), c, fstest.MapFS{}))
+	})
+
+	t.Run("an empty migration file is not treated as missing", func(t *testing.T) {
+		t.Parallel()
+		// It applies nothing and is therefore never recorded. That is a defect for
+		// Migrator.Verify to report, not a reason to keep a service down.
+		c := newTestClient(t)
+		withEmpty := appliedFS()
+		withEmpty["stub_empty.sql"] = &fstest.MapFile{Data: []byte("")}
+
+		require.NoError(t, RequireMigratedSchema(t.Context(), c, withEmpty))
+	})
+}
+
+func TestSummariseMigrations(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a short list is returned whole", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, []string{"a", "b"}, summarise([]string{"a", "b"}, 5))
+	})
+
+	t.Run("a long list keeps the limit and counts the tail", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, []string{"a", "b", "and 2 more"}, summarise([]string{"a", "b", "c", "d"}, 2))
+	})
+
+	t.Run("trimming does not scribble on the caller's slice", func(t *testing.T) {
+		t.Parallel()
+		items := []string{"a", "b", "c", "d"}
+		summarise(items, 2)
+		assert.Equal(t, []string{"a", "b", "c", "d"}, items)
 	})
 }
 
