@@ -260,6 +260,50 @@ func TestCompareWeatherOutlookSignatures(t *testing.T) {
 	})
 }
 
+func TestWeatherZeroState_Symbol(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		state WeatherZeroState
+		want  string
+	}{
+		{"above", WeatherZeroStateAbove, "\u25b2"},
+		{"crossing", WeatherZeroStateCrossing, "\u2195"},
+		{"below", WeatherZeroStateBelow, "\u25bc"},
+		// An em dash, not a question mark: the day carries a gap in the data, not a question
+		// put to the reader. The Telegram digest and the Mini App chip both render this.
+		{"unknown", WeatherZeroStateUnknown, "\u2014"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, c.state.Symbol())
+		})
+	}
+}
+
+func TestParseWeatherZeroState(t *testing.T) {
+	t.Parallel()
+
+	t.Run("every wire token round-trips through the enum", func(t *testing.T) {
+		t.Parallel()
+		for _, state := range []WeatherZeroState{
+			WeatherZeroStateAbove,
+			WeatherZeroStateCrossing,
+			WeatherZeroStateBelow,
+			WeatherZeroStateUnknown,
+		} {
+			assert.Equal(t, state, ParseWeatherZeroState(state.Label()), "token %q", state.Label())
+		}
+	})
+
+	t.Run("a token this build does not know is Unknown", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, WeatherZeroStateUnknown, ParseWeatherZeroState("sideways"))
+	})
+}
+
 func TestFormatWeatherForecastDate(t *testing.T) {
 	t.Parallel()
 
