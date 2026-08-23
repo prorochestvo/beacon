@@ -800,6 +800,20 @@ func TestServiceObtainMeCurrentForecast(t *testing.T) {
 		assert.Equal(t, 1, forecasts.calls)
 	})
 
+	t.Run("a location with no stored forecast keeps its place in the list", func(t *testing.T) {
+		t.Parallel()
+		// The observation read two lines above tolerates ErrNotFound and the forecast read
+		// did not, so a repository mirroring the observation contract would have cost every
+		// user with one un-collected city the whole weather screen.
+		cities := &stubCities{cities: []domain.WeatherUserCity{newCity("1234", "Almaty")}}
+		forecasts := &stubForecasts{err: internal.ErrNotFound}
+
+		got, err := NewService(cities, &stubObservations{}, forecasts).ObtainMeCurrent(t.Context(), "42")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Empty(t, got[0].Forecast)
+	})
+
 	t.Run("an unloadable timezone costs the city its outlook, not its reading", func(t *testing.T) {
 		t.Parallel()
 		broken := newCity("1234", "Almaty")

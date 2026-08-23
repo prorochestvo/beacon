@@ -134,10 +134,14 @@ func (s *Service) ObtainMeCurrent(ctx context.Context, userID string) ([]Current
 
 		var forecast []domain.WeatherForecastDay
 		if baseline != "" {
-			forecast, err = s.forecast.ObtainForecastDays(ctx, city.LocationID, domain.ProviderOpenMeteo, baseline, domain.WeatherOutlookHorizonDays)
-			if err != nil {
-				return nil, fmt.Errorf("forecast for %s: %w", city.LocationID, err)
+			days, fcErr := s.forecast.ObtainForecastDays(ctx, city.LocationID, domain.ProviderOpenMeteo, baseline, domain.WeatherOutlookHorizonDays)
+			if fcErr != nil && !errors.Is(fcErr, internal.ErrNotFound) {
+				return nil, fmt.Errorf("forecast for %s: %w", city.LocationID, fcErr)
 			}
+			// Absent is not a failure, the same way it is not one for the observation above:
+			// carry the city without its strip rather than failing every city's screen over
+			// one whose first long-range fetch has not landed.
+			forecast = days
 		}
 
 		current = append(current, CurrentCity{City: city, Observation: obs, Forecast: forecast})
