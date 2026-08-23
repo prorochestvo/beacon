@@ -172,7 +172,7 @@ load it before starting non-trivial work. Project delta:
   not); benchmarks (`-bench=.`, no `-race`) don't. **On the pi5 `make test` dies compiling
   `modernc.org/sqlite` under `-race`** — rerun as `go test -race -p 1`, the only route to a
   green gate on the one machine that runs it.
-- **Lenses:** standard three.
+- **Lenses:** standard set — see `pipeline:working-agreement`, which includes lens O.
 - **Branching:** branch `type/<issue>-<slug>` **off `alpha`** and open the PR against
   `alpha` — work integrates there and release tags are cut from it. `main` only ever moves to
   the latest **non-prerelease** tag, so it trails `alpha` by a whole alpha series. Never
