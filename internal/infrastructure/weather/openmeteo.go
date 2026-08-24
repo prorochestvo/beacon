@@ -665,7 +665,8 @@ func decodeOpenMeteoForecastRange(body []byte) ([]domain.WeatherForecastDay, err
 	// A non-empty daily[] that yields nothing storable is a failure, not an empty forecast.
 	// Returning it as a success would have the collector record the fetch, write no row, and
 	// leave captured_at where it was — so the daily gate stays open and the location is
-	// re-fetched on every tick from then on, under a log line reading fetched=1 failed=0.
+	// re-fetched on every tick from then on, behind a log line reading fetched=1 deferred=0
+	// failed=0.
 	if len(days) == 0 {
 		return nil, errors.Join(
 			errors.New("open-meteo forecast range: daily[] holds no storable day"),

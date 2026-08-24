@@ -198,7 +198,7 @@ func main() {
 	// PublicSourcesLoader (ObtainPublicChart).
 	chartSvc := appchart.NewService(subscriptionRepo, sourceRepo, rateValueRepo, rateValueRepo, sourceRepo, time.Now)
 	subSvc := appsub.NewService(subscriptionRepo, sourceRepo, rateValueRepo)
-	weatherSvc := appweather.NewService(weatherCityRepo, weatherObsRepo, weatherForecastRepo)
+	weatherSvc := appweather.NewService(weatherCityRepo, weatherObsRepo, weatherForecastRepo, time.Now)
 	profileSvc := appprofile.NewService(profileRepo)
 
 	// Open-Meteo geocoder for city search. cmd/web always uses a direct connection
