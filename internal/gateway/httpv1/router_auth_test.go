@@ -88,7 +88,7 @@ func newAuthTestRouter(t *testing.T) http.Handler {
 		"test",     // server version
 		time.Now(), // server start
 		WeatherGatewayDeps{
-			Service:  appweather.NewService(stubWeatherCityRepo{}, stubWeatherObsRepo{}, stubWeatherForecastRepo{}),
+			Service:  appweather.NewService(stubWeatherCityRepo{}, stubWeatherObsRepo{}, stubWeatherForecastRepo{}, time.Now),
 			Geocoder: stubGeocoder{},
 		},
 	)

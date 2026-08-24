@@ -72,12 +72,15 @@ type Service struct {
 	cities   CitiesStore
 	obs      ObservationsLoader
 	forecast ForecastLoader
+	now      func() time.Time
 }
 
 // NewService constructs a Service over the city-subscription, observation and
-// forecast stores. In production all three are repositories.
-func NewService(cities CitiesStore, obs ObservationsLoader, forecast ForecastLoader) *Service {
-	return &Service{cities: cities, obs: obs, forecast: forecast}
+// forecast stores. In production all three are repositories and now is time.Now;
+// it is injected so a test can pin the instant every city in one response is
+// measured against.
+func NewService(cities CitiesStore, obs ObservationsLoader, forecast ForecastLoader, now func() time.Time) *Service {
+	return &Service{cities: cities, obs: obs, forecast: forecast, now: now}
 }
 
 // ObtainMeCities returns every city subscription userID owns — one row per
@@ -102,9 +105,9 @@ func (s *Service) ObtainMeCurrent(ctx context.Context, userID string) ([]Current
 		return nil, err
 	}
 
-	// One clock for the whole response. Read per city instead, two cities either side of a
-	// midnight would be handed baselines a calendar day apart inside one answer.
-	now := time.Now().UTC()
+	// One clock reading for the whole response. Taken per city instead, two cities either
+	// side of a midnight would be handed baselines a calendar day apart inside one answer.
+	now := s.now().UTC()
 
 	seen := make(map[string]struct{}, len(cities))
 	current := make([]CurrentCity, 0, len(cities))
