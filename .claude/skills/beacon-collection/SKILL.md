@@ -166,7 +166,7 @@ separate from the current-conditions path.
   synchronisation would otherwise filter a good response down to nothing. A `daily[]` that
   yields no storable row is an **error**, never an empty success: reported as success it
   leaves `captured_at` unmoved, so the daily gate never closes and the location is re-fetched
-  every tick behind a log line reading `fetched=1 failed=0`. This is the path a later
+  every tick behind a log line reading `fetched=1 deferred=0 failed=0`. This is the path a later
   ensemble source swap would inherit.
 - **The gate is a UTC calendar day, not 24 elapsed hours.** Against an hourly cron, "at
   least 24 h since the last capture" drifts an hour later every day and eventually lands
