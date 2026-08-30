@@ -1,0 +1,138 @@
+// Package httpv1 wires the v1 HTTP handlers onto the provided ServeMux.
+package httpv1
+
+import (
+	"context"
+	"net/http"
+	"time"
+
+	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
+	appprofile "github.com/seilbekskindirov/beacon/internal/application/profile"
+	"github.com/seilbekskindirov/beacon/internal/application/service"
+	appsub "github.com/seilbekskindirov/beacon/internal/application/subscription"
+	appweather "github.com/seilbekskindirov/beacon/internal/application/weather"
+	"github.com/seilbekskindirov/beacon/internal/dto"
+	v1 "github.com/seilbekskindirov/beacon/internal/gateway/httpv1/handlers"
+	"github.com/seilbekskindirov/beacon/internal/gateway/httpv1/routes"
+	"github.com/seilbekskindirov/beacon/internal/gateway/middleware"
+)
+
+// meCredentialMaxAge is how old a signed initData payload may be. Twenty-four hours
+// matches the window Telegram itself treats a WebApp launch as current, and it is
+// the value the handlers enforced individually before the check moved to one place.
+const meCredentialMaxAge = 24 * time.Hour
+
+// WeatherGatewayDeps groups the weather-specific dependencies threaded into the
+// router so the constructor signature does not grow one positional parameter per
+// weather feature. Fields are added here as new weather endpoints need them.
+type WeatherGatewayDeps struct {
+	// Service backs every /api/v1/me/weather endpoint bar the city search.
+	Service *appweather.Service
+	// Geocoder is the geocoding provider for the city-search endpoint.
+	Geocoder weatherGeocoder
+}
+
+// healthCheckAgent is the contract for the dependency-health aggregator, threaded
+// through the router to the HealthCheck handler. Nil is allowed; the handler
+// returns 503 when no agent is wired.
+type healthCheckAgent interface {
+	CheckUp(ctx context.Context) (healthy bool, report map[string]string)
+}
+
+// weatherGeocoder threads the geocoding provider through the router layer.
+// The return type matches the handler's interface exactly ([]dto.WeatherCitySearchItem),
+// so the adapter lives in cmd/web and not in this package.
+type weatherGeocoder interface {
+	Geocode(ctx context.Context, name string, count int) ([]dto.WeatherCitySearchItem, error)
+}
+
+// NewRouter registers all v1 HTTP routes on mux and returns it.
+func NewRouter(
+	mux *http.ServeMux,
+	srvRateRestApi *service.RateRestApi,
+	botToken string,
+	subSvc *appsub.Service,
+	profileSvc *appprofile.Service,
+	chartSvc *appchart.Service,
+	healthAgent healthCheckAgent,
+	serverVersion string,
+	serverStart time.Time,
+	weather WeatherGatewayDeps,
+) (*http.ServeMux, error) {
+	h, err := v1.NewHandler(v1.Config{
+		RateService:     srvRateRestApi,
+		MeSubSvc:        subSvc,
+		MeProfileSvc:    profileSvc,
+		MeWeatherSvc:    weather.Service,
+		WeatherGeocoder: weather.Geocoder,
+		MeChartSvc:      chartSvc,
+		HealthAgent:     healthAgent,
+		ServerVersion:   serverVersion,
+		ServerStart:     serverStart,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Every authenticated route is registered on meMux, which is mounted once behind
+	// the initData middleware below. A route's authentication therefore follows from
+	// where it is registered rather than from remembering to check inside it — the
+	// omission this arrangement exists to make impossible.
+	meMux := http.NewServeMux()
+
+	// MeSubscriptionsRaw must be registered before MeSubscriptions so Go 1.22+
+	// ServeMux longest-path matching selects the more specific route.
+	meMux.HandleFunc("GET "+routes.MeSubscriptionsRaw, h.ListMeSubscriptionsRaw)
+	meMux.HandleFunc("GET "+routes.MeSubscriptions, h.ListMeSubscriptions)
+	meMux.HandleFunc("POST "+routes.MeSubscriptions, h.CreateMeSubscription)
+	meMux.HandleFunc("PATCH "+routes.MeSubscriptionByID, h.UpdateMeSubscription)
+	meMux.HandleFunc("DELETE "+routes.MeSubscriptionByID, h.DeleteMeSubscription)
+	meMux.HandleFunc("GET "+routes.MeRatesChart, h.GetMeRatesChart)
+	meMux.HandleFunc("GET "+routes.MeRatesHistory, h.GetMeRatesHistory)
+	meMux.HandleFunc("POST "+routes.MeProfile, h.UpsertMeProfile)
+
+	// MeWeatherCitiesSearch must be registered before MeWeatherCities so that
+	// Go 1.22+ ServeMux longest-path matching selects the correct handler.
+	meMux.HandleFunc("GET "+routes.MeWeatherCurrent, h.GetMeWeatherCurrent)
+	meMux.HandleFunc("GET "+routes.MeWeatherCitiesSearch, h.SearchWeatherCities)
+	meMux.HandleFunc("GET "+routes.MeWeatherCities, h.ListMeWeatherCities)
+	meMux.HandleFunc("POST "+routes.MeWeatherCities, h.CreateMeWeatherCity)
+	meMux.HandleFunc("DELETE "+routes.MeWeatherCityByID, h.DeleteMeWeatherCity)
+	meMux.HandleFunc("DELETE "+routes.MeWeatherLocationByID, h.DeleteMeWeatherLocation)
+
+	// The pattern carries no method, so method matching happens inside meMux and a
+	// wrong verb still answers 405 rather than 404.
+	mux.Handle(routes.MePrefix, middleware.TelegramInitData(middleware.TelegramInitDataConfig{
+		BotToken: botToken,
+		MaxAge:   meCredentialMaxAge,
+	})(meMux))
+
+	mux.HandleFunc("GET "+routes.PublicRatesChart, h.GetPublicRatesChart)
+
+	mux.HandleFunc("GET "+routes.Sources, h.ListSources)
+	mux.HandleFunc("PATCH "+routes.SourceToggleActive, h.ToggleSourceActive)
+
+	mux.HandleFunc("GET "+routes.SourceRates, h.ListRates)
+	mux.HandleFunc("GET "+routes.SourceHistory, h.ListHistory)
+	mux.HandleFunc("GET "+routes.SourceEventsFailed, h.ListSourceFailedEvents)
+	// SourceSubscriptionsList must come before SourceSubscriptions to avoid prefix clash.
+	mux.HandleFunc("GET "+routes.SourceSubscriptionsList, h.ListSourceSubscriptionDetails)
+	mux.HandleFunc("GET "+routes.SourceSubscriptions, h.ListSourceSubscriptions)
+	mux.HandleFunc("GET "+routes.SourceEventsDaily, h.ListSourceDailyEvents)
+
+	mux.HandleFunc("GET "+routes.Stats, h.ListStats)
+	mux.HandleFunc("GET "+routes.ErrorsExecution, h.ListExecutionErrors)
+	mux.HandleFunc("GET "+routes.EventsPending, h.ListPendingEvents)
+
+	// NotificationsFailed must be registered before Notifications so that
+	// ServeMux longest-prefix matching selects the correct handler.
+	mux.HandleFunc("GET "+routes.NotificationsFailed, h.ListFailedNotifications)
+	mux.HandleFunc("GET "+routes.Notifications, h.ListNotifications)
+
+	// /ping is the liveness probe; /healthz is kept as a backward-compatible alias.
+	mux.HandleFunc("GET "+routes.Ping, h.Ping)
+	mux.HandleFunc("GET "+routes.Healthz, h.Ping)
+	mux.HandleFunc("GET "+routes.HealthCheck, h.HealthCheck)
+
+	return mux, nil
+}

@@ -1,0 +1,17 @@
+[Unit]
+Description=Beacon schema migrator (one-shot)
+After=network.target
+
+[Service]
+# Run at deploy time via `systemctl start beacon-migrate` AFTER the channel flip,
+# so it executes the just-released migrator. Runs as root (same as the service)
+# so the deploy user never needs write on the database. Not enabled — triggered
+# on demand only, hence no [Install] section.
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/beacon
+EnvironmentFile=/opt/beacon/.env
+ExecStart=/opt/beacon/bin/release/migrator
+StandardOutput=journal
+StandardError=journal

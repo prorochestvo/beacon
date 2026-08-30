@@ -1,0 +1,358 @@
+package ui
+
+// This file renders the city weather subscription screen: a text input for
+// geocoding search, a list of matches to pick from, and the caller's saved
+// city list with per-row delete controls. All user-supplied and server-
+// returned text is HTML-escaped.
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/seilbekskindirov/beacon/cmd/wasm/application"
+	"github.com/seilbekskindirov/beacon/cmd/wasm/dom"
+	"github.com/seilbekskindirov/beacon/internal/dto"
+)
+
+// WeatherCityGroup holds all subscription rows for a single physical city,
+// grouped by location_id for display.
+type WeatherCityGroup struct {
+	LocationID  string
+	DisplayName string
+	Country     string
+	Admin1      string
+	Timezone    string
+	Rows        []dto.WeatherCityRow
+}
+
+// RenderMeWeatherCities returns the full HTML for the city weather subscription
+// screen. Auth-failure and load-error states short-circuit the content.
+//
+// Every user-influenced string — city names, country names, timezone labels —
+// is escaped through dom.Escape before interpolation to prevent XSS.
+func RenderMeWeatherCities(state application.WeatherCitiesState) string {
+	if state.AuthFailure {
+		return fmt.Sprintf(`<p class="error-msg">%s</p>`, authFailureMsg)
+	}
+
+	var b strings.Builder
+
+	b.WriteString(renderWeatherTopbar())
+
+	switch {
+	case state.Loading:
+		b.WriteString(`<p class="weather-loading">Loading…</p>`)
+	case state.LoadError != nil:
+		b.WriteString(`<p class="error-msg">`)
+		b.WriteString(dom.Escape(state.LoadError.Error()))
+		b.WriteString(`</p>`)
+	default:
+		b.WriteString(renderWeatherSearchSection(state))
+		b.WriteString(renderWeatherCityList(state))
+	}
+
+	return RenderSectionShell(SectionWeather, b.String())
+}
+
+// renderWeatherTopbar emits the screen header. The back button leaves settings for
+// the weather home tab — it changes the mode, never the section, which is the
+// section rail's job (see section_rail.go).
+func renderWeatherTopbar() string {
+	return `<div class="weather-topbar">` +
+		`<button class="weather-back" id="weather-back" type="button">← Back</button>` +
+		`<span class="weather-title">My cities</span>` +
+		`</div>`
+}
+
+// renderWeatherSearchSection emits the geocoding input, result list, and
+// save/clear affordances. The search input carries id="weather-search" so the
+// WASM event dispatcher can attach a debounced oninput handler.
+func renderWeatherSearchSection(state application.WeatherCitiesState) string {
+	var b strings.Builder
+	b.WriteString(`<section class="weather-search-section">`)
+	b.WriteString(`<h2 class="weather-section-title">Add a city</h2>`)
+
+	fmt.Fprintf(&b, `<input class="weather-search-input" id="weather-search" type="text" `+
+		`placeholder="Search city…" value="%s" autocomplete="off">`,
+		dom.Escape(state.SearchQuery))
+
+	switch {
+	case state.SearchLoading:
+		b.WriteString(`<p class="weather-search-loading">Searching…</p>`)
+	case state.SearchError != nil:
+		b.WriteString(`<p class="weather-search-error">`)
+		b.WriteString(dom.Escape(state.SearchError.Error()))
+		b.WriteString(`</p>`)
+	case len(state.SearchResults) > 0:
+		b.WriteString(renderWeatherSearchResults(state))
+	case strings.TrimSpace(state.SearchQuery) != "":
+		b.WriteString(`<p class="weather-search-empty">No cities found.</p>`)
+	}
+
+	if state.SaveError != nil {
+		b.WriteString(`<p class="weather-save-error">`)
+		b.WriteString(dom.Escape(state.SaveError.Error()))
+		b.WriteString(`</p>`)
+	}
+
+	b.WriteString(`</section>`)
+	return b.String()
+}
+
+// renderWeatherSearchResults emits the list of geocoding matches. Each item
+// carries data-index so the click handler can call SelectSearchResult(i); the
+// index always refers to the item's position in state.SearchResults, so rows
+// skipped by the label dedup below never shift the mapping. The selected item
+// gets an extra class for CSS highlight. A Save and a Clear button appear
+// below the list when a selection is active.
+func renderWeatherSearchResults(state application.WeatherCitiesState) string {
+	var b strings.Builder
+	b.WriteString(`<ul class="weather-search-results" id="weather-search-results">`)
+	// Open-Meteo geocoding can return distinct location_ids whose rendered
+	// labels are byte-identical (e.g. two villages of the same name in one
+	// province). Identical rows give the user nothing to choose between, so
+	// only the first occurrence of each label is shown.
+	seen := make(map[string]struct{}, len(state.SearchResults))
+	for i, item := range state.SearchResults {
+		cls := "weather-search-item"
+		if state.Selected != nil && state.Selected.LocationID == item.LocationID {
+			cls += " weather-search-item-selected"
+		}
+		label := item.DisplayName
+		if item.Admin1 != "" {
+			label += ", " + item.Admin1
+		}
+		if item.Country != "" {
+			label += ", " + item.Country
+		}
+		if _, dup := seen[label]; dup {
+			continue
+		}
+		seen[label] = struct{}{}
+		fmt.Fprintf(&b, `<li class="%s" data-index="%d" role="option" tabindex="0">%s</li>`,
+			cls, i, dom.Escape(label))
+	}
+	b.WriteString(`</ul>`)
+
+	if state.Selected != nil {
+		b.WriteString(`<div class="weather-search-actions">`)
+		b.WriteString(`<button class="weather-save-btn" id="weather-save-btn" type="button">Add city</button>`)
+		b.WriteString(`<button class="weather-clear-btn" id="weather-clear-btn" type="button">Clear</button>`)
+		b.WriteString(`</div>`)
+	}
+	return b.String()
+}
+
+// GroupWeatherCities groups a flat city list by location_id, preserving the
+// server's row order within each group. The result slice follows first-seen
+// order of location_id values.
+func GroupWeatherCities(cities []dto.WeatherCityRow) []WeatherCityGroup {
+	seen := make(map[string]int)
+	var groups []WeatherCityGroup
+	for _, c := range cities {
+		if i, ok := seen[c.LocationID]; ok {
+			groups[i].Rows = append(groups[i].Rows, c)
+		} else {
+			seen[c.LocationID] = len(groups)
+			groups = append(groups, WeatherCityGroup{
+				LocationID:  c.LocationID,
+				DisplayName: c.DisplayName,
+				Country:     c.Country,
+				Admin1:      c.Admin1,
+				Timezone:    c.Timezone,
+				Rows:        []dto.WeatherCityRow{c},
+			})
+		}
+	}
+	return groups
+}
+
+// renderWeatherCityList emits the caller's saved city subscription list grouped by
+// location_id, with per-kind delete controls and an "Add alert" form per city.
+func renderWeatherCityList(state application.WeatherCitiesState) string {
+	var b strings.Builder
+	b.WriteString(`<section class="weather-cities-section">`)
+	b.WriteString(`<h2 class="weather-section-title">Your cities</h2>`)
+
+	groups := GroupWeatherCities(state.Cities)
+
+	if len(groups) == 0 {
+		b.WriteString(`<p class="weather-cities-empty">No cities yet. Use the search above to add one.</p>`)
+	} else {
+		// Thaw and rain alerts are forced always-on for every tracked city (see
+		// CreateMeWeatherCity). Surface that once here instead of repeating an
+		// "always on" row under each city. The rain row itself is still listed per city,
+		// because its threshold is user-tunable and therefore worth showing.
+		b.WriteString(`<p class="weather-thaw-note">🫠 Thaw and 🌧️ rain alerts are always on for every city.</p>`)
+		b.WriteString(`<ul class="weather-cities-list" id="weather-cities-list">`)
+		for _, g := range groups {
+			b.WriteString(renderWeatherCityGroupItem(g, state))
+		}
+		b.WriteString(`</ul>`)
+	}
+
+	b.WriteString(`</section>`)
+	return b.String()
+}
+
+// renderWeatherCityGroupItem emits one grouped city entry: a city header row
+// followed by per-kind subscription rows and an alert form when open.
+func renderWeatherCityGroupItem(g WeatherCityGroup, state application.WeatherCitiesState) string {
+	label := g.DisplayName
+	if g.Admin1 != "" {
+		label += ", " + g.Admin1
+	}
+	if g.Country != "" {
+		label += ", " + g.Country
+	}
+
+	var b strings.Builder
+	b.WriteString(`<li class="weather-city-group">`)
+	b.WriteString(`<div class="weather-city-group-header">`)
+	fmt.Fprintf(&b, `<span class="weather-city-name">%s</span>`, dom.Escape(label))
+	fmt.Fprintf(&b,
+		`<button class="weather-city-remove" type="button" data-location-id="%s" aria-label="Remove city">Remove city</button>`,
+		dom.Escape(g.LocationID),
+	)
+	b.WriteString(`</div>`)
+	b.WriteString(`<ul class="weather-city-kinds">`)
+
+	for _, row := range g.Rows {
+		// alert_thaw is forced and system-managed: it is surfaced once globally in
+		// renderWeatherCityList, never as a per-city row.
+		if row.NotifyKind == "alert_thaw" {
+			continue
+		}
+		b.WriteString(renderWeatherKindRow(row))
+	}
+
+	b.WriteString(`</ul>`)
+
+	// Alert form: show either an "Add alert" button or the open form for this city.
+	// AlertFormLocationID must be non-empty to avoid matching cities with no LocationID.
+	if state.AlertFormLocationID != "" && state.AlertFormLocationID == g.LocationID {
+		b.WriteString(renderWeatherAlertForm(state))
+	} else {
+		fmt.Fprintf(&b,
+			`<button class="weather-add-alert-btn" type="button" data-location-id="%s">+ Add alert</button>`,
+			dom.Escape(g.LocationID),
+		)
+	}
+
+	b.WriteString(`</li>`)
+	return b.String()
+}
+
+// renderWeatherKindRow emits one deletable subscription kind row (morning_summary
+// or a user-added alert). alert_thaw is never passed here: it is forced,
+// system-managed, and surfaced once globally by renderWeatherCityList.
+func renderWeatherKindRow(row dto.WeatherCityRow) string {
+	label := alertKindLabel(row.NotifyKind, row.ConditionValue, row.NotifyHour)
+
+	// rain_alert is forced and system-managed: DELETE on a single rain row answers 409, so
+	// no delete control is rendered — a button whose only possible outcome is an error is
+	// not a control. The row itself stays visible because its threshold is user-tunable:
+	// re-adding a rain alert with a new value upserts condition_value in place.
+	if row.NotifyKind == "rain_alert" {
+		return fmt.Sprintf(
+			`<li class="weather-kind-row"><span class="weather-kind-label">%s</span></li>`,
+			dom.Escape(label),
+		)
+	}
+
+	return fmt.Sprintf(
+		`<li class="weather-kind-row">`+
+			`<span class="weather-kind-label">%s</span>`+
+			`<button class="weather-city-delete" type="button" data-id="%s" aria-label="Remove">✕</button>`+
+			`</li>`,
+		dom.Escape(label),
+		dom.Escape(row.ID),
+	)
+}
+
+// alertKindLabel returns a human-readable label for a subscription row.
+func alertKindLabel(kind, conditionValue string, notifyHour int) string {
+	switch kind {
+	case "alert_heat":
+		return fmt.Sprintf("Heat alert ≥ %s°C", conditionValue)
+	case "alert_frost":
+		return fmt.Sprintf("Frost alert ≤ %s°C", conditionValue)
+	case "alert_thunderstorm":
+		return "Thunderstorm alert"
+	case "alert_thaw":
+		return "Thaw alert"
+	case "rain_alert":
+		return fmt.Sprintf("Rain alert ≥ %s%% within 6h", conditionValue)
+	case "forecast_outlook":
+		return fmt.Sprintf("Outlook digest · %02d:00", notifyHour)
+	default: // morning_summary or empty
+		return fmt.Sprintf("Morning summary · %02d:00", notifyHour)
+	}
+}
+
+// renderWeatherAlertForm emits the open alert-creation form for the current city.
+func renderWeatherAlertForm(state application.WeatherCitiesState) string {
+	var b strings.Builder
+	b.WriteString(`<div class="weather-alert-form" id="weather-alert-form">`)
+
+	// Kind selector.
+	b.WriteString(`<select class="weather-alert-kind" id="weather-alert-kind">`)
+	// alert_thaw is intentionally absent: it is forced onto every tracked city
+	// automatically (see CreateMeWeatherCity) and cannot be added manually.
+	// morning_summary IS listed so a user who deleted the auto-created daily
+	// summary can re-add it (and pick its hour); re-adding upserts the hour
+	// without resetting the fire cursor (see RetainWeatherUserCity).
+	// rain_alert is forced too, but IS listed: re-adding it with a different percentage is
+	// how its threshold is retuned. alert_latched is insert-only in the upsert, so changing
+	// the threshold never resets the latch into a spurious notification.
+	kinds := []struct{ value, label string }{
+		{"morning_summary", "Morning summary (daily)"},
+		{"alert_heat", "Heat alert (°C)"},
+		{"alert_frost", "Frost alert (°C)"},
+		{"alert_thunderstorm", "Thunderstorm alert"},
+		{"rain_alert", "Rain alert (%)"},
+		{"forecast_outlook", "Outlook digest (daily)"},
+	}
+	for _, k := range kinds {
+		selected := ""
+		if state.AlertFormKind == k.value {
+			selected = ` selected`
+		}
+		fmt.Fprintf(&b, `<option value="%s"%s>%s</option>`, dom.Escape(k.value), selected, dom.Escape(k.label))
+	}
+	b.WriteString(`</select>`)
+
+	// Numeric input; its meaning depends on the selected kind:
+	//   - morning_summary and forecast_outlook: a local hour 0–23 (blank → server
+	//     default 07:00), since both are timed rather than thresholded;
+	//   - heat/frost/rain: the numeric threshold;
+	//   - thunderstorm/thaw: no numeric input at all.
+	switch state.AlertFormKind {
+	case "alert_thunderstorm", "alert_thaw":
+		// No numeric input.
+	case "morning_summary", "forecast_outlook":
+		fmt.Fprintf(&b,
+			`<input class="weather-alert-value" id="weather-alert-value" type="number" min="0" max="23" step="1" `+
+				`placeholder="hour 0–23 (default 7)" value="%s">`,
+			dom.Escape(state.AlertFormValue),
+		)
+	default:
+		fmt.Fprintf(&b,
+			`<input class="weather-alert-value" id="weather-alert-value" type="number" step="0.1" `+
+				`placeholder="threshold" value="%s">`,
+			dom.Escape(state.AlertFormValue),
+		)
+	}
+
+	// Error message.
+	if state.AlertSaveError != nil {
+		fmt.Fprintf(&b, `<p class="weather-alert-error">%s</p>`, dom.Escape(state.AlertSaveError.Error()))
+	}
+
+	b.WriteString(`<div class="weather-alert-actions">`)
+	b.WriteString(`<button class="weather-alert-save" id="weather-alert-save" type="button">Save</button>`)
+	b.WriteString(`<button class="weather-alert-cancel" id="weather-alert-cancel" type="button">Cancel</button>`)
+	b.WriteString(`</div>`)
+	b.WriteString(`</div>`)
+	return b.String()
+}

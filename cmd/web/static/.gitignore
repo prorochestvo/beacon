@@ -1,0 +1,3 @@
+app.wasm
+app.wasm.gz
+wasm_exec.js

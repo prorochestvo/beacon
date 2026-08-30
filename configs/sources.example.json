@@ -1,0 +1,17 @@
+{
+  "rates_vs_kzt": [
+    {
+      "name": "Halyk Bank",
+      "url": "https://halykbank.kz/exchange-rates",
+      "rules": [
+        {
+          "method": "regex",
+          "pattern": "USD[^0-9]*([0-9]+[.,][0-9]+)",
+          "base_currency": "USD",
+          "quote_currency": "KZT"
+        }
+      ],
+      "interval": "10m"
+    }
+  ]
+}

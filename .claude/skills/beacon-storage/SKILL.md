@@ -1,0 +1,238 @@
+---
+name: beacon-storage
+description: Beacon's SQLite storage rules — connection PRAGMAs, the BEGIN IMMEDIATE write / deferred read split, the repository pattern, hot/archive tiering of rate_values and execution_history, source-deletion cascades, the migrator contract and immutable migration filenames, columns that look droppable but are not, historical migration tests, and reading production data from snapshots. Load before writing or reviewing any query in internal/repository or internal/infrastructure/sqlitedb, adding or altering a migration under ./migrations, or touching collection.MaintenanceAgent, sqlitedb.Migrator or RequireMigratedSchema, NewSQLiteClientEx, Transaction/ReadOnlyTransaction, a DSN _pragma= or _txlock setting, RetainRateSource or RemoveRateSource, rate_source_health, weather_forecast_days, or stubSQLiteDBThrough.
+---
+
+# Beacon storage
+
+Read this before any repository query, any migration, or any attempt to look at
+production data.
+
+## Connection PRAGMAs and the write-lock split
+
+Three PRAGMAs are applied on connection open. `foreign_keys=ON` and `busy_timeout=5000` are
+passed as `?_pragma=` query parameters on the DSN (see `connectionOptions` in `config.go`);
+the `modernc.org/sqlite` driver re-applies them in its `Open` hook on every new connection
+the `database/sql` pool opens, which is the only way to keep per-connection settings
+consistent across `SetMaxOpenConns(N>1)`. `journal_mode=WAL` is different — it is persisted
+in the database file header and set once via `db.Exec` inside `NewSQLiteClientEx`.
+
+`busy_timeout` (5 s) is the driver-level retry window for lock contention. It must stay
+strictly less than the Go-level `Timeout`, so the context deadline always fires *after* the
+driver retry has expired rather than cutting it short.
+
+**Writes open `BEGIN IMMEDIATE`; reads stay deferred.** The DSN also carries
+`_txlock=immediate`, and the driver applies that begin mode only when
+`sql.TxOptions.ReadOnly` is false — so `Transaction` takes the WAL write lock at `BEGIN`,
+while `ReadOnlyTransaction` keeps a plain deferred `BEGIN` and still runs concurrently with
+a writer.
+
+That split is what makes `busy_timeout` reachable at all. A deferred transaction begins as a
+reader and *promotes* at its first write, and SQLite refuses to invoke the busy handler on a
+promotion — two connections both waiting to promote would deadlock — so it returns
+`SQLITE_BUSY` on the spot. Collector/notifier/web contention therefore lost writes in
+milliseconds while a 5 s retry window sat unused: 12 rate values and 5 `execution_history`
+rows in one production log. Taking the lock at `BEGIN` is not a promotion, so the wait is
+real.
+
+Consequences for new code:
+
+- **`Transaction` is for paths that write.** Reads go through `ReadOnlyTransaction` or they
+  serialise against each other for nothing. `SQLiteClient.Rollback` — and `Ping`, and
+  through it the `/health/check` inspector — is read-only for that reason: a readiness probe
+  queued behind a collector tick would report a busy database as a dead one.
+- **Two write transactions cannot be open at once** in one process; the second `BEGIN` waits
+  for the first. Open, write and commit inside one function, as every repository method
+  does.
+
+**The repository pattern.** Each repository type owns its own SQL, migration, and query
+helper functions, and runs them inside explicit transactions — `r.db.Transaction(ctx)` to
+write, `r.db.ReadOnlyTransaction(ctx)` to read. Repositories are passed as interfaces into
+the service and handler layers.
+
+### Deleting a source cascades into its history
+
+Foreign keys point from `rate_values`, `rate_user_subscriptions` and `rate_user_events` to
+`rate_sources(name)` with `ON DELETE CASCADE`, so deleting a source destroys every dependent
+row. Read the warning on `RemoveRateSource` before wiring it to any endpoint. The archive
+tier is deliberately exempt — see `rate_values_archive` under the tiering rules below.
+
+## Hot / archive tiering
+
+The two append-only telemetry tables are each split into a bounded **hot** working set and
+an **`*_archive`** twin of identical schema — `rate_values`/`rate_values_archive`,
+`execution_history`/`execution_history_archive` — **in the same database file**.
+
+The same file is the load-bearing choice. SQLite gives no atomicity to a transaction
+spanning attached databases under `journal_mode=WAL`, so tiers in separate files could only
+be reconciled by copy-and-verify, leaving the archive a permanent superset and every read
+responsible for deciding which tier owns a window. In one file the roll-over is
+`INSERT...SELECT` + `DELETE` inside a single transaction: a row is in exactly one tier at
+every observable instant, and reads just union the two. Separate files were tried and
+abandoned (PRs #10/#11/#12, closed unmerged).
+
+- **Reads span both tiers, unconditionally.** `rateValueSqlSelect` /
+  `executionHistorySqlSelect` read a `UNION ALL` of hot and archive rather than picking a
+  tier by how far back the caller asked, so results match the untiered behaviour wherever
+  the boundary sits and however far the roll-over has fallen behind — there is no horizon
+  for a read to disagree with. SQLite pushes the `WHERE` into both branches, so each rides
+  its own compound index (pinned by `TestTieredReadsUseIndexesOnBothBranches` via `EXPLAIN
+  QUERY PLAN`). The union gives up index-ordered output, which is why every ordered read
+  carries an `id` tie-break and is bounded by a window, a limit or a page.
+- **Writes are hot-only**, and their INSERT-vs-UPDATE existence checks use
+  `rateValueCountHot` / `executionHistoryCountHot`. Counting the union there would send an
+  id that lives solely in the archive down the UPDATE path, which matches nothing.
+- **`rate_values_archive` carries no foreign key** to `rate_sources`. History outlives the
+  sources that produced it; `ON DELETE CASCADE` would erase it when a dead source is
+  removed. The hot row still cascades — that is the point.
+- **`collection.MaintenanceAgent`** (collector tick, after collection) runs three ordered
+  steps: roll over rows older than `DefaultHotWindow` (180 days), apply
+  `DefaultArchiveRetention` (**0 — keep forever**, the configured value), then
+  `MaybeVacuum` on `DefaultVacuumInterval` (7 days).
+- **VACUUM is not optional.** Deleting rows frees pages *inside* the file; SQLite never
+  returns them to the OS on its own, so without VACUUM the roll-over shows up as exactly
+  zero change in `df`. Cadence-gated through `service_meta.last_vacuum_at` because it
+  rebuilds the database into a temporary copy, needing transient free space on the order of
+  the file's own size. The stamp is written **only after a successful run** — stamping
+  first would turn a transient `SQLITE_BUSY` into a skipped week.
+- Retention is a **compile-time constant, not an env var**: it is the only setting in the
+  project that can destroy history, and a value that changes only through a reviewed commit
+  is harder to get wrong than one that changes through a typo in an env file.
+
+The roll-over has never fired in production — the oldest data is younger than the 180-day
+window. Watch for `maintenance: archived N row(s)` with a non-zero N.
+
+## Migrations
+
+`cmd/migrator` is the **only** thing that mutates schema. It embeds
+`migrations.MigrationsFS` at build time, opens the DB via `BEACON_SQLITEDB_DSN`, and calls
+`sqlitedb.Migrator.Run(ctx)`. Idempotent: applied filenames are tracked in
+`__schema_migrations`.
+
+After applying, the migrator calls `Migrator.Verify(ctx)` and exits non-zero when the
+ledger does not account for every embedded migration, or when any migration file is empty
+(`Run` skips empty content silently, so a truncated `.sql` would otherwise be a permanent
+invisible no-op). The `beacon-migrate` unit is `Type=oneshot` with `RemainAfterExit=no`, so
+`systemctl start` propagates that exit code and the release job fails — schema drift
+surfaces at deploy time rather than at the first query against a missing column.
+
+Service binaries (`cmd/web`, `cmd/collector`, `cmd/notifier`, and `cmd/doctor rulegen`) DO
+NOT migrate on startup. They call
+`sqlitedb.RequireMigratedSchema(ctx, db, migrations.MigrationsFS)` immediately after opening
+the DB, and a schema that does not account for every migration the build embeds is fatal:
+
+```
+log.Fatalf("schema not initialised: run cmd/migrator before starting the service")
+log.Fatalf("schema is behind this build: ... 1 migration(s) not recorded in __schema_migrations: ...")
+```
+
+**It compares the whole set, not the row count.** Non-empty is true of every partially
+migrated database, and the release flips the `bin/release` symlink *before* it runs the
+migrator — so for a few seconds the cron binaries resolve to a build newer than the schema.
+Without the comparison they start and die mid-query on the first new column, which is a
+confusing way to learn that the migration has not run yet; an interrupted migrator or a
+hand-rolled deploy lands in the same state with no window at all. The deploy ordering is
+left alone deliberately: migrating first would run the *old* binary against the *new*
+schema for the duration, which is only safe while every migration stays additive.
+
+**The check is one-directional, and must stay that way.** A database carrying migrations
+this build does not know about is fine — that is exactly what a rollback to the previous
+artifact looks like, and refusing to start would turn a rollback into an outage. An empty
+migration file is not counted as missing either: it applies nothing, so it is never
+recorded, and that is `Migrator.Verify`'s complaint to make rather than a reason to keep a
+service down.
+
+Schema reconciliation is therefore **deploy-time, not startup-time**: `configs/beacon.service`
+deliberately carries no `ExecStartPre` migrator, and the `beacon-migrate` one-shot unit runs
+as root after the release symlink flips, so the CI deploy user never writes the database.
+
+Migration files live at `./migrations/*.sql`. Filename convention:
+`<YYYYMM>.<NNN>.<table>.<description>.sql` (e.g.
+`202605.001.rate_sources.table_initiate.sql`). The `<NNN>` segment is a **global**
+zero-padded counter across all tables — files are applied in lexicographic order, which the
+naming makes the execution order. Once applied to any production database the filename is
+**immutable**: renaming triggers a duplicate apply.
+
+The sibling Go file `./migrations/embed.go` (`package migrations`) exposes those files as
+`var MigrationsFS embed.FS` so they can be consumed without disk I/O at runtime.
+
+Repository files in `internal/repository/` reference table and column names exclusively
+through `const` declarations (e.g. `rateSourceTableName`, `rateSourceNameFieldName`) so a
+schema rename surfaces at compile time and via `grep`, never via a runtime "no such column"
+error.
+
+### `weather_forecast_days` is bounded, not tiered
+
+The long-range forecast table is a **bounded working set**, `locations × 16` rows, upserted
+in place on the natural key `(location_id, provider, forecast_date)`. The tiering rule above
+governs append-only telemetry and does not apply here: there is nothing an `*_archive` twin
+could hold, no roll-over, and no reason for a read to union two branches. Do not "fix" that.
+
+Three things about it that are decisions rather than omissions:
+
+- **A whole fetch is one transaction.** `RetainWeatherForecastDays` writes all sixteen rows
+  under one `BEGIN`: a day's forecast is a single observation of the future, and the write
+  lock is taken at `BEGIN` (`_txlock=immediate`), so sixteen transactions would take and
+  release it sixteen times per location against three processes sharing the file.
+- **Retention is keyed on `forecast_date`, never on `captured_at`.** Rows are superseded
+  while the day is still ahead and dropped once it is behind. A `captured_at` sweep — which
+  is what `weather_observations` uses — would delete a still-future day the moment its
+  location stopped being refreshed.
+- **No foreign key to `weather_user_cities`.** A location whose last subscriber leaves stops
+  being refreshed and ages out within the horizon; cascading would tie the lifetime of
+  public meteorological data to one user's subscription row.
+
+### Historical migration tests must not go through a repository
+
+`weatherusercity_backfill_test.go` and `weatherusercity_backfillrain_test.go` exercise
+migrations 021 and 026 against a snapshot of the schema **as it was when those migrations
+were written** (`stubSQLiteDBThrough`), because both reference columns that later migrations
+drop. Seeding or reading such a snapshot through `WeatherUserCityRepository` fails on every
+column added afterwards: its SQL always names the current schema. Use
+`seedHistoricalWeatherUserCity` / `obtainHistoricalWeatherUserCities` in `main_test.go`,
+whose column list (`weatherUserCityEraColumns`) is frozen to that era on purpose.
+
+### Two columns a migration must not "clean up"
+
+- **`weather_observations.provider`** now only ever holds `'open-meteo'`, so it reads as
+  dead weight. It is not: it partitions two composite indexes. It was retained rather than
+  dropped precisely to avoid rebuilding the largest weather table for zero functional gain,
+  and dropping it degrades those indexes silently.
+- **`rate_sources` holds configuration, never runtime state.** `RetainRateSource` rewrites
+  those rows wholesale — `cmd/doctor rulegen` does exactly that — so any runtime column
+  added there is destroyed by an unrelated config write. That is why the source-health latch
+  lives in its own `rate_source_health` table, and why the next piece of per-source runtime
+  state needs its own table too.
+
+Deploy flow:
+
+```
+make build         # builds all binaries including ./build/migrator
+make migrate       # applies any pending .sql files (no-op if up to date)
+make run           # starts collector, notifier, web
+```
+
+## Reading production data
+
+The live DB is root-owned `0600`; the daily gzipped snapshots in `/opt/beacon/backups/` are
+world-readable, so inspection goes through those. `sqlite3 -readonly <snapshot>` **fails**
+with `attempt to write a readonly database (8)` — `journal_mode=WAL` lives in the file
+header, so SQLite wants `-shm`/`-wal` sidecars the backup directory does not allow. Use a
+URI with `immutable=1`, which skips WAL setup:
+
+```
+sqlite3 "file:/opt/beacon/backups/beacon.<YYYYMMDD>.sqlite?immutable=1" "<query>"
+```
+
+`make db-inspect` does the whole dance (stream, decompress, open locally, so the host needs
+neither `sqlite3` nor scratch space); `ARGS="<sql>"` runs one query instead of opening a
+shell. `make backups` pulls the same snapshot plus the logs into `./backups/`, which is the
+off-host restore point. Both print the snapshot's age, because snapshots are cut at 00:00
+UTC: one older than the last deploy cannot confirm that deploy's migrations.
+
+**Cutting a snapshot on demand needs root on the host**, so it cannot be driven from a
+workstation and has deliberately no Make target: the live DB and `sqlite_dump.sh` are `0600
+root:root`, and the SSH account (`pi5_aide`) has no passwordless sudo. Run
+`/opt/beacon/backups/sqlite_dump.sh` as root, then `make backups` locally. The narrow
+`NOPASSWD` sudoers line that would automate it is documented in `deploy/README.md` and is
+not installed on purpose.

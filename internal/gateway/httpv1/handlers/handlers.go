@@ -1,0 +1,1405 @@
+// Package handlers contains the HTTP handler implementations for the v1 API.
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/prorochestvo/loginjector"
+	"github.com/seilbekskindirov/beacon/internal"
+	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
+	appprofile "github.com/seilbekskindirov/beacon/internal/application/profile"
+	appsub "github.com/seilbekskindirov/beacon/internal/application/subscription"
+	"github.com/seilbekskindirov/beacon/internal/domain"
+	"github.com/seilbekskindirov/beacon/internal/dto"
+	"github.com/seilbekskindirov/beacon/internal/gateway/middleware"
+)
+
+// Config carries every dependency a Handler needs.
+//
+// Named fields rather than a positional parameter list: several of these are
+// interfaces of similar shape sitting next to two strings, so a transposed pair
+// compiles cleanly and misbehaves only in production.
+//
+// Everything is required except MeChartSvc, HealthAgent and Logger. The weather
+// pair is required for a specific reason: it used to be attached after
+// construction by two setters, and every weather handler opened with a nil check
+// answering 503 — a per-request runtime failure standing in for a wiring mistake
+// that startup should refuse outright.
+type Config struct {
+	// RateService backs every public and admin rate endpoint.
+	RateService rateService
+	// MeSubSvc backs the whole /api/v1/me/subscriptions family.
+	MeSubSvc meSubscriptionService
+	// MeProfileSvc backs the /api/v1/me/profile endpoint.
+	MeProfileSvc meProfileService
+
+	// MeWeatherSvc backs /api/v1/me/weather; WeatherGeocoder backs the city
+	// search endpoint beside it.
+	MeWeatherSvc    meWeatherService
+	WeatherGeocoder weatherGeocoder
+
+	// MeChartSvc drives GetMeRatesChart and GetPublicRatesChart. Optional: those
+	// endpoints answer 503 when it is absent, which is how a deployment without
+	// charting is meant to behave.
+	MeChartSvc meChartService
+	// HealthAgent drives GET /health/check, on the same optional terms.
+	HealthAgent healthCheckAgent
+
+	// ServerVersion and ServerStart populate the "server" block of the health
+	// response.
+	ServerVersion string
+	ServerStart   time.Time
+
+	// Logger receives the detail behind a 500 (see internalError). Defaults to
+	// log.Default() when nil.
+	Logger *log.Logger
+}
+
+// Handler groups all v1 HTTP handlers and their repository dependencies.
+type Handler struct {
+	rateService
+	meSubSvc      meSubscriptionService
+	meProfileSvc  meProfileService
+	meChartSvc    meChartService
+	healthAgent   healthCheckAgent
+	serverVersion string
+	serverStart   time.Time
+
+	// Weather endpoints. NewHandler rejects a Config leaving either of these nil,
+	// so the handlers below may use them without a wiring check.
+	meWeatherSvc    meWeatherService
+	weatherGeocoder weatherGeocoder
+
+	// logger receives the detail behind a 500 (see internalError). Ordinary
+	// wiring from Config.Logger, defaulted to log.Default() by NewHandler.
+	logger *log.Logger
+}
+
+// NewHandler constructs a Handler from cfg, or reports every required
+// dependency cfg left nil. The Handler it returns is finished: nothing has to
+// be attached to it afterwards before it can serve.
+func NewHandler(cfg Config) (*Handler, error) {
+	required := []struct {
+		name    string
+		present bool
+	}{
+		{"RateService", cfg.RateService != nil},
+		{"MeSubSvc", cfg.MeSubSvc != nil},
+		{"MeProfileSvc", cfg.MeProfileSvc != nil},
+		{"MeWeatherSvc", cfg.MeWeatherSvc != nil},
+		{"WeatherGeocoder", cfg.WeatherGeocoder != nil},
+	}
+	// Report every absentee at once: a composition root that forgot one
+	// dependency has usually forgotten its neighbours too.
+	var missing []string
+	for _, dep := range required {
+		if !dep.present {
+			missing = append(missing, dep.name)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("handlers: config is missing %s", strings.Join(missing, ", "))
+	}
+
+	logger := cfg.Logger
+	if logger == nil {
+		logger = log.Default()
+	}
+
+	return &Handler{
+		rateService:     cfg.RateService,
+		meSubSvc:        cfg.MeSubSvc,
+		meProfileSvc:    cfg.MeProfileSvc,
+		meChartSvc:      cfg.MeChartSvc,
+		healthAgent:     cfg.HealthAgent,
+		serverVersion:   cfg.ServerVersion,
+		serverStart:     cfg.ServerStart,
+		meWeatherSvc:    cfg.MeWeatherSvc,
+		weatherGeocoder: cfg.WeatherGeocoder,
+		logger:          logger,
+	}, nil
+}
+
+// Ping is the liveness probe: it always returns 200 and touches no dependency.
+// Registered at both GET /ping and GET /healthz (backward-compatibility alias).
+//
+// GET /ping
+// GET /healthz.
+func (h *Handler) Ping(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+// HealthCheck is the readiness probe. It runs all registered dependency inspectors
+// under a bounded timeout and returns a per-component JSON report. 200 when all
+// dependencies are healthy; 503 when any are down (the body still lists every
+// component so operators can see which one failed). No auth; for deploy gates and
+// uptime monitors.
+//
+// GET /health/check.
+func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	if h.healthAgent == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":false,"server":{},"services":{}}`))
+		return
+	}
+
+	healthy, report := h.healthAgent.CheckUp(r.Context())
+
+	var uptime string
+	if !h.serverStart.IsZero() {
+		uptime = time.Since(h.serverStart).Truncate(time.Second).String()
+	}
+
+	body := dto.HealthCheckResponse{
+		Status: healthy,
+		Server: dto.HealthServer{
+			Version: h.serverVersion,
+			Uptime:  uptime,
+		},
+		Services: report,
+	}
+
+	status := http.StatusOK
+	if !healthy {
+		status = http.StatusServiceUnavailable
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		h.logger.Print(errors.Join(
+			fmt.Errorf("encode health check response: %w", err),
+			loginjector.NewTraceError(),
+		))
+	}
+}
+
+// ListSources returns every configured rate source decorated with its latest execution status.
+//
+// GET /api/v1/sources.
+func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
+	sources, err := h.ObtainAllRateSources(r.Context())
+	if err != nil {
+		h.internalError(w, err)
+		return
+	}
+
+	// Bulk-load the latest execution_history row per source so the response
+	// loop is O(1) per source instead of one DB transaction each (the previous
+	// N+1 pattern). A bulk failure is logged but the loop still emits source
+	// rows without execution fields populated.
+	names := make([]string, 0, len(sources))
+	for _, s := range sources {
+		names = append(names, s.Name)
+	}
+	latest, latestErr := h.ObtainLatestExecutionHistoryBySources(r.Context(), names)
+	if latestErr != nil {
+		log.Print(errors.Join(
+			fmt.Errorf("bulk latest execution: %w", latestErr),
+			loginjector.NewTraceError(),
+		))
+		latest = map[string]domain.ExecutionHistory{}
+	}
+
+	resp := make([]dto.SourceResponse, 0, len(sources))
+	for _, s := range sources {
+		item := dto.SourceResponse{
+			Name:          s.Name,
+			Title:         s.Title,
+			BaseCurrency:  s.BaseCurrency,
+			QuoteCurrency: s.QuoteCurrency,
+			Interval:      s.Interval,
+			Active:        s.Active,
+		}
+		if rec, ok := latest[s.Name]; ok {
+			item.LastSuccess = rec.Success
+			item.LastError = rec.Error
+			item.LastRunAt = rec.Timestamp.Format(time.RFC3339)
+		}
+		resp = append(resp, item)
+	}
+	writeJSON(w, resp)
+}
+
+// ListRates returns the most recent rate values for a named source.
+// Optional query param ?limit=N (1–1000, default 100).
+//
+// GET /api/v1/sources/{name}/rates.
+func (h *Handler) ListRates(w http.ResponseWriter, r *http.Request) {
+	name, err := extractName(r)
+	if err != nil {
+		http.Error(w, `{"error":"missing source name"}`, http.StatusBadRequest)
+		return
+	}
+	limit, err := extractLimit(r.URL)
+	if err != nil {
+		http.Error(w, `{"error":"limit must be a number"}`, http.StatusBadRequest)
+		return
+	}
+
+	rates, err := h.ObtainLastNRateValuesBySourceName(r.Context(), name, limit)
+	if err != nil {
+		h.internalError(w, err)
+		return
+	}
+
+	resp := make([]dto.RateResponse, 0, len(rates))
+	for _, rv := range rates {
+		resp = append(resp, dto.RateResponse{
+			ID:            rv.ID,
+			Price:         rv.Price,
+			BaseCurrency:  rv.BaseCurrency,
+			QuoteCurrency: rv.QuoteCurrency,
+			Timestamp:     rv.Timestamp.Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, resp)
+}
+
+// ListHistory returns the 50 most recent execution history records for a named source.
+//
+// GET /api/v1/sources/{name}/history.
+func (h *Handler) ListHistory(w http.ResponseWriter, r *http.Request) {
+	limit, err := extractLimit(r.URL)
+	if err != nil {
+		http.Error(w, `{"error":"limit must be a number"}`, http.StatusBadRequest)
+		return
+	}
+	name, err := extractName(r)
+	if err != nil {
+		http.Error(w, `{"error":"missing source name"}`, http.StatusBadRequest)
+		return
+	}
+	recs, err := h.ObtainLastNExecutionHistoryBySourceName(r.Context(), name, limit)
+	if err != nil {
+		h.internalError(w, err)
+		return
+	}
+
+	resp := make([]dto.HistoryResponse, 0, len(recs))
+	for _, rec := range recs {
+		resp = append(resp, dto.HistoryResponse{
+			ID:         rec.ID,
+			SourceName: rec.SourceName,
+			Success:    rec.Success,
+			Error:      rec.Error,
+			Timestamp:  rec.Timestamp.Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, resp)
+}
+
+// ListNotifications returns the last N notification pool records.
+// Optional query param ?limit=N (1–100, default 10).
+//
+// GET /api/v1/notifications.
+func (h *Handler) ListNotifications(w http.ResponseWriter, r *http.Request) {
+	limit, err := extractLimit(r.URL)
+	if err != nil {
+		http.Error(w, `{"error":"limit must be a number"}`, http.StatusBadRequest)
+		return
+	}
+
+	records, err := h.ObtainListOfLastRateUserEvent(r.Context(), limit)
+	if err != nil {
+		h.internalError(w, err)
+		return
+	}
+
+	resp := make([]dto.NotificationResponse, 0, len(records))
+	for _, rec := range records {
+		resp = append(resp, dto.NotificationResponse{
+			ID:        rec.ID,
+			UserType:  string(rec.UserType),
+			UserID:    rec.UserID,
+			Status:    string(rec.Status),
+			LastError: rec.LastError,
+			CreatedAt: rec.CreatedAt,
+			SentAt:    rec.SentAt,
+		})
+	}
+	writeJSON(w, resp)
+}
+
+// ListFailedNotifications returns all failed notification pool records.
+//
+// GET /api/v1/notifications/failed.
+func (h *Handler) ListFailedNotifications(w http.ResponseWriter, r *http.Request) {
+	limit, err := extractLimit(r.URL)
+	if err != nil {
+		http.Error(w, `{"error":"limit must be a number"}`, http.StatusBadRequest)
+		return
+	}
+	offset, err := extractOffset(r)
+	if err != nil {
+		http.Error(w, `{"error":"offset must be a number"}`, http.StatusBadRequest)
+		return
+	}
+
+	records, err := h.ObtainFailedListOfRateUserEvent(r.Context(), offset, limit)
+	if err != nil {
+		h.internalError(w, err)
+		return
+	}
+
+	resp := make([]dto.NotificationResponse, 0, len(records))
+	for _, rec := range records {
+		resp = append(resp, dto.NotificationResponse{
+			ID:        rec.ID,
+			UserType:  string(rec.UserType),
+			UserID:    rec.UserID,
+			Status:    string(rec.Status),
+			LastError: rec.LastError,
+			CreatedAt: rec.CreatedAt,
+			SentAt:    rec.SentAt,
+		})
+	}
+	writeJSON(w, resp)
+}
+
+// ListPendingEvents returns all currently pending notification events.
+//
+// GET /api/v1/events/pending.
+func (h *Handler) ListPendingEvents(w http.ResponseWriter, r *http.Request) {
+	events, err := h.ObtainPendingRateUserEvents(r.Context())
+	if err != nil {
+		h.internalError(w, err)
+		return
+	}
+	resp := make([]dto.NotificationResponse, 0, len(events))
+	for _, e := range events {
+		resp = append(resp, dto.NotificationResponse{
+			ID:        e.ID,
+			UserType:  string(e.UserType),
+			Status:    string(e.Status),
+			CreatedAt: e.CreatedAt,
+		})
+	}
+	writeJSON(w, resp)
+}
+
+// ListSourceFailedEvents returns paginated failed events for a named source.
+//
+// GET /api/v1/sources/{name}/events/failed?page=N.
+func (h *Handler) ListSourceFailedEvents(w http.ResponseWriter, r *http.Request) {
+	name, err := extractName(r)
+	if err != nil {
+		http.Error(w, `{"error":"missing source name"}`, http.StatusBadRequest)
+		return
+	}
+	page := parsePage(r.URL.Query().Get("page"))
+	const pageSize = 50
+	events, err := h.ObtainFailedRateUserEventsBySourceName(r.Context(), name, page, pageSize)
+	if err != nil {
+		h.internalError(w, err)
+		return
+	}
+	resp := make([]dto.NotificationResponse, 0, len(events))
+	for _, e := range events {
+		resp = append(resp, dto.NotificationResponse{
+			ID:        e.ID,
+			UserType:  string(e.UserType),
+			Status:    string(e.Status),
+			LastError: e.LastError,
+			CreatedAt: e.CreatedAt,
+			SentAt:    e.SentAt,
+		})
+	}
+	writeJSON(w, resp)
+}
+
+// ListSourceSubscriptions returns grouped subscription + event statistics for a source.
+//
+// GET /api/v1/sources/{name}/subscriptions.
+func (h *Handler) ListSourceSubscriptions(w http.ResponseWriter, r *http.Request) {
+	name, err := extractName(r)
+	if err != nil {
+		http.Error(w, `{"error":"missing source name"}`, http.StatusBadRequest)
+		return
+	}
+	summaries, err := h.ObtainSubscriptionSummaryBySource(r.Context(), name)
+	if err != nil {
+		h.internalError(w, err)
+		return
+	}
+	resp := make([]dto.SubscriptionSummaryResponse, 0, len(summaries))
+	for _, s := range summaries {
+		item := dto.SubscriptionSummaryResponse{
+			SourceName:        s.SourceName,
+			UserType:          string(s.UserType),
+			SubscriptionCount: s.SubscriptionCount,
+			SuccessCount:      s.SuccessCount,
+			FailedCount:       s.FailedCount,
+		}
+		if !s.LastSentAt.IsZero() {
+			item.LastSentAt = s.LastSentAt.Format(time.RFC3339)
+		}
+		resp = append(resp, item)
+	}
+	writeJSON(w, resp)
+}
+
+// ToggleSourceActive enables or disables a named source.
+//
+// PATCH /api/v1/sources/{name}/active.
+func (h *Handler) ToggleSourceActive(w http.ResponseWriter, r *http.Request) {
+	name, err := extractName(r)
+	if err != nil {
+		http.Error(w, `{"error":"missing source name"}`, http.StatusBadRequest)
+		return
+	}
+
+	var body dto.SourceActiveRequest
+	if err = json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err = h.UpdateRateSourceActive(r.Context(), name, body.Active); err != nil {
+		if errors.Is(err, internal.ErrNotFound) {
+			http.Error(w, `{"error":"source not found"}`, http.StatusNotFound)
+			return
+		}
+		h.internalError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListStats returns global statistics: total/active source counts and total error count.
+//
+// GET /api/v1/stats.
+func (h *Handler) ListStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.ObtainStats(r.Context())
+	if err != nil {
+		h.internalError(w, err)
+		return
+	}
+	writeJSON(w, dto.StatsResponse{
+		SourcesTotal:  stats.SourcesTotal,
+		SourcesActive: stats.SourcesActive,
+		ErrorsTotal:   stats.ErrorsTotal,
+	})
+}
+
+// ListSourceSubscriptionDetails returns paginated subscription details for a named source.
+//
+// GET /api/v1/sources/{name}/subscriptions/list?page=N.
+func (h *Handler) ListSourceSubscriptionDetails(w http.ResponseWriter, r *http.Request) {
+	name, err := extractName(r)
+	if err != nil {
+		http.Error(w, `{"error":"missing source name"}`, http.StatusBadRequest)
+		return
+	}
+	page := parsePage(r.URL.Query().Get("page"))
+	const pageSize int64 = 25
+	offset := (page - 1) * pageSize
+
+	items, err := h.ObtainRateUserSubscriptionsBySourcePaged(r.Context(), name, offset, pageSize)
+	if err != nil {
+		h.internalError(w, err)
+		return
+	}
+	resp := make([]dto.SubscriptionDetailResponse, 0, len(items))
+	for _, s := range items {
+		item := dto.SubscriptionDetailResponse{
+			ID:         s.ID,
+			UserType:   string(s.UserType),
+			SourceName: s.SourceName,
+			Condition:  s.ConditionType + ": " + s.ConditionValue,
+		}
+		if !s.LatestNotifiedAt.IsZero() {
+			item.LatestNotifiedAt = s.LatestNotifiedAt.Format(time.RFC3339)
+		}
+		resp = append(resp, item)
+	}
+	writeJSON(w, resp)
+}
+
+// ListSourceDailyEvents returns paginated daily event summaries for a named source.
+//
+// GET /api/v1/sources/{name}/events/daily?page=N.
+func (h *Handler) ListSourceDailyEvents(w http.ResponseWriter, r *http.Request) {
+	name, err := extractName(r)
+	if err != nil {
+		http.Error(w, `{"error":"missing source name"}`, http.StatusBadRequest)
+		return
+	}
+	page := parsePage(r.URL.Query().Get("page"))
+	const pageSize int64 = 25
+	offset := (page - 1) * pageSize
+
+	items, err := h.ObtainDailyEventSummaryBySource(r.Context(), name, offset, pageSize)
+	if err != nil {
+		h.internalError(w, err)
+		return
+	}
+	resp := make([]dto.DailyEventResponse, 0, len(items))
+	for _, s := range items {
+		resp = append(resp, dto.DailyEventResponse{
+			Type:         s.UserType,
+			Date:         s.Date,
+			SuccessCount: s.SuccessCount,
+			FailedCount:  s.FailedCount,
+		})
+	}
+	writeJSON(w, resp)
+}
+
+// ListExecutionErrors returns paginated failed execution history records from all sources.
+//
+// GET /api/v1/errors/execution?page=N.
+func (h *Handler) ListExecutionErrors(w http.ResponseWriter, r *http.Request) {
+	page := parsePage(r.URL.Query().Get("page"))
+	const pageSize int64 = 50
+	offset := (page - 1) * pageSize
+
+	items, err := h.ObtainLastNExecutionHistoryErrors(r.Context(), offset, pageSize)
+	if err != nil {
+		h.internalError(w, err)
+		return
+	}
+	resp := make([]dto.ExecutionErrorResponse, 0, len(items))
+	for _, rec := range items {
+		resp = append(resp, dto.ExecutionErrorResponse{
+			ID:         rec.ID,
+			SourceName: rec.SourceName,
+			Error:      rec.Error,
+			Timestamp:  rec.Timestamp.Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, resp)
+}
+
+// ListMeSubscriptions returns the caller's own subscriptions enriched with the
+// latest rate value and timestamp per source.
+//
+// GET /api/v1/me/subscriptions
+// Auth: X-Telegram-Init-Data header. The previous ?initData= query-string
+// fallback was removed because the HMAC-signed initData would otherwise land in
+// access logs and Referer headers for up to its 24h validity window.
+func (h *Handler) ListMeSubscriptions(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.callerID(w, r)
+	if !ok {
+		return
+	}
+
+	q := r.URL.Query().Get("q")
+	page := parsePage(r.URL.Query().Get("page"))
+	pageSize, err := parsePageSize(r.URL.Query().Get("page_size"))
+	if err != nil {
+		http.Error(w, `{"error":"page_size must be a number"}`, http.StatusBadRequest)
+		return
+	}
+
+	tgUserID := strconv.FormatInt(userID, 10)
+	rows, total, err := h.meSubSvc.ObtainMeSubscriptions(r.Context(), tgUserID, q, page, pageSize)
+	if err != nil {
+		h.internalError(w, fmt.Errorf("ListMeSubscriptions: %w", err))
+		return
+	}
+
+	items := make([]dto.MeSubscriptionRow, 0, len(rows))
+	for _, row := range rows {
+		item := dto.MeSubscriptionRow{
+			SourceName:    row.SourceName,
+			SourceTitle:   row.SourceTitle,
+			BaseCurrency:  row.BaseCurrency,
+			QuoteCurrency: row.QuoteCurrency,
+			Conditions:    row.Conditions,
+			LatestPrice:   row.LatestPrice,
+		}
+		// A source with no collected value carries the zero time, which must stay
+		// an absent latest_at rather than render as year one.
+		if !row.LatestAt.IsZero() {
+			item.LatestAt = row.LatestAt.Format(time.RFC3339)
+		}
+		items = append(items, item)
+	}
+
+	writeJSON(w, dto.MeSubscriptionsResponse{
+		Items:    items,
+		Page:     page,
+		PageSize: pageSize,
+		Total:    total,
+	})
+}
+
+// ListMeSubscriptionsRaw returns the caller's own subscriptions as one row per
+// condition, each carrying its stable subscription ID. Unlike ListMeSubscriptions
+// (which groups a source's conditions into one enriched row), this exposes the
+// raw per-condition granularity the editor screen needs. Items are sorted
+// source_name ASC, updated_at DESC so the editor groups rows by source
+// without additional client-side work.
+//
+// GET /api/v1/me/subscriptions/raw
+// Auth: X-Telegram-Init-Data header (same HMAC scheme as ListMeSubscriptions).
+func (h *Handler) ListMeSubscriptionsRaw(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.callerID(w, r)
+	if !ok {
+		return
+	}
+
+	tgUserID := strconv.FormatInt(userID, 10)
+	rows, err := h.meSubSvc.ObtainMeSubscriptionsRaw(r.Context(), tgUserID)
+	if err != nil {
+		h.internalError(w, fmt.Errorf("ListMeSubscriptionsRaw: %w", err))
+		return
+	}
+
+	items := make([]dto.MeSubscriptionEditRow, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, dto.MeSubscriptionEditRow{
+			ID:             row.ID,
+			SourceName:     row.SourceName,
+			SourceTitle:    row.SourceTitle,
+			BaseCurrency:   row.BaseCurrency,
+			QuoteCurrency:  row.QuoteCurrency,
+			ConditionType:  string(row.ConditionType),
+			ConditionValue: row.ConditionValue,
+			UpdatedAt:      row.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+
+	writeJSON(w, dto.MeSubscriptionsRawResponse{Items: items})
+}
+
+// CreateMeSubscription creates a new subscription owned by the authenticated caller.
+//
+// POST /api/v1/me/subscriptions
+// Auth: X-Telegram-Init-Data header (same HMAC scheme as ListMeSubscriptions).
+// Body: {"source_name":"...", "condition_type":"...", "condition_value":"..."}
+//
+// 201 Created with {"id":"<generated>"} on success.
+// 400 on malformed body, unknown source, or invalid condition.
+// 401 on missing/invalid initData.
+// 500 on persistence failure.
+func (h *Handler) CreateMeSubscription(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.callerID(w, r)
+	if !ok {
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10) // 4 KiB
+	var body dto.MeSubscriptionCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	id, err := h.meSubSvc.CreateMeSubscription(r.Context(), strconv.FormatInt(userID, 10), appsub.NewSubscription{
+		SourceName:     body.SourceName,
+		ConditionType:  domain.SubscriptionConditionType(body.ConditionType),
+		ConditionValue: body.ConditionValue,
+	})
+	if err != nil {
+		h.meWriteError(w, err, "CreateMeSubscription")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(dto.MeSubscriptionCreateResponse{ID: id}); err != nil {
+		h.logger.Print(errors.Join(
+			fmt.Errorf("encode CreateMeSubscription response: %w", err),
+			loginjector.NewTraceError(),
+		))
+	}
+}
+
+// UpdateMeSubscription updates the condition fields of an existing subscription
+// owned by the authenticated caller.
+//
+// PATCH /api/v1/me/subscriptions/{id}
+// Auth: X-Telegram-Init-Data header.
+// Body: {"condition_type":"...", "condition_value":"..."}
+//
+// 204 No Content on success.
+// 400 on malformed body or invalid condition.
+// 401 on auth failure.
+// 404 on missing subscription or cross-user access (same response — no existence disclosure).
+// 500 on persistence failure.
+func (h *Handler) UpdateMeSubscription(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.callerID(w, r)
+	if !ok {
+		return
+	}
+
+	// Cap the body before any reads — including the ownership query the service
+	// runs — so an authenticated caller cannot hold the connection open with a
+	// large body during the lookup window.
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10) // 4 KiB
+
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"error":"missing subscription id"}`, http.StatusBadRequest)
+		return
+	}
+
+	var body dto.MeSubscriptionUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	err := h.meSubSvc.UpdateMeSubscription(r.Context(), strconv.FormatInt(userID, 10), id, appsub.ConditionUpdate{
+		ConditionType:  domain.SubscriptionConditionType(body.ConditionType),
+		ConditionValue: body.ConditionValue,
+	})
+	if err != nil {
+		// 404 (not 403) for a row that is missing and for one owned by somebody
+		// else. The service reports one sentinel for both, and this answers with
+		// one message, so nothing here discloses that the row exists.
+		if errors.Is(err, internal.ErrNotFound) {
+			h.publicError(w, meSubscriptionNotFound, http.StatusNotFound)
+			return
+		}
+		h.meWriteError(w, err, "UpdateMeSubscription")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DeleteMeSubscription removes a subscription owned by the authenticated caller.
+//
+// DELETE /api/v1/me/subscriptions/{id}
+// Auth: X-Telegram-Init-Data header.
+//
+// 204 No Content on success.
+// 401 on auth failure.
+// 404 on missing subscription or cross-user access.
+// 500 on persistence failure.
+//
+// Deleting a subscription does NOT remove rate_user_events rows for that
+// user/source — events are FK'd to rate_sources, not to individual
+// subscription rows, so they are treated as historical truth and left intact.
+func (h *Handler) DeleteMeSubscription(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.callerID(w, r)
+	if !ok {
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"error":"missing subscription id"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := h.meSubSvc.DeleteMeSubscription(r.Context(), strconv.FormatInt(userID, 10), id); err != nil {
+		// 404 (not 403) for a row that is missing and for one owned by somebody
+		// else — see UpdateMeSubscription.
+		if errors.Is(err, internal.ErrNotFound) {
+			h.publicError(w, meSubscriptionNotFound, http.StatusNotFound)
+			return
+		}
+		h.meWriteError(w, err, "DeleteMeSubscription")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// UpsertMeProfile stores the caller's IANA timezone so notification timestamps
+// render in their local time. Fire-and-forget from the Mini App on every mount:
+// the client sends whatever Intl.DateTimeFormat resolves to; the server
+// validates via time.LoadLocation.
+//
+// POST /api/v1/me/profile
+// Body: {"timezone":"Asia/Almaty"}
+// Auth: X-Telegram-Init-Data header (same HMAC scheme as ListMeSubscriptions).
+//
+// 204 No Content on success, 400 on bad timezone, 401 on auth failure, 500
+// on persistence failure. The response body is empty on success — Mini App
+// callers fire-and-forget and discard it.
+func (h *Handler) UpsertMeProfile(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.callerID(w, r)
+	if !ok {
+		return
+	}
+
+	// Bound the read so a malicious or buggy client cannot inflate memory; the
+	// body should be a tiny JSON object.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10) // 1 KiB
+	var body dto.MeProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	err := h.meProfileSvc.UpsertMeProfile(r.Context(), strconv.FormatInt(userID, 10), appprofile.Profile{
+		Timezone: body.Timezone,
+		Locale:   body.Locale,
+	})
+	if err != nil {
+		h.meWriteError(w, err, "UpsertMeProfile")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetMeRatesChart returns the sparkline-list chart data for the calling user's
+// subscribed currency pairs. The window is the optional ?period= query parameter
+// (one of 7, 30, 90, 180, 360; default 7). BID and ASK for the same canonical
+// pair appear as a single row with two series entries.
+//
+// GET /api/v1/me/rates/chart?period=N
+// Auth: X-Telegram-Init-Data header only. The HMAC-signed payload must never be
+// passed via query string (it would appear in access logs and Referer headers).
+//
+// The pair display label is always BID-natural (e.g. "USD/KZT") regardless of
+// subscribed directions; the service layer owns label assignment, not this handler.
+//
+// Returns 400 with a PublicError body when period is present but not in the
+// whitelist {7, 30, 90, 180, 360}.
+func (h *Handler) GetMeRatesChart(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.callerID(w, r)
+	if !ok {
+		return
+	}
+
+	if h.meChartSvc == nil {
+		http.Error(w, `{"error":"chart service unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	periodDays, err := parseChartPeriod(r.URL.Query().Get("period"))
+	if err != nil {
+		var pub *internal.PublicError
+		if errors.As(err, &pub) {
+			http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
+			return
+		}
+		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
+		return
+	}
+
+	tgUserID := strconv.FormatInt(userID, 10)
+	ch, err := h.meChartSvc.ObtainMeChartForPeriod(r.Context(), tgUserID, periodDays)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			// Client navigated away or the request timed out — a normal
+			// client-side event, not a server failure. 499 ("client closed
+			// request") distinguishes it in access logs from genuine 500s.
+			http.Error(w, `{"error":"request cancelled"}`, 499)
+			return
+		}
+		h.internalError(w, fmt.Errorf("GetMeRatesChart: %w", err))
+		return
+	}
+
+	pairRows := make([]dto.MeChartPairRow, 0, len(ch.Pairs))
+	for _, row := range ch.Pairs {
+		seriesDTOs := make([]dto.MeChartSeries, 0, len(row.Series))
+		for _, sr := range row.Series {
+			s := dto.MeChartSeries{
+				Kind:          string(sr.Kind),
+				Color:         sr.Color,
+				Latest:        sr.Latest,
+				DeltaPct:      sr.DeltaPct,
+				Sparse:        sr.Sparse,
+				EffectiveDays: sr.EffectiveDays,
+			}
+			if len(sr.Points) > 0 {
+				pts := make([]dto.MeChartPoint, 0, len(sr.Points))
+				for _, p := range sr.Points {
+					pts = append(pts, dto.MeChartPoint{
+						Timestamp: p.Timestamp,
+						Value:     p.Value,
+					})
+				}
+				s.Points = pts
+			}
+			seriesDTOs = append(seriesDTOs, s)
+		}
+		pairRows = append(pairRows, dto.MeChartPairRow{
+			Pair:      row.Pair,
+			Category:  string(row.Category),
+			SpreadPct: row.SpreadPct,
+			Series:    seriesDTOs,
+		})
+	}
+
+	writeJSON(w, dto.MeChartResponse{
+		Window: fmt.Sprintf("%d days", periodDays),
+		Pairs:  pairRows,
+	})
+}
+
+// GetMeRatesHistory returns paginated rate-collection events for the calling
+// user's subscribed sources matching the given canonical pair label.
+//
+// GET /api/v1/me/rates/history?pair=<canonical>&page=<n>&limit=<n>&source_title=<title>
+// Auth: X-Telegram-Init-Data header only.
+//
+// source_title is an optional exact-match filter; when present, Total reflects
+// the filtered grouped count. An unknown source_title (not matching any provider
+// title in the user's subscriptions for this pair) returns 200 with empty Items
+// and Total=0, not 400.
+//
+//   - 400 on missing or empty pair.
+//   - 400 on non-integer limit.
+//   - 401 on bad initData.
+//   - 499 on ctx canceled / deadline exceeded.
+//   - 200 with an empty Items list when the user has no matching
+//     subscriptions (NOT 404).
+func (h *Handler) GetMeRatesHistory(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.callerID(w, r)
+	if !ok {
+		return
+	}
+
+	if h.meChartSvc == nil {
+		http.Error(w, `{"error":"chart service unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	pair := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("pair")))
+	if pair == "" {
+		http.Error(w, `{"error":"pair is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	sourceTitle := strings.TrimSpace(r.URL.Query().Get("source_title"))
+
+	page := parsePage(r.URL.Query().Get("page"))
+	limit, err := parseHistoryLimit(r.URL.Query().Get("limit"))
+	if err != nil {
+		http.Error(w, `{"error":"limit must be a number"}`, http.StatusBadRequest)
+		return
+	}
+
+	tgUserID := strconv.FormatInt(userID, 10)
+	result, err := h.meChartSvc.ObtainMeHistory(r.Context(), tgUserID, pair, sourceTitle, page, limit)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			http.Error(w, `{"error":"request cancelled"}`, 499)
+			return
+		}
+		h.internalError(w, fmt.Errorf("GetMeRatesHistory: %w", err))
+		return
+	}
+
+	items := make([]dto.MeHistoryRow, 0, len(result.Items))
+	for _, row := range result.Items {
+		items = append(items, dto.MeHistoryRow{
+			SourceTitle:  row.SourceTitle,
+			Timestamp:    row.Timestamp,
+			Bid:          row.Bid,
+			Ask:          row.Ask,
+			Last:         row.Last,
+			BidDeltaPct:  row.BidDeltaPct,
+			AskDeltaPct:  row.AskDeltaPct,
+			LastDeltaPct: row.LastDeltaPct,
+		})
+	}
+
+	writeJSON(w, dto.MeHistoryResponse{
+		Pair:  result.Pair,
+		Page:  int(page),
+		Limit: int(limit),
+		Total: result.Total,
+		Items: items,
+	})
+}
+
+// GetPublicRatesChart returns the paginated sparkline-list chart for every
+// distinct active (base, quote, kind) triple in the system. The window is the
+// optional ?period= query parameter (one of 7, 30, 90, 180, 360; default 7).
+// No auth required.
+//
+// GET /api/v1/public/rates/chart?page=N&limit=L&period=P
+//
+//   - 400 on non-integer limit.
+//   - 400 on period present but not in whitelist {7, 30, 90, 180, 360}.
+//   - 499 on ctx canceled / deadline exceeded.
+//   - 500 on service-layer failures.
+func (h *Handler) GetPublicRatesChart(w http.ResponseWriter, r *http.Request) {
+	if h.meChartSvc == nil {
+		http.Error(w, `{"error":"chart service unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	page := parsePage(r.URL.Query().Get("page"))
+	limit, err := parsePublicChartLimit(r.URL.Query().Get("limit"))
+	if err != nil {
+		publicErr := internal.NewPublicError("limit must be a number")
+		http.Error(w, `{"error":"`+publicErr.Details()+`"}`, http.StatusBadRequest)
+		return
+	}
+
+	periodDays, err := parseChartPeriod(r.URL.Query().Get("period"))
+	if err != nil {
+		var pub *internal.PublicError
+		if errors.As(err, &pub) {
+			http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
+			return
+		}
+		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
+		return
+	}
+
+	ch, total, err := h.meChartSvc.ObtainPublicChartForPeriod(r.Context(), page, limit, periodDays)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			http.Error(w, `{"error":"request cancelled"}`, 499)
+			return
+		}
+		h.internalError(w, fmt.Errorf("GetPublicRatesChart: %w", err))
+		return
+	}
+
+	pairRows := make([]dto.MeChartPairRow, 0, len(ch.Pairs))
+	for _, row := range ch.Pairs {
+		seriesDTOs := make([]dto.MeChartSeries, 0, len(row.Series))
+		for _, sr := range row.Series {
+			s := dto.MeChartSeries{
+				Kind:          string(sr.Kind),
+				Color:         sr.Color,
+				Latest:        sr.Latest,
+				DeltaPct:      sr.DeltaPct,
+				Sparse:        sr.Sparse,
+				EffectiveDays: sr.EffectiveDays,
+			}
+			if len(sr.Points) > 0 {
+				pts := make([]dto.MeChartPoint, 0, len(sr.Points))
+				for _, p := range sr.Points {
+					pts = append(pts, dto.MeChartPoint{
+						Timestamp: p.Timestamp,
+						Value:     p.Value,
+					})
+				}
+				s.Points = pts
+			}
+			seriesDTOs = append(seriesDTOs, s)
+		}
+		pairRows = append(pairRows, dto.MeChartPairRow{
+			Pair:      row.Pair,
+			Category:  string(row.Category),
+			SpreadPct: row.SpreadPct,
+			Series:    seriesDTOs,
+		})
+	}
+
+	writeJSON(w, dto.PublicChartResponse{
+		Window: fmt.Sprintf("%d days", periodDays),
+		Page:   int(page),
+		Limit:  int(limit),
+		Total:  total,
+		Pairs:  pairRows,
+	})
+}
+
+// meWriteError renders a failure returned by an /api/v1/me application service.
+//
+// A *internal.PublicError carries a message built to be shown to the caller, so
+// it answers 400 with that text. Anything else is the store's problem, not the
+// request's: the detail goes to the log and the caller gets the fallback.
+//
+// internal.ErrNotFound is deliberately not handled here. It is the ownership
+// answer, and the 404 it produces is written at the call site so that a reader
+// of a write handler sees the rule rather than having to follow a helper to it.
+func (h *Handler) meWriteError(w http.ResponseWriter, err error, logContext string) {
+	var pub *internal.PublicError
+	if errors.As(err, &pub) {
+		http.Error(w, `{"error":"`+pub.Details()+`"}`, http.StatusBadRequest)
+		return
+	}
+	h.internalError(w, fmt.Errorf("%s: %w", logContext, err))
+}
+
+// publicError sends message as a PublicError body under status.
+func (h *Handler) publicError(w http.ResponseWriter, message string, status int) {
+	pub := internal.NewPublicError(message)
+	http.Error(w, `{"error":"`+pub.Details()+`"}`, status)
+}
+
+// publicErrorJSON sends message as a PublicError body under status, encoded
+// rather than concatenated. Some of these messages quote a value the caller
+// sent, and one quote in it would otherwise break the document.
+func (h *Handler) publicErrorJSON(w http.ResponseWriter, message string, status int, logContext string) {
+	pub := internal.NewPublicError(message)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": pub.Details()}); err != nil {
+		h.logger.Print(errors.Join(
+			fmt.Errorf("encode %s error response: %w", logContext, err),
+			loginjector.NewTraceError(),
+		))
+	}
+}
+
+// internalError logs the underlying error with a trace and returns a generic 500 to the client.
+func (h *Handler) internalError(w http.ResponseWriter, err error) {
+	h.logger.Print(errors.Join(err, loginjector.NewTraceError()))
+	http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+}
+
+// callerID returns the authenticated caller's Telegram id, or writes 401 and reports
+// false.
+//
+// Every /api/v1/me route is mounted behind the initData middleware, which is what
+// authenticates; this only reads the result. A miss therefore means the route was
+// registered outside that mount — a wiring mistake, not a failed login — and the
+// only safe answer is to refuse. 401 rather than 500 because from the caller's side
+// the request is simply not authenticated, and a distinct status here would tell a
+// prober which routes are mounted where.
+func (h *Handler) callerID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	userID, ok := middleware.UserIDFrom(r.Context())
+	if !ok {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return 0, false
+	}
+	return userID, true
+}
+
+// meSubscriptionNotFound is the answer for a subscription that does not exist
+// and for one owned by somebody else. One message under one status: telling the
+// two apart would confirm that another user's subscription exists.
+const meSubscriptionNotFound = "subscription not found"
+
+const (
+	meSubscriptionsDefaultPage = int64(1)
+	meSubscriptionsDefaultSize = int64(10)
+	meSubscriptionsMaxSize     = int64(50)
+)
+
+// parsePageMax caps the ?page= query parameter. Picked well above any
+// realistic dataset (1 << 30 ≈ 10^9 pages); paired with a 100-item limit it
+// keeps offset arithmetic strictly inside int64.
+const parsePageMax = int64(1) << 30
+
+const (
+	meHistoryDefaultLimit = int64(20)
+	meHistoryMaxLimit     = int64(100)
+)
+
+const (
+	publicChartDefaultLimit = int64(20)
+	publicChartMaxLimit     = int64(100)
+)
+
+// allowedChartPeriods is the whitelist of accepted period values for the chart
+// endpoints. Only these exact integers are valid; anything else returns 400.
+var allowedChartPeriods = []int64{7, 30, 90, 180, 360}
+
+// one-for-one. Splitting it is the open question about RateRestApi — whether a
+// facade that forwards to repositories earns a layer at all — not a rename.
+//
+//nolint:interfacebloat // fifteen methods because it mirrors the admin REST surface
+type rateService interface {
+	ObtainLastNExecutionHistoryBySourceName(ctx context.Context, name string, limit int64) ([]domain.ExecutionHistory, error)
+	ObtainLatestExecutionHistoryBySources(ctx context.Context, names []string) (map[string]domain.ExecutionHistory, error)
+	ObtainLastSuccessNExecutionHistoryBySourceName(ctx context.Context, name string, limit int64) ([]domain.ExecutionHistory, error)
+	ObtainAllRateSources(ctx context.Context) ([]domain.RateSource, error)
+	UpdateRateSourceActive(ctx context.Context, name string, active bool) error
+	ObtainLastNRateValuesBySourceName(ctx context.Context, name string, limit int64) ([]domain.RateValue, error)
+	ObtainListOfLastRateUserEvent(ctx context.Context, limit int64) ([]domain.RateUserEvent, error)
+	ObtainFailedListOfRateUserEvent(ctx context.Context, offset, limit int64) ([]domain.RateUserEvent, error)
+	ObtainPendingRateUserEvents(ctx context.Context) ([]domain.RateUserEvent, error)
+	ObtainFailedRateUserEventsBySourceName(ctx context.Context, sourceName string, page, pageSize int64) ([]domain.RateUserEvent, error)
+	ObtainSubscriptionSummaryBySource(ctx context.Context, sourceName string) ([]domain.RateUserSubscriptionSummary, error)
+	ObtainStats(ctx context.Context) (domain.StatsResult, error)
+	ObtainRateUserSubscriptionsBySourcePaged(ctx context.Context, sourceName string, offset, limit int64) ([]domain.RateUserSubscriptionDetail, error)
+	ObtainDailyEventSummaryBySource(ctx context.Context, sourceName string, offset, limit int64) ([]domain.RateUserEventDailySummary, error)
+	ObtainLastNExecutionHistoryErrors(ctx context.Context, offset, limit int64) ([]domain.ExecutionHistory, error)
+}
+
+// meSubscriptionService is the application service behind the whole
+// /api/v1/me/subscriptions family, satisfied by *appsub.Service. Grouping,
+// search, pagination, condition validation and ownership all live there; this
+// package parses the request and renders the answer.
+type meSubscriptionService interface {
+	ObtainMeSubscriptions(ctx context.Context, userID, query string, page, pageSize int64) ([]appsub.SourceRow, int64, error)
+	ObtainMeSubscriptionsRaw(ctx context.Context, userID string) ([]appsub.ConditionRow, error)
+	CreateMeSubscription(ctx context.Context, userID string, req appsub.NewSubscription) (string, error)
+	UpdateMeSubscription(ctx context.Context, userID, id string, upd appsub.ConditionUpdate) error
+	DeleteMeSubscription(ctx context.Context, userID, id string) error
+}
+
+// meProfileService is the application service behind POST /api/v1/me/profile,
+// satisfied by *appprofile.Service.
+type meProfileService interface {
+	UpsertMeProfile(ctx context.Context, userID string, p appprofile.Profile) error
+}
+
+// meChartService is the application service contract consumed by GetMeRatesChart,
+// GetMeRatesHistory, and GetPublicRatesChart, satisfied by *appchart.Service.
+// Only the period-aware variants are listed; the default-period wrappers
+// (ObtainMeChart, ObtainPublicChart) exist on the concrete type but not here.
+// healthCheckAgent is the contract for the health-check aggregator. CheckUp probes
+// all registered dependencies under a bounded timeout and returns a per-component
+// report; healthy is true iff every component reported nil. Nil is allowed (the
+// HealthCheck handler returns 503 when the agent is not wired).
+type healthCheckAgent interface {
+	CheckUp(ctx context.Context) (healthy bool, report map[string]string)
+}
+
+type meChartService interface {
+	ObtainMeChartForPeriod(ctx context.Context, userID string, periodDays int64) (*appchart.MeChart, error)
+	ObtainMeHistory(ctx context.Context, userID, pair, sourceTitle string, page, limit int64) (*appchart.MeHistoryResult, error)
+	ObtainPublicChartForPeriod(ctx context.Context, page, limit, periodDays int64) (*appchart.PublicChart, int64, error)
+}
+
+// writeJSON sets Content-Type and encodes v as JSON.
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Print(errors.Join(
+			fmt.Errorf("encode response body: %w", err),
+			loginjector.NewTraceError(),
+		))
+	}
+}
+
+// parsePage parses a "page" query parameter, defaulting to 1 when missing,
+// malformed, or non-positive. Values above parsePageMax are clamped so the
+// downstream offset arithmetic (offset = (page - 1) * limit) cannot overflow
+// int64 into a negative OFFSET — which SQLite treats as no limit and fans into
+// a full table scan. Malformed values fall through silently because public
+// endpoints would otherwise generate unbounded log noise from fuzzed traffic.
+func parsePage(raw string) int64 {
+	if raw == "" {
+		return 1
+	}
+	page, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || page < 1 {
+		return 1
+	}
+	if page > parsePageMax {
+		return parsePageMax
+	}
+	return page
+}
+
+// extractLimit reads the ?limit= query parameter, clamped to [10, 100], default 50.
+func extractLimit(uri *url.URL) (int64, error) {
+	var result int64 = 50
+
+	if v := uri.Query().Get("limit"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return 0, errors.Join(err, loginjector.NewTraceError())
+		}
+		if n > 0 {
+			result = n
+		}
+	}
+
+	result = min(result, 100)
+	result = max(result, 10)
+
+	return result, nil
+}
+
+// extractOffset reads the ?offset= query parameter. Returns 0 when absent.
+func extractOffset(r *http.Request) (int64, error) {
+	var result int64
+	if v := r.URL.Query().Get("offset"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return 0, errors.Join(err, loginjector.NewTraceError())
+		}
+		if n > 0 {
+			result = n
+		}
+	}
+	return max(result, 0), nil
+}
+
+// extractName reads the {name} path segment set by Go 1.22's ServeMux.
+// Returns an error when the segment is absent so callers can return 400.
+func extractName(r *http.Request) (string, error) {
+	v := r.PathValue("name")
+	if v == "" {
+		return "", errors.New("missing path param: name")
+	}
+	return v, nil
+}
+
+// parseHistoryLimit parses the ?limit= query parameter for the history
+// endpoint, clamped to [1, meHistoryMaxLimit], default meHistoryDefaultLimit.
+// Returns an error only when the value is present but non-integer.
+func parseHistoryLimit(raw string) (int64, error) {
+	if raw == "" {
+		return meHistoryDefaultLimit, nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	if n < 1 {
+		n = meHistoryDefaultLimit
+	}
+	if n > meHistoryMaxLimit {
+		n = meHistoryMaxLimit
+	}
+	return n, nil
+}
+
+// parsePublicChartLimit parses the ?limit= query parameter for the public chart
+// endpoint. Default 20; values < 1 clamp to 20, values > 100 clamp to 100.
+// Returns an error only when the value is present but non-integer, matching
+// parseHistoryLimit.
+func parsePublicChartLimit(raw string) (int64, error) {
+	if raw == "" {
+		return publicChartDefaultLimit, nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	if n < 1 {
+		n = publicChartDefaultLimit
+	}
+	if n > publicChartMaxLimit {
+		n = publicChartMaxLimit
+	}
+	return n, nil
+}
+
+// parseChartPeriod parses the raw ?period= query value. An empty string returns
+// the default 7. Any non-empty value not in {7, 30, 90, 180, 360} returns a
+// PublicError so the handler can surface it inline to the client.
+func parseChartPeriod(raw string) (int64, error) {
+	if raw == "" {
+		return 7, nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, internal.NewPublicError("period must be one of 7, 30, 90, 180, 360")
+	}
+	for _, allowed := range allowedChartPeriods {
+		if n == allowed {
+			return n, nil
+		}
+	}
+	return 0, internal.NewPublicError("period must be one of 7, 30, 90, 180, 360")
+}
+
+// parsePageSize parses a "page_size" query parameter, clamped to [1, 50], default 10.
+func parsePageSize(raw string) (int64, error) {
+	if raw == "" {
+		return meSubscriptionsDefaultSize, nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	if n < 1 {
+		n = meSubscriptionsDefaultSize
+	}
+	if n > meSubscriptionsMaxSize {
+		n = meSubscriptionsMaxSize
+	}
+	return n, nil
+}
