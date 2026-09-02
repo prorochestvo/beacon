@@ -51,13 +51,16 @@ to prevent than to revert from production.
 **Measure, never estimate.** Count with `wc -c` before and after: this file is mostly
 contracts and identifiers, which do not compress, so a guess runs high. After moving
 content, extract every backticked span and figure from the old text, confirm each still
-appears somewhere in the new set, and account for every casualty by name.
+appears somewhere in the new set, and account for every casualty by name. Full
+procedure: `standards-layout` R21.
 
 ## Build & Run Commands
 
-Pure-Go build, `CGO_ENABLED=0` by default. Standard `make` targets (`build`, `run`, `test`, `lint`, `format`, `clean`) — see the Makefile; `make test` runs fmt + vet + `go test -race`, `make lint` also checks forbidden imports.
+Pure-Go build, `CGO_ENABLED=0` by default. Standard `make` targets (`build`, `run`, `test`, `lint`, `format`, `clean`) — see the Makefile; `make test` runs fmt + vet + `go test -race` + the WASM suite, `make lint` also checks forbidden imports.
 
-Gotcha: `-race` needs cgo, so targeted race runs use `CGO_ENABLED=1 go test -race -run TestX ./<pkg>/` (macOS tolerates `0`, Linux does not). Benchmarks (`-bench=.`, no `-race`) don't need cgo. `make test` starts with `go clean -cache`, so a full run rebuilds `modernc.org/sqlite` from scratch — minutes, not seconds.
+**`make lint-new` is the mergeable gate** — it lints only what changed since `LINT_BASE` (default `origin/alpha`), while `make lint` scans the whole tree as a worklist. Both run **two** steps, `golangci-lint run` *and* `scripts/lint-checks.sh`, so a green `golangci-lint` is not a green gate.
+
+Gotcha: `-race` needs cgo, so targeted race runs use `CGO_ENABLED=1 go test -race -run TestX ./<pkg>/` (macOS tolerates `0`, Linux does not). Benchmarks (`-bench=.`, no `-race`) don't need cgo. `make test` starts with `go clean -cache`, so a full run rebuilds `modernc.org/sqlite` from scratch — minutes, not seconds. On the 8 GB Pi (no swap) that rebuild is OOM-killed under `-race`; rerun as `go test -race -p 1`, or cut an `s_*` tag and let CI run the gate. When `node` is missing `make test` skips the WASM suite with a warning and still exits 0.
 
 ## Architecture
 
@@ -213,7 +216,8 @@ guardrails on each pre-approved field, and how to classify a borderline one: **s
 
 ## Working agreement
 
-All non-trivial work follows the plan-first pipeline:
+All non-trivial work follows the plan-first pipeline — the canonical procedure is the
+`pipeline:working-agreement` skill:
 
 1. **Plan** — the `architect` agent writes `plans/NNN-slug.md` (create via the
    `pipeline:new-plan` skill). No source edits before a plan exists.
