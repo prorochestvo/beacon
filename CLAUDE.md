@@ -58,7 +58,7 @@ procedure: `standards-layout` R21.
 
 Pure-Go build, `CGO_ENABLED=0` by default. Standard `make` targets (`build`, `run`, `test`, `lint`, `format`, `clean`) — see the Makefile; `make test` runs fmt + vet + `go test -race` + the WASM suite, `make lint` also checks forbidden imports.
 
-**`make lint-new` is the mergeable gate** — it lints only what changed since `LINT_BASE` (default `origin/alpha`), while `make lint` scans the whole tree as a worklist. Both run **two** steps, `golangci-lint run` *and* `scripts/lint-checks.sh`, so a green `golangci-lint` is not a green gate.
+**`make test` is the gate; `make lint-new` is advisory until the lint backlog is cleared** — it lints only what changed since `LINT_BASE` (default `origin/alpha`), while `make lint` scans the whole tree as a worklist. Both run **two** steps, `golangci-lint run` *and* `scripts/lint-checks.sh`, so a green `golangci-lint` is not a green gate.
 
 Gotcha: `-race` needs cgo, so targeted race runs use `CGO_ENABLED=1 go test -race -run TestX ./<pkg>/` (macOS tolerates `0`, Linux does not). Benchmarks (`-bench=.`, no `-race`) don't need cgo. `make test` starts with `go clean -cache`, so a full run rebuilds `modernc.org/sqlite` from scratch — minutes, not seconds. On the 8 GB Pi (no swap) that rebuild is OOM-killed under `-race`; rerun as `go test -race -p 1`, or cut an `s_*` tag and let CI run the gate. When `node` is missing `make test` skips the WASM suite with a warning and still exits 0.
 
