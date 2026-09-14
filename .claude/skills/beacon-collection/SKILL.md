@@ -89,6 +89,19 @@ through the session; a literal index would name a different moment on every requ
 `ApplyJSONPath` accepts hyphens in keys for the same reason — `BTC-USD` is a key, not a
 subtraction.
 
+The 24 `KZ_BCC_FX_*` sources share a URL the same way, and since migration
+`202609.035` they read an HTML-entity-escaped JSON document out of the page's Alpine.js
+`data-fx` attribute rather than a rendered table. Three things about those rules are not
+guessable from the pattern. They anchor on **`currencyMain`, never `currencyMainName`**:
+the latter is where the strings `GOLD` and `SILVER` appear, and it sits *after* the prices
+in each object, so the metals are matched on `XAU` / `XAG` instead. **`sell` is BID and
+`buy` is ASK** — the field names are the customer's, not the bank's, so `sell` is the lower
+of the two. And the rules carry **no `parse_float` step**: it formats with `%.3f`, which
+stores the UZS quote 0.03367 as 0.034 now that the payload is JSON rather than a rendered
+two-decimal table. `migrations/bccfx_rules_test.go` compiles those patterns against a
+fixture, because rules are data and nothing else in the build would notice a pattern that
+matches nothing.
+
 ## The fetch key
 
 The **response cache and the failure tombstone are keyed on URL *and* route**, not URL
