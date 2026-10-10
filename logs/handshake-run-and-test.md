@@ -24,7 +24,7 @@ gitignored) — its deferred-items detail is folded into this file below.
 ## What shipped this session
 
 **Flaky-test fix** (commit `ded001e`, plan
-`plans/completed/260703.0001.fix-apiclient-transport-flake.md`):
+`.agents/plans/completed/260703.0001.fix-apiclient-transport-flake.md`):
 
 - Symptom: `cmd/wasm/apiclient` tests flaked intermittently under the full parallel
   `go test -race ./...`, most often as `TestClient_Integration_SetSourceActive`, with
@@ -47,7 +47,7 @@ gitignored) — its deferred-items detail is folded into this file below.
 stocks (`LAST` kind, AAPL/CCBN keyless sources, Mini App equity chart) and weather
 (parallel weather domain, per-user city via Open-Meteo, gismeteo compare, morning
 summary, heat/frost/thunderstorm/rain alerts). Shipped plans are in
-`plans/completed/` (`260629.0001` … `260701.0001`). Locked decisions and the full
+`.agents/plans/completed/` (`260629.0001` … `260701.0001`). Locked decisions and the full
 deferred list are documented there and in the prior handshake.
 
 ## How to run & test on another machine (the core ask)
@@ -137,7 +137,7 @@ git checkout feat/stock-and-weather-monitoring && git log --oneline -6
 make test                                  # green baseline (fmt+vet+race+WASM)
 CGO_ENABLED=1 go test -race -count=1 ./... # force a real full run (defeats cache)
 cat .env.example                           # the required env shape (never read .env)
-ls plans/completed/260703.*.md             # this session's shipped plan
+ls .agents/plans/completed/260703.*.md             # this session's shipped plan
 ```
 
 ## How to start the next session

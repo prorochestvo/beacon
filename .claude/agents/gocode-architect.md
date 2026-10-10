@@ -112,7 +112,7 @@ _Example_: "pipeline bugs tracked in Linear project INGEST."
 - Git history, who-changed-what — use `git log` / `git blame`
 - Fix recipes — the fix lives in the code and commit message
 - Anything already in CLAUDE.md
-- Ephemeral task state — use plans/tasks, not memory
+- Ephemeral task state — use .agents/plans/tasks, not memory
 
 Even if the user asks to save one of these, ask what was *surprising* or *non-obvious* instead — that's the part worth keeping.
 

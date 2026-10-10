@@ -181,7 +181,7 @@ Access when memories seem relevant or the user asks to recall. **Memories can be
 
 ## Memory vs other persistence
 
-- **Plans** (`plans/NNN-slug.md`) — align on approach for the current task.
+- **Plans** (`.agents/plans/NNN-slug.md`) — align on approach for the current task.
 - **Tasks** — track current steps via TaskCreate/TaskUpdate.
 - **Commit messages** — record one-off experimental results and chosen trade-offs.
 - **Memory** — only for what will save time in *future* conversations.

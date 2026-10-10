@@ -264,9 +264,9 @@ reason.
 
 Non-trivial work is tracked as a Markdown plan file before implementation.
 
-- **Active** (`plans/`) — `NNN-slug.md`, zero-padded sequential; next number = highest existing prefix across `plans/`, `completed/`, and `history/`; readable slug (`002-add-rate-limiting.md`, not `004-task.md`).
-- **Completed** (`plans/completed/`) — `YYMMDD.NNNN.slug.md`, where `NNNN` is a daily index resetting to `0001` each day. Move here only when every acceptance criterion is met and `make test` passes.
-- **Archived** (`plans/history/`) — abandoned/superseded plans, keeping their original `NNN-` filename.
+- **Active** (`.agents/plans/`) — `NNN-slug.md`, zero-padded sequential; next number = highest existing prefix across `.agents/plans/`, `completed/`, and `history/`; readable slug (`002-add-rate-limiting.md`, not `004-task.md`).
+- **Completed** (`.agents/plans/completed/`) — `YYMMDD.NNNN.slug.md`, where `NNNN` is a daily index resetting to `0001` each day. Move here only when every acceptance criterion is met and `make test` passes.
+- **Archived** (`.agents/plans/history/`) — abandoned/superseded plans, keeping their original `NNN-` filename.
 
 Rules: one plan per concern; create (or confirm) the plan before touching source; if implementation diverges, update the plan before completing it. Each plan carries: Overview, Assumptions, Tasks (each with Description / Acceptance Criteria / Pitfalls / Complexity), Execution Order, Risks, Trade-offs.
 
@@ -274,7 +274,7 @@ Rules: one plan per concern; create (or confirm) the plan before touching source
 
 Non-trivial tasks run a three-stage pipeline; no stage is skipped:
 
-1. **`gocode-architect`** → writes/updates the plan file in `plans/` (see Planning Workflow) before any code.
+1. **`gocode-architect`** → writes/updates the plan file in `.agents/plans/` (see Planning Workflow) before any code.
 2. **`gocode-engineer`** → implements the plan tasks plus their tests.
 3. **`gocode-reviewer` ×5, parallel** — launched in a **single message** (five tool calls) so they run concurrently; each prompt names its lens and states what to SKIP to avoid overlap:
    - **A** correctness, races, edge cases, error paths
@@ -283,4 +283,4 @@ Non-trivial tasks run a three-stage pipeline; no stage is skipped:
    - **D** security, input validation, secrets, auth boundaries
    - **E** performance & architecture — allocations, blocking I/O, leaks, API-contract / exported-surface stability, layering
 
-The orchestrator (main session) synthesises the five reports, resolves conflicting verdicts (naming the rejected suggestion; user has final say), and gates completion: the plan moves to `plans/completed/` only once every Blocker/Major is fixed or explicitly accepted. `make test` must be green before review — hand a red tree to **`gocode-testdoctor`** (scoped to the minimal patch that goes green, no redesign) first. After a fix, re-review is a **single** pass scoped to the changed lines, not another five-way fan-out.
+The orchestrator (main session) synthesises the five reports, resolves conflicting verdicts (naming the rejected suggestion; user has final say), and gates completion: the plan moves to `.agents/plans/completed/` only once every Blocker/Major is fixed or explicitly accepted. `make test` must be green before review — hand a red tree to **`gocode-testdoctor`** (scoped to the minimal patch that goes green, no redesign) first. After a fix, re-review is a **single** pass scoped to the changed lines, not another five-way fan-out.
