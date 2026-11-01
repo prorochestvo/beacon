@@ -1,0 +1,57 @@
+// Package threadsafe provides mutex-protected wrappers around standard types.
+// Every exported type in this package is safe for concurrent use by multiple goroutines.
+package threadsafe
+
+import (
+	"bytes"
+	"sync"
+)
+
+// Buffer is a goroutine-safe wrapper around bytes.Buffer. All operations are
+// serialised with a mutex.
+type Buffer struct {
+	buf *bytes.Buffer
+	m   sync.Mutex
+}
+
+// NewBufferString creates a thread-safe Buffer initialised with the given string.
+func NewBufferString(s string) *Buffer {
+	return &Buffer{
+		buf: bytes.NewBufferString(s),
+	}
+}
+
+// NewBuffer creates a thread-safe Buffer initialised with the given byte slice.
+func NewBuffer(b []byte) *Buffer {
+	return &Buffer{
+		buf: bytes.NewBuffer(b),
+	}
+}
+
+// Read reads from the underlying buffer under the mutex.
+func (b *Buffer) Read(p []byte) (n int, err error) {
+	b.m.Lock()
+	defer b.m.Unlock()
+	return b.buf.Read(p)
+}
+
+// Write appends p to the underlying buffer under the mutex.
+func (b *Buffer) Write(p []byte) (n int, err error) {
+	b.m.Lock()
+	defer b.m.Unlock()
+	return b.buf.Write(p)
+}
+
+// String returns the accumulated bytes as a string under the mutex.
+func (b *Buffer) String() string {
+	b.m.Lock()
+	defer b.m.Unlock()
+	return b.buf.String()
+}
+
+// Bytes returns a slice of the accumulated bytes under the mutex.
+func (b *Buffer) Bytes() []byte {
+	b.m.Lock()
+	defer b.m.Unlock()
+	return b.buf.Bytes()
+}

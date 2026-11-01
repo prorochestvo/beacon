@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Beacon</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #222; padding: 1rem; }
+    h1  { font-size: 1.5rem; margin-bottom: .5rem; }
+    h2  { font-size: 1.1rem; margin: 1.5rem 0 .5rem; color: #444; }
+    a   { color: #0070f3; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+    th  { background: #f0f0f0; text-align: left; padding: .5rem .75rem; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; cursor: pointer; user-select: none; }
+    th:hover { background: #e4e4e4; }
+    td  { padding: .5rem .75rem; border-top: 1px solid #eee; font-size: .875rem; vertical-align: top; }
+    tr:hover td { background: #fafafa; }
+    .ok    { color: #16a34a; font-weight: 600; }
+    .err   { color: #dc2626; }
+    .inactive { color: #9ca3af; }
+    .stats-line { font-size: .95rem; color: #555; margin-bottom: 1rem; }
+    .breadcrumb { margin-bottom: 1rem; font-size: .9rem; }
+    .filters { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .75rem; }
+    .filters input, .filters select { padding: .3rem .6rem; border: 1px solid #ccc; border-radius: 4px; font-size: .85rem; }
+    .pagination { display: flex; gap: .4rem; margin-top: .75rem; }
+    .pagination button { padding: .3rem .8rem; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; font-size: .85rem; }
+    .pagination button:disabled { opacity: .4; cursor: default; }
+    .toggle-btn { padding: .2rem .55rem; font-size: .75rem; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; background: #fff; }
+    .toggle-btn.active-on  { background: #dcfce7; color: #166534; border-color: #86efac; }
+    .toggle-btn.active-off { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+    .error-msg { color: #dc2626; text-align: center; padding: 20px; }
+    #app { max-width: 1200px; margin: 0 auto; }
+  </style>
+</head>
+<body>
+<div id="app"><p>Loading…</p></div>
+
+<script src="/wasm_exec.js"></script>
+<script>
+'use strict';
+
+var wasmReady = new Promise(function(resolve, reject) {
+  var go = new Go();
+  WebAssembly.instantiateStreaming(fetch('/app.wasm'), go.importObject).then(function(result) {
+    go.run(result.instance);
+    resolve();
+  }).catch(function(err) {
+    console.error('WASM init failed (did you run make build?):', err);
+    reject(err);
+  });
+});
+
+window.addEventListener('hashchange', route);
+wasmReady.then(route).catch(function(err) {
+  document.getElementById('app').innerHTML =
+    '<p class="error-msg">Failed to load app. Did you run <code>make build</code>?</p>';
+});
+
+function route() {
+  var h = location.hash;
+  if (h.startsWith('#/sources/')) {
+    if (!window._wasm || typeof window._wasm.renderSourceDetail !== 'function') {
+      // WASM still loading; wasmReady.then(route) will re-fire once ready.
+      return;
+    }
+    window._wasm.renderSourceDetail(decodeURIComponent(h.slice('#/sources/'.length)));
+  } else if (h === '#/errors') {
+    if (!window._wasm || typeof window._wasm.renderErrors !== 'function') {
+      // WASM still loading; wasmReady.then(route) will re-fire once ready.
+      return;
+    }
+    window._wasm.renderErrors();
+  } else {
+    if (!window._wasm || typeof window._wasm.renderSources !== 'function') {
+      // WASM still loading; wasmReady.then(route) will re-fire once ready.
+      return;
+    }
+    window._wasm.renderSources();
+  }
+}
+</script>
+</body>
+</html>

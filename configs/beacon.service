@@ -1,0 +1,25 @@
+[Unit]
+Description=Beacon web service
+After=network.target
+
+[Service]
+Type=simple
+# SVC=root for now; see deploy/README.md "Hardening" to de-root to a dedicated
+# beacon user. The CI deploy user is already confined to artifacts/ + bin/, so it
+# cannot reach .env, the DB, or this unit regardless.
+User=root
+Group=root
+WorkingDirectory=/opt/beacon
+EnvironmentFile=/opt/beacon/.env
+# ExecStart points at the channel symlink, never a concrete VERSION_ID: a deploy
+# is a symlink flip + restart, nothing in this unit changes between releases.
+ExecStart=/opt/beacon/bin/release/webapp --port 8000 --logs-dir /opt/beacon/logs --api-dsn "https://beacon.seilbekskindirov.dev/"
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+# graceful shutdown timeout before SIGKILL
+TimeoutStopSec=15s
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,320 @@
+name: release
+
+# Tests run on every push/PR to main (see ci.main.yml). Deployment fires only
+# when an r* release tag is pushed (e.g. r_0.0.1 or r0.0.1) — the tag is the
+# version that ships and its leading r is the release-channel marker carried into
+# VERSION_ID. NOTE: the PRIME environment also gates which tags may deploy; if its
+# policy is r_*, use r_X.Y.Z (widen it to r* to allow bare rX.Y.Z too).
+#
+# An s* tag runs the gate and nothing else: lint, the full suite, and a
+# production-shape build, then stop. No artifact is uploaded, no symlink moves,
+# no host is contacted. It exists because the full gate is not always runnable
+# locally — the dev machine is an 8 GB Pi with no swap and the kernel OOM-kills
+# golangci-lint under load — so `s_<anything>` is the way to run the real thing
+# on hardware that can. The deploy job guards on the leading r rather than
+# relying on the trigger, so the two can never be confused.
+#
+# Deploy model (see the release-layout convention): build the four binaries,
+# upload them into an immutable, never-reused artifacts/<VERSION_ID>/ dir, flip
+# the bin/release channel symlink, migrate + restart, and health-gate with an
+# automatic symlink rollback. The deploy user writes only inside artifacts/ and
+# bin/; the only privileged actions are two narrow `sudo systemctl` calls.
+on:
+  push:
+    tags:
+      - 'r*'
+      - 's*'
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Pinned to the version the Makefile names, so a release and a local run cannot
+      # disagree about what a finding is.
+      - run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+      # lint, not lint-new: a release is the whole tree shipping, so the whole tree is
+      # what gets linted. The diff-scoped run answered "what does this change add",
+      # which needed a base revision to diff against — and picking one for a tag was
+      # its own trap, because the default origin/alpha lints history backwards the
+      # moment a tag is cut anywhere but alpha's tip. Nothing needs a base now.
+      #
+      # On a tag cut from alpha's tip this repeats ci.main.yml, which every commit
+      # already passed on its PR. It is here to catch a tag cut from somewhere
+      # unexpected, where that guarantee does not hold.
+      #
+      # Tee each step into a shared trace, matching ci.main.yml. Nothing in this job
+      # reads it today — the gate's failure notification was removed, see below —
+      # but keeping the two workflows' gate steps identical costs nothing and means
+      # the trace is already there if a reader is ever added.
+      - name: Lint
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
+          make lint
+      - name: Test
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
+          make test
+
+      # Production-shape build: CGO off, linux/amd64, the same artifacts a release
+      # ships. Catches "tests pass but the production build breaks" — build tags,
+      # race-only files, a missing wasm asset.
+      #
+      # s* only. An r* tag builds for real in the deploy job moments later, so
+      # running it here too would slow every release down to re-prove the same
+      # thing. This mirrors ci.main.yml's Sanity build, which an s* tag would
+      # otherwise be the only gate not to have.
+      - name: Sanity build
+        if: startsWith(github.ref_name, 's')
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
+          mkdir -p ./cmd/web/static
+          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" ./cmd/web/static/wasm_exec.js
+          GOOS=js GOARCH=wasm go build -o ./cmd/web/static/app.wasm ./cmd/wasm
+          GOOS=linux GOARCH=amd64 go build -o ./build/webapp ./cmd/web
+          GOOS=linux GOARCH=amd64 go build -o ./build/collector ./cmd/collector
+          GOOS=linux GOARCH=amd64 go build -o ./build/notifier ./cmd/notifier
+          GOOS=linux GOARCH=amd64 go build -o ./build/migrator ./cmd/migrator
+
+      # No failure notification here, deliberately. One was added and then removed:
+      # the Telegram credentials live on the PRIME environment, which this job does
+      # not carry and must not — it runs `make test`, i.e. arbitrary project and
+      # dependency code, and PRIME holds SSH_PRIVATEKEY for the production host. The
+      # step therefore passed its own `[ -n "$TOKEN" ] || exit 0` guard and reported
+      # success while sending nothing, which is worse than an absent step: a reader
+      # scanning the job would conclude alerting was covered.
+      #
+      # A failed gate is not silent regardless. GitHub emails the actor who pushed
+      # the tag, and every release failure in this project's history has been a gate
+      # failure, so that is the channel that has always carried them. See #118.
+
+  deploy:
+    # r* only. The trigger admits s* as well, and an s* tag must never reach a
+    # host: guarding here rather than on the trigger means the gate job is shared
+    # verbatim between the two, so what an s* tag proves is exactly what an r*
+    # tag will be held to.
+    if: startsWith(github.ref_name, 'r')
+    environment: PRIME
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    # Constant group serializes deploys across tag refs hitting the same server.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      REMOTE_DIR: ${{ vars.REMOTE_DIR }}
+      SSH_HOSTNAME: ${{ vars.SSH_HOSTNAME }}
+      SSH_HOSTPORT: ${{ vars.SSH_HOSTPORT }}
+      SSH_USERNAME: ${{ vars.SSH_USERNAME }}
+      CHANNEL: release
+      HEALTH_URL: http://localhost:8000/health/check
+    steps:
+      - name: Validate release tag
+        run: |
+          set -euo pipefail
+          if ! [[ "$GITHUB_REF_NAME" =~ ^r_?[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+            echo "ERROR: tag ${GITHUB_REF_NAME} is not a release tag (expected rX.Y.Z or r_X.Y.Z, optional -prerelease)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Compute version id
+        id: vid
+        run: |
+          # VERSION_ID = <UTC timestamp>-<tag>; the tag already carries the r_ release-channel prefix.
+          echo "vid=$(date -u +%Y%m%d%H%M%S)-${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build (linux/amd64)
+        env:
+          APP_BUILD_OPTIONS: "-s -w -X 'main.BuildVersion=${{ github.ref_name }}' -X main.BuildTime=${{ steps.vid.outputs.build_time }} -X main.BuildHash=${{ steps.vid.outputs.commit_hash }}"
+        run: |
+          mkdir -p ./cmd/web/static ./build
+          # make build-wasm, not the commands inline: this step used to restate them and
+          # left out the gzip, so app.wasm.gz was absent from the embedded FS and the
+          # server's precompressed path silently fell through to serving 4.59 MB raw.
+          # One definition means the omission cannot recur (#79).
+          make build-wasm
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${APP_BUILD_OPTIONS}" -o ./build/webapp    ./cmd/web
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${APP_BUILD_OPTIONS}" -o ./build/collector ./cmd/collector
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${APP_BUILD_OPTIONS}" -o ./build/notifier  ./cmd/notifier
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${APP_BUILD_OPTIONS}" -o ./build/migrator  ./cmd/migrator
+
+      - name: Setup SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATEKEY }}
+        run: |
+          install -m 600 /dev/null /tmp/deploy_key
+          echo "$SSH_PRIVATE_KEY" > /tmp/deploy_key
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "$SSH_HOSTPORT" "$SSH_HOSTNAME" >> ~/.ssh/known_hosts
+
+      - name: Upload artifact set
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
+          VID="${{ steps.vid.outputs.vid }}"
+          SCP="scp -P $SSH_HOSTPORT -i /tmp/deploy_key"
+          SSH="ssh -p $SSH_HOSTPORT -i /tmp/deploy_key $SSH_USERNAME@$SSH_HOSTNAME"
+
+          # Immutable, never-reused version dir inside the CI sandbox.
+          $SSH "mkdir -p $REMOTE_DIR/artifacts/$VID"
+          $SCP ./build/webapp ./build/collector ./build/notifier ./build/migrator \
+               "$SSH_USERNAME@$SSH_HOSTNAME:$REMOTE_DIR/artifacts/$VID/"
+          $SSH "chmod +x $REMOTE_DIR/artifacts/$VID/*"
+
+      - name: Verify checksums
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
+          VID="${{ steps.vid.outputs.vid }}"
+          SCP="scp -P $SSH_HOSTPORT -i /tmp/deploy_key"
+          SSH="ssh -p $SSH_HOSTPORT -i /tmp/deploy_key $SSH_USERNAME@$SSH_HOSTNAME"
+
+          ( cd ./build && sha256sum webapp collector notifier migrator > artifacts.sha256 )
+          $SCP ./build/artifacts.sha256 "$SSH_USERNAME@$SSH_HOSTNAME:$REMOTE_DIR/artifacts/$VID/artifacts.sha256"
+          $SSH "cd $REMOTE_DIR/artifacts/$VID && sha256sum -c artifacts.sha256 && rm -f artifacts.sha256" \
+            || (echo 'checksum mismatch, aborting'; exit 1)
+
+      - name: Flip channel, migrate, restart, health-gate
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
+          VID="${{ steps.vid.outputs.vid }}"
+          SSH="ssh -p $SSH_HOSTPORT -i /tmp/deploy_key $SSH_USERNAME@$SSH_HOSTNAME"
+
+          # Remember the currently-live version so a failed deploy self-heals.
+          PREV="$($SSH "basename \$(readlink $REMOTE_DIR/bin/$CHANNEL 2>/dev/null || true)" 2>/dev/null || true)"
+          echo "previous: ${PREV:-none}; new: $VID"
+
+          # Flip first (relative target), then migrate with the just-released
+          # migrator (root, via the one-shot unit), then restart the webapp.
+          $SSH "ln -sfn ../artifacts/$VID $REMOTE_DIR/bin/$CHANNEL"
+          $SSH "sudo systemctl start beacon-migrate"
+          $SSH "sudo systemctl restart beacon"
+
+          # wait past RestartSec=5s so a crash-looping service reads as down
+          sleep 6
+          if $SSH "curl -fsS $HEALTH_URL >/dev/null"; then
+            echo "deploy $VID live on $CHANNEL"
+          else
+            echo "health check failed — rolling back to ${PREV:-none}"
+            if [ -n "$PREV" ]; then
+              $SSH "ln -sfn ../artifacts/$PREV $REMOTE_DIR/bin/$CHANNEL && sudo systemctl restart beacon"
+            fi
+            $SSH "sudo journalctl -u beacon -n 50 --no-pager" || true
+            exit 1
+          fi
+
+      # Nothing in this pipeline deploys configs/ — `make init` does, by hand, with root.
+      # A change to a systemd unit, an nginx snippet or the backup script therefore ships,
+      # passes CI, releases, and silently does not take effect. Snapshot compression lived
+      # in git for three weeks that way while the host kept writing uncompressed backups.
+      #
+      # Reporting is all this does. It never fails the deploy: shipping binaries is not
+      # made unsafe by a stale nginx snippet, and a blocking check here would create
+      # pressure to widen the CI user's privileges to fix it automatically — which is the
+      # boundary the whole release layout exists to hold.
+      - name: Report host config drift
+        if: always()
+        continue-on-error: true
+        run: |
+          # GitHub runs `run:` under `bash -e`, so a non-zero exit would abort the step
+          # before the status could be read. `|| status=$?` keeps the pipeline alive and
+          # lets drift be reported rather than swallowed.
+          status=0
+          SSH_CMD="ssh -p $SSH_HOSTPORT -i /tmp/deploy_key $SSH_USERNAME@$SSH_HOSTNAME" \
+            ./configs/config_drift.sh Makefile > "$RUNNER_TEMP/drift.txt" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/drift.txt"
+
+          {
+            echo "### Host configuration drift"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/drift.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$status" -eq 1 ]; then
+            echo "::warning title=Host config drift::The host is running configuration older than this repository. See the job summary; run 'make init' or copy the file across by hand."
+          elif [ "$status" -ne 0 ]; then
+            echo "::warning title=Config drift check failed::The drift check could not run. See the job summary."
+          fi
+
+      - name: Prune old artifacts
+        if: success()
+        run: |
+          SSH="ssh -p $SSH_HOSTPORT -i /tmp/deploy_key $SSH_USERNAME@$SSH_HOSTNAME"
+          # Keep the newest 5 versions plus anything a channel still points at.
+          $SSH 'set -e; APP='"$REMOTE_DIR"'; KEEP=5; \
+            in_use="$(for l in $APP/bin/*; do [ -e "$l" ] && basename "$(readlink -f "$l")"; done | sort -u)"; \
+            ls -1dt $APP/artifacts/*/ 2>/dev/null | tail -n +$((KEEP+1)) | while read -r d; do \
+              v="$(basename "$d")"; grep -qxF "$v" <<<"$in_use" || rm -rf "$d"; \
+            done'
+
+      - name: Cleanup SSH
+        if: always()
+        run: rm -f /tmp/deploy_key
+
+      - name: Notify success
+        if: success()
+        env:
+          ACTION_EMITER_TBOT_TOKEN: ${{ secrets.ACTION_EMITER_TBOT_TOKEN }}
+          TELEGRAM_ROOT_CHAT_ID: ${{ vars.TELEGRAM_ROOT_CHAT_ID }}
+          APP_LABEL: ""
+          ACTION: ""
+        run: |
+          [ -n "$ACTION_EMITER_TBOT_TOKEN" ] && [ -n "$TELEGRAM_ROOT_CHAT_ID" ] || exit 0
+          PROJECT_TAG=$(echo "${GITHUB_REPOSITORY##*/}" | tr 'a-z-' 'A-Z_' | tr -cd 'A-Z0-9_')
+          WF_REF="${GITHUB_WORKFLOW_REF%@*}"; WF_FILE="${WF_REF##*/}"
+          LABEL="${APP_LABEL:+$APP_LABEL }"
+          ACTION="${ACTION:-deploy}"
+          text=$(printf '#%s %s%s <b>passed</b>\n<b>%s</b> <i>(%s)</i>\nref:  %s (%s)\nrun:  <a href="%s/%s/actions/runs/%s">#%s</a>' \
+            "$PROJECT_TAG" "$LABEL" "$ACTION" "$GITHUB_REPOSITORY" "$WF_FILE" "$GITHUB_REF_NAME" "${GITHUB_SHA:0:7}" \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ID")
+          curl -s -X POST "https://api.telegram.org/bot${ACTION_EMITER_TBOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_ROOT_CHAT_ID}" \
+            --data-urlencode "text=${text}" \
+            -d parse_mode=HTML -d disable_web_page_preview=true >/dev/null || true
+
+      - name: Notify failure
+        if: failure()
+        env:
+          ACTION_EMITER_TBOT_TOKEN: ${{ secrets.ACTION_EMITER_TBOT_TOKEN }}
+          TELEGRAM_ROOT_CHAT_ID: ${{ vars.TELEGRAM_ROOT_CHAT_ID }}
+          APP_LABEL: ""
+          ACTION: ""
+        run: |
+          [ -n "$ACTION_EMITER_TBOT_TOKEN" ] && [ -n "$TELEGRAM_ROOT_CHAT_ID" ] || exit 0
+          PROJECT_TAG=$(echo "${GITHUB_REPOSITORY##*/}" | tr 'a-z-' 'A-Z_' | tr -cd 'A-Z0-9_')
+          WF_REF="${GITHUB_WORKFLOW_REF%@*}"; WF_FILE="${WF_REF##*/}"
+          LABEL="${APP_LABEL:+$APP_LABEL }"
+          ACTION="${ACTION:-deploy}"
+          reason=""
+          if [ -f "$RUNNER_TEMP/deploy_trace.log" ]; then
+            reason=$(grep -iE 'error|sudo:|denied|mismatch|not active|not found|refused|timed out|no route|rolling back|health check' \
+              "$RUNNER_TEMP/deploy_trace.log" | tail -n 3 | cut -c1-300)
+          fi
+          text=$(printf '#%s %s%s <b>failed</b>\n<b>%s</b> <i>(%s)</i>\nref:  %s (%s)\nrun:  <a href="%s/%s/actions/runs/%s">#%s</a>' \
+            "$PROJECT_TAG" "$LABEL" "$ACTION" "$GITHUB_REPOSITORY" "$WF_FILE" "$GITHUB_REF_NAME" "${GITHUB_SHA:0:7}" \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ID")
+          if [ -n "$reason" ]; then
+            esc=$(printf '%s' "$reason" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+            text=$(printf '%s\n<pre>%s</pre>' "$text" "$esc")
+          fi
+          curl -s -X POST "https://api.telegram.org/bot${ACTION_EMITER_TBOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_ROOT_CHAT_ID}" \
+            --data-urlencode "text=${text}" \
+            -d parse_mode=HTML -d disable_web_page_preview=true >/dev/null || true

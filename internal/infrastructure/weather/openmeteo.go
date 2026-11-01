@@ -1,0 +1,759 @@
+// Package weather provides an HTTP client for the Open-Meteo weather API
+// (keyless, global JSON), the sole weather data source.
+package weather
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math/rand/v2"
+	"net/http"
+	"net/url"
+	"strconv"
+	"time"
+
+	_ "time/tzdata" // embed IANA tzdata so LoadLocation works without system tzdata (WASM, containers)
+
+	"github.com/prorochestvo/loginjector"
+	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/seilbekskindirov/beacon/internal/domain"
+)
+
+// GeoResult holds the fields returned by Open-Meteo geocoding for a single match.
+type GeoResult struct {
+	// ID is the Open-Meteo internal city identifier, used as the location_id key.
+	ID          int64
+	Name        string
+	Latitude    float64
+	Longitude   float64
+	Country     string
+	CountryCode string
+	Admin1      string
+	Timezone    string
+	Population  int64
+}
+
+// OpenMeteo is a proxy-aware HTTP client for the Open-Meteo API (keyless).
+// Construct with NewOpenMeteo; do not copy after first use.
+type OpenMeteo struct {
+	httpClient *http.Client
+	logger     io.Writer
+}
+
+// NewOpenMeteoWithClient creates an OpenMeteo client with a caller-supplied HTTP
+// client. Use this in tests to inject a custom transport or an httptest server.
+// A nil logger discards.
+func NewOpenMeteoWithClient(client *http.Client, logger io.Writer) *OpenMeteo {
+	if logger == nil {
+		logger = io.Discard
+	}
+	return &OpenMeteo{httpClient: client, logger: logger}
+}
+
+// NewOpenMeteo creates an OpenMeteo client whose outbound requests are routed
+// through proxyURL when non-empty (direct connection otherwise).
+//
+// An empty proxyURL produces a direct connection. The Go proxy environment
+// triplet (HTTPS_PROXY, HTTP_PROXY, NO_PROXY) is intentionally NOT consulted —
+// proxy config is injected explicitly via BEACON_PROXY_URL, matching the rest
+// of the app.
+//
+// logger receives one line per retry and one per recovery, so a run that survived a
+// flaky upstream still says so. A clean first attempt writes nothing. A nil logger
+// discards.
+func NewOpenMeteo(proxyURL string, logger io.Writer) (*OpenMeteo, error) {
+	transport := &http.Transport{}
+
+	if proxyURL != "" {
+		parsed, err := url.Parse(proxyURL)
+		if err != nil {
+			// Redact the raw URL from the log; the operator has it in the env file.
+			return nil, errors.New("open-meteo: parse proxy URL: invalid format (value redacted; check the configured proxy URL)")
+		}
+		transport.Proxy = http.ProxyURL(parsed)
+	}
+
+	if logger == nil {
+		logger = io.Discard
+	}
+
+	return &OpenMeteo{
+		httpClient: &http.Client{
+			Timeout:   openMeteoTimeout,
+			Transport: transport,
+		},
+		logger: logger,
+	}, nil
+}
+
+// Geocode queries the Open-Meteo geocoding API for cities matching name and
+// returns up to count results. Language is fixed to "ru" so geocoding display
+// names come back in Russian (this is a display preference; it does not change
+// IDs or coordinates).
+//
+// Returns an empty slice (not an error) when the API returns no results.
+func (o *OpenMeteo) Geocode(ctx context.Context, name string, count int) ([]GeoResult, error) {
+	u, err := url.Parse(openMeteoGeocodingBase)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+	q := u.Query()
+	q.Set("name", name)
+	q.Set("count", strconv.Itoa(count))
+	q.Set("language", "ru")
+	u.RawQuery = q.Encode()
+
+	body, err := o.get(ctx, u.String())
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Results []struct {
+			ID          int64   `json:"id"`
+			Name        string  `json:"name"`
+			Latitude    float64 `json:"latitude"`
+			Longitude   float64 `json:"longitude"`
+			Country     string  `json:"country"`
+			CountryCode string  `json:"country_code"`
+			Admin1      string  `json:"admin1"`
+			Timezone    string  `json:"timezone"`
+			Population  int64   `json:"population"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("open-meteo geocode: decode response: %w", err),
+			loginjector.NewTraceError(),
+		)
+	}
+
+	results := make([]GeoResult, 0, len(resp.Results))
+	for _, r := range resp.Results {
+		results = append(results, GeoResult{
+			ID:          r.ID,
+			Name:        r.Name,
+			Latitude:    r.Latitude,
+			Longitude:   r.Longitude,
+			Country:     r.Country,
+			CountryCode: r.CountryCode,
+			Admin1:      r.Admin1,
+			Timezone:    r.Timezone,
+			Population:  r.Population,
+		})
+	}
+	return results, nil
+}
+
+// Forecast fetches the current + daily (today, index 0) forecast for the given
+// coordinates from the Open-Meteo forecast API.
+//
+// The observation Provider is always "open-meteo" (a literal data token). WeatherCode
+// carries the raw WMO integer; resolve it via domain.WMOWeatherCode at render time.
+//
+// timezone=auto makes the daily block local to the queried coordinates, so index 0 of
+// daily[] is today in the city-local calendar. sunrise/sunset are also city-local.
+//
+// The returned observation has a nil ID (caller or repository mints it).
+func (o *OpenMeteo) Forecast(ctx context.Context, lat, lng float64) (*domain.WeatherObservation, error) {
+	u, err := url.Parse(openMeteoForecastBase)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+	q := u.Query()
+	q.Set("latitude", fmt.Sprintf("%f", lat))
+	q.Set("longitude", fmt.Sprintf("%f", lng))
+	q.Set("current", "temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,precipitation,weather_code,cloud_cover")
+	q.Set("daily", "temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,weather_code,sunrise,sunset")
+	q.Set("hourly", "precipitation_probability,temperature_2m")
+	q.Set("timezone", "auto")
+	// forecast_days=2 extends the hourly block past local midnight so a "next 6h"
+	// rain-alert window is always available late in the day. daily[0] remains today
+	// (the API always starts daily[] from the current local calendar day with
+	// timezone=auto), so the morning-summary path is unaffected.
+	q.Set("forecast_days", "2")
+	u.RawQuery = q.Encode()
+
+	body, err := o.get(ctx, u.String())
+	if err != nil {
+		return nil, err
+	}
+
+	return decodeOpenMeteoForecast(body, lat, lng)
+}
+
+// ForecastRange fetches the multi-week daily forecast for the given coordinates: one
+// domain.WeatherForecastDay per city-local calendar day, starting with today, over
+// domain.WeatherOutlookHorizonDays days.
+//
+// It is a second request rather than a widening of Forecast, on purpose. Forecast decodes
+// daily index [0], and that index IS today for the morning summary and for all four
+// daily-metric alert latches; changing what it asks for or how it decodes would put their
+// meaning at risk of a shift that nothing would report. A separate request costs roughly one
+// weighted API call per location per day against a budget of 10,000, which is the cheaper
+// side of that trade.
+//
+// The returned days carry no LocationID — the caller owns the location key — and no ID; the
+// repository mints one.
+func (o *OpenMeteo) ForecastRange(ctx context.Context, lat, lng float64) ([]domain.WeatherForecastDay, error) {
+	u, err := url.Parse(openMeteoForecastBase)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+	q := u.Query()
+	q.Set("latitude", fmt.Sprintf("%f", lat))
+	q.Set("longitude", fmt.Sprintf("%f", lng))
+	// rain_sum and snowfall_sum are requested alongside precipitation_sum rather than
+	// derived from it: the rain-or-snow distinction is the whole question this fetch
+	// answers, and a combined total cannot be split back apart. Their units differ —
+	// rain in millimetres, snowfall in centimetres.
+	q.Set("daily", "temperature_2m_max,temperature_2m_min,rain_sum,snowfall_sum,precipitation_sum,precipitation_probability_max,weather_code")
+	q.Set("timezone", "auto")
+	q.Set("forecast_days", strconv.Itoa(domain.WeatherOutlookHorizonDays))
+	u.RawQuery = q.Encode()
+
+	body, err := o.get(ctx, u.String())
+	if err != nil {
+		return nil, err
+	}
+
+	return decodeOpenMeteoForecastRange(body)
+}
+
+// get fetches rawURL, re-sending the request when the failure looks transient.
+//
+// Open-Meteo intermittently answers 5xx — 59% of forecast fetches met one over five days
+// of production ticks — and without a retry each one dropped that location for the whole
+// run. The request is a GET, so re-sending is safe by construction.
+//
+// Attempts are bounded by openMeteoMaxAttempts and the wait between them respects ctx, so
+// a tick cancelled mid-backoff stops immediately instead of sleeping out its schedule.
+func (o *OpenMeteo) get(ctx context.Context, rawURL string) ([]byte, error) {
+	var lastErr error
+
+	// Both exits carry the elapsed time. That is what sized the budget (issue #27),
+	// and it is worth keeping: the two numbers only mean something against each
+	// other. Give-ups came back faster than recoveries — a median 2.39s against
+	// 3.19s — because a 503 is refused in about half a second while the answer that
+	// finally succeeds takes over two, so most of a give-up is round trips rather
+	// than waiting. Re-read them before moving these constants again.
+	start := time.Now()
+
+	for attempt := 1; attempt <= openMeteoMaxAttempts; attempt++ {
+		body, err := o.attempt(ctx, rawURL)
+		if err == nil {
+			if attempt > 1 {
+				fmt.Fprintf(o.logger, "open-meteo: recovered on attempt %d of %d after %s\n",
+					attempt, openMeteoMaxAttempts, retryElapsed(start))
+			}
+			return body, nil
+		}
+
+		lastErr = err
+		if !isRetryable(err) || attempt == openMeteoMaxAttempts {
+			break
+		}
+
+		fmt.Fprintf(o.logger, "open-meteo: attempt %d of %d failed, retrying: %v\n", attempt, openMeteoMaxAttempts, err)
+
+		if waitErr := sleepWithContext(ctx, retryBackoff(attempt)); waitErr != nil {
+			return nil, errors.Join(waitErr, lastErr, loginjector.NewTraceError())
+		}
+	}
+
+	// The attempt count rides in the message so an outright failure in the log says how
+	// hard it tried, rather than looking identical to a single unlucky request.
+	return nil, errors.Join(
+		fmt.Errorf("open-meteo: giving up after %d attempt(s) in %s: %w",
+			attemptsMade(lastErr), retryElapsed(start), lastErr),
+		loginjector.NewTraceError(),
+	)
+}
+
+// redactURLError rebuilds a *url.Error with the query string stripped from its URL.
+//
+// The status-code branch below composes its own message from host and path deliberately, to
+// keep coordinates and search terms out of the logs. A transport failure defeats that on its
+// own: net/http returns a *url.Error whose Error() embeds the URL verbatim, so a plain
+// `dial tcp: i/o timeout` arrives carrying every latitude, longitude and query term the
+// request was built with, and any caller formatting it with %v prints them.
+//
+// It is called on the error http.Client.Do returns, where the *url.Error is the whole chain.
+// Anything else is handed back untouched.
+func redactURLError(err error) error {
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		return err
+	}
+
+	// A URL that will not parse yields the empty string rather than the original: the point
+	// is that nothing unexamined reaches the log.
+	redacted := ""
+	if parsed, parseErr := url.Parse(urlErr.URL); parseErr == nil {
+		redacted = parsed.Host + parsed.Path
+	}
+	return &url.Error{Op: urlErr.Op, URL: redacted, Err: urlErr.Err}
+}
+
+// attempt performs exactly one request. Its errors are classified by retryableError so
+// get can tell an upstream hiccup from an answer that will not change.
+func (o *OpenMeteo) attempt(ctx context.Context, rawURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("open-meteo: create request: %w", err)
+	}
+	req.Header.Set("User-Agent", openMeteoUserAgent)
+
+	resp, err := o.httpClient.Do(req)
+	if err != nil {
+		// Transport-level failures — timeout, reset, refused — are indistinguishable
+		// from a 5xx from here and just as transient. A cancelled context is not: the
+		// caller asked to stop, and re-sending would ignore that.
+		err = redactURLError(err)
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("open-meteo: do request: %w", err)
+		}
+		return nil, retryableError{err: fmt.Errorf("open-meteo: do request: %w", err)}
+	}
+	defer func(c io.Closer) { _ = c.Close() }(resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Omit the query string from the error to avoid leaking latitude/longitude
+		// coordinates (forecast) or search terms (geocode) into logs.
+		statusErr := fmt.Errorf("open-meteo: unexpected status %d for %s%s", resp.StatusCode, req.URL.Host, req.URL.Path)
+		if resp.StatusCode >= 500 {
+			return nil, retryableError{err: statusErr}
+		}
+		// Everything else in 4xx describes a request that will not become valid by being
+		// sent again. 429 is included deliberately: Open-Meteo is keyless and limits by
+		// IP, so an immediate re-send asks for the same refusal and pushes the caller
+		// further into the limit.
+		return nil, statusErr
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, openMeteoMaxResponseBytes))
+	if err != nil {
+		// A body that died mid-read is the same class of upstream fault as a 5xx.
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("open-meteo: read response body: %w", err)
+		}
+		return nil, retryableError{err: fmt.Errorf("open-meteo: read response body: %w", err)}
+	}
+	return body, nil
+}
+
+const (
+	openMeteoGeocodingBase = "https://geocoding-api.open-meteo.com/v1/search"
+	openMeteoForecastBase  = "https://api.open-meteo.com/v1/forecast"
+	openMeteoUserAgent     = internal.UserAgent
+	openMeteoTimeout       = 10 * time.Second
+
+	// openMeteoMaxResponseBytes caps the response body read to protect against
+	// runaway servers returning multi-megabyte payloads.
+	openMeteoMaxResponseBytes = 1 << 20 // 1 MiB
+
+	// openMeteoMaxAttempts is how many times one request may be sent, first try
+	// included.
+	//
+	// Five, from 134 hourly production ticks between 2026-08-11 and 2026-08-16
+	// (issue #27). Over that window 105 of 177 forecast fetches met a 503 on the
+	// first try; 22 recovered on attempt 2 and 21 on attempt 3, leaving 62 — 35%
+	// of all fetches — failing outright. The number that decides the budget is the
+	// recovery rate *per attempt*: 21% at attempt 2 and 25% at attempt 3, flat
+	// within measurement error. Nothing is running out, so each further attempt
+	// buys about as much as the last one did, and two more should take the failure
+	// rate to roughly 21%.
+	//
+	// Five rather than more because of openMeteoTightestCallerDeadline: it is the
+	// largest budget whose waiting still fits inside the interactive city search
+	// this same client serves.
+	openMeteoMaxAttempts = 5
+
+	// openMeteoRetryBackoff is the wait before the second attempt; it doubles for
+	// each attempt after that until openMeteoRetryBackoffCap. Short on purpose: the
+	// failure being absorbed is an upstream hiccup answered in milliseconds, not a
+	// rate limit that needs to decay, and the whole collection run waits on this.
+	openMeteoRetryBackoff = 250 * time.Millisecond
+
+	// openMeteoRetryBackoffCap stops the doubling, because waiting longer is not
+	// what recovers these requests.
+	//
+	// The production window measured recovery at 21% after a 250ms wait and 25%
+	// after 500ms — the same rate, not a rising one. The failures also arrive in
+	// episodes lasting about three hours for one location, and an hour between
+	// hourly ticks does not clear them, so no wait this client can afford outlasts
+	// one. Attempts are what recover a request; spacing them further apart only
+	// spends the budget on sleeping.
+	openMeteoRetryBackoffCap = 500 * time.Millisecond
+
+	// openMeteoRetryJitter is the fraction of each backoff that is randomised, so
+	// several locations failing on the same tick do not re-send in lockstep.
+	openMeteoRetryJitter = 0.2
+
+	// openMeteoTightestCallerDeadline is the shortest context any caller gives this
+	// client: the Mini App city search bounds its geocode at 5s (weatherGeoTimeout
+	// in the handlers package). It is recorded here because the retry schedule has
+	// to fit inside it — sleepWithContext honours the deadline, so a budget wider
+	// than this stops being a retry and becomes a slower way to fail a search.
+	// TestRetryScheduleFitsTheTightestCaller is what keeps the two in step.
+	openMeteoTightestCallerDeadline = 5 * time.Second
+)
+
+// retryableError marks a failure as an upstream hiccup rather than an answer.
+type retryableError struct{ err error }
+
+func (e retryableError) Error() string { return e.err.Error() }
+func (e retryableError) Unwrap() error { return e.err }
+
+// LocationKey returns the canonical location_id for geo. It uses the Open-Meteo
+// integer geocoding id (as a decimal string) when present; otherwise it falls
+// back to coordinates rounded to 4 decimal places so the key is stable. The
+// same key must be used by both the city-subscription handler (at subscribe time)
+// and the collector (at fetch time) so that observations and subscriptions line up.
+func LocationKey(geo GeoResult) string {
+	if geo.ID != 0 {
+		return strconv.FormatInt(geo.ID, 10)
+	}
+	return fmt.Sprintf("%.4f,%.4f", geo.Latitude, geo.Longitude)
+}
+
+// decodeOpenMeteoForecast is the pure-decode step extracted so tests can exercise
+// it without a live HTTP server.
+func decodeOpenMeteoForecast(body []byte, lat, lng float64) (*domain.WeatherObservation, error) {
+	var resp struct {
+		Timezone string `json:"timezone"`
+		Current  struct {
+			Time                string  `json:"time"`
+			Temperature2m       float64 `json:"temperature_2m"`
+			ApparentTemperature float64 `json:"apparent_temperature"`
+			RelativeHumidity2m  int     `json:"relative_humidity_2m"`
+			WindSpeed10m        float64 `json:"wind_speed_10m"`
+			WindDirection10m    int     `json:"wind_direction_10m"`
+			Precipitation       float64 `json:"precipitation"`
+			WeatherCode         int     `json:"weather_code"`
+			CloudCover          int     `json:"cloud_cover"`
+		} `json:"current"`
+		Daily struct {
+			Time                 []string  `json:"time"`
+			Temperature2mMax     []float64 `json:"temperature_2m_max"`
+			Temperature2mMin     []float64 `json:"temperature_2m_min"`
+			PrecipitationSum     []float64 `json:"precipitation_sum"`
+			PrecipitationProbMax []int     `json:"precipitation_probability_max"`
+			WeatherCode          []int     `json:"weather_code"`
+			Sunrise              []string  `json:"sunrise"`
+			Sunset               []string  `json:"sunset"`
+		} `json:"daily"`
+		Hourly struct {
+			Time                     []string  `json:"time"`
+			PrecipitationProbability []*int    `json:"precipitation_probability"`
+			Temperature2m            []float64 `json:"temperature_2m"`
+		} `json:"hourly"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("open-meteo forecast: decode response: %w", err),
+			loginjector.NewTraceError(),
+		)
+	}
+
+	if len(resp.Daily.Time) == 0 {
+		return nil, errors.Join(
+			errors.New("open-meteo forecast: daily[] array is empty"),
+			loginjector.NewTraceError(),
+		)
+	}
+
+	// Load the city timezone returned by timezone=auto. Open-Meteo returns sunrise
+	// and sunset as local ISO strings without an offset (e.g. "2024-01-15T07:23").
+	// Parsing them in the correct location produces a proper UTC instant; without
+	// this, time.Parse tags them as UTC and stores a wrong instant (off by the
+	// city's UTC offset).
+	tzLoc, err := time.LoadLocation(resp.Timezone)
+	if err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("open-meteo forecast: load timezone %q: %w", resp.Timezone, err),
+			loginjector.NewTraceError(),
+		)
+	}
+
+	capturedAt := time.Now().UTC()
+
+	obs := &domain.WeatherObservation{
+		Provider:     domain.ProviderOpenMeteo,
+		Latitude:     lat,
+		Longitude:    lng,
+		CapturedAt:   capturedAt,
+		ForecastDate: resp.Daily.Time[0],
+	}
+
+	// Current snapshot fields.
+	obs.TempCurrent = float64Ptr(resp.Current.Temperature2m)
+	obs.TempFeels = float64Ptr(resp.Current.ApparentTemperature)
+	obs.Humidity = intPtr(resp.Current.RelativeHumidity2m)
+	obs.WindSpeed = float64Ptr(resp.Current.WindSpeed10m)
+	obs.WindDir = intPtr(resp.Current.WindDirection10m)
+	obs.Precip = float64Ptr(resp.Current.Precipitation)
+	obs.CloudCover = intPtr(resp.Current.CloudCover)
+
+	// Current weather_code comes from the current block (not the daily block, which
+	// is the dominant code for the whole day).
+	obs.WeatherCode = intPtr(resp.Current.WeatherCode)
+
+	// Daily forecast for today (index 0).
+	if len(resp.Daily.Temperature2mMax) > 0 {
+		obs.TempMax = float64Ptr(resp.Daily.Temperature2mMax[0])
+	}
+	if len(resp.Daily.Temperature2mMin) > 0 {
+		obs.TempMin = float64Ptr(resp.Daily.Temperature2mMin[0])
+	}
+	if len(resp.Daily.PrecipitationSum) > 0 {
+		obs.PrecipSum = float64Ptr(resp.Daily.PrecipitationSum[0])
+	}
+	if len(resp.Daily.PrecipitationProbMax) > 0 {
+		obs.PrecipProbMax = intPtr(resp.Daily.PrecipitationProbMax[0])
+	}
+	if len(resp.Daily.WeatherCode) > 0 {
+		// Overwrite with the dominant daily code (better for morning summary display
+		// than the current-snapshot code).
+		obs.WeatherCode = intPtr(resp.Daily.WeatherCode[0])
+	}
+
+	// sunrise and sunset are local ISO8601 strings without an offset because
+	// timezone=auto makes them city-local. ParseInLocation converts them to
+	// correct UTC instants using tzLoc loaded above; callers render via .In(cityLoc).
+	if len(resp.Daily.Sunrise) > 0 && resp.Daily.Sunrise[0] != "" {
+		t, err := time.ParseInLocation("2006-01-02T15:04", resp.Daily.Sunrise[0], tzLoc)
+		if err != nil {
+			return nil, errors.Join(
+				fmt.Errorf("open-meteo forecast: parse sunrise %q: %w", resp.Daily.Sunrise[0], err),
+				loginjector.NewTraceError(),
+			)
+		}
+		obs.Sunrise = &t
+	}
+	if len(resp.Daily.Sunset) > 0 && resp.Daily.Sunset[0] != "" {
+		t, err := time.ParseInLocation("2006-01-02T15:04", resp.Daily.Sunset[0], tzLoc)
+		if err != nil {
+			return nil, errors.Join(
+				fmt.Errorf("open-meteo forecast: parse sunset %q: %w", resp.Daily.Sunset[0], err),
+				loginjector.NewTraceError(),
+			)
+		}
+		obs.Sunset = &t
+	}
+
+	// Hourly block: decode time, precipitation_probability, and temperature_2m arrays.
+	// Array lengths may legitimately differ when a provider omits a field for some
+	// hours; guard against out-of-bounds by using the time array as the spine and
+	// indexing into the others only when long enough.
+	nHourly := len(resp.Hourly.Time)
+	if nHourly > 0 {
+		obs.Hourly = make([]domain.WeatherHourlyPoint, 0, nHourly)
+		for i, ts := range resp.Hourly.Time {
+			t, err := time.ParseInLocation("2006-01-02T15:04", ts, tzLoc)
+			if err != nil {
+				// Malformed time string — skip this slot rather than hard-failing; the
+				// rain evaluator degrades gracefully when fewer points are present.
+				continue
+			}
+			pt := domain.WeatherHourlyPoint{Time: t.UTC()}
+			if i < len(resp.Hourly.PrecipitationProbability) && resp.Hourly.PrecipitationProbability[i] != nil {
+				v := *resp.Hourly.PrecipitationProbability[i]
+				pt.PrecipProb = &v
+			}
+			if i < len(resp.Hourly.Temperature2m) {
+				v := resp.Hourly.Temperature2m[i]
+				pt.Temp = &v
+			}
+			obs.Hourly = append(obs.Hourly, pt)
+		}
+	}
+
+	return obs, nil
+}
+
+// decodeOpenMeteoForecastRange is the pure-decode step for ForecastRange, extracted so
+// tests can exercise it without a live HTTP server.
+//
+// Every measurement array is read by index against daily.time and every element is a
+// pointer. Open-Meteo returns the arrays parallel and writes JSON null where it has no
+// value, so a short array or a null must yield a nil measurement — decoding into []float64
+// would turn both into a very believable 0.0, and "0 mm of rain" on a day the model has no
+// answer for is exactly the kind of wrong that reads as data.
+func decodeOpenMeteoForecastRange(body []byte) ([]domain.WeatherForecastDay, error) {
+	var resp struct {
+		Daily struct {
+			Time                 []string   `json:"time"`
+			Temperature2mMax     []*float64 `json:"temperature_2m_max"`
+			Temperature2mMin     []*float64 `json:"temperature_2m_min"`
+			RainSum              []*float64 `json:"rain_sum"`
+			SnowfallSum          []*float64 `json:"snowfall_sum"`
+			PrecipitationSum     []*float64 `json:"precipitation_sum"`
+			PrecipitationProbMax []*int     `json:"precipitation_probability_max"`
+			WeatherCode          []*int     `json:"weather_code"`
+		} `json:"daily"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("open-meteo forecast range: decode response: %w", err),
+			loginjector.NewTraceError(),
+		)
+	}
+
+	if len(resp.Daily.Time) == 0 {
+		return nil, errors.Join(
+			errors.New("open-meteo forecast range: daily[] array is empty"),
+			loginjector.NewTraceError(),
+		)
+	}
+
+	// One capture instant for the whole fetch: the sixteen rows are a single observation of
+	// the future, and the collector's daily gate compares against exactly this value.
+	capturedAt := time.Now().UTC()
+
+	// Bound the window here rather than trusting forecast_days=16 to have been honoured.
+	// Nothing downstream re-checks it, and two invariants rest on it. The table has no
+	// archive tier because it is a bounded working set of locations x 16, and every row of a
+	// fetch is written in one BEGIN IMMEDIATE, which takes the WAL write lock at BEGIN — an
+	// oversized response would hold it against the notifier and the web server for the length
+	// of the whole insert.
+	//
+	// The window is measured from the response's own first date, not from the clock. Forecast
+	// dates are city-local and capturedAt is UTC, so comparing the two needs a slack day and
+	// still misreads a host whose clock has not synchronised: on a machine with no
+	// battery-backed RTC, a boot before timesyncd converges would filter a perfectly good
+	// response down to nothing. The first date is in the same frame as the rest, so the
+	// comparison is exact and needs no clock at all.
+	windowEnd := forecastRangeWindowEnd(resp.Daily.Time)
+
+	// An absolute ceiling still applies, for the one thing a relative bound cannot catch.
+	// Retention deletes the past and nothing prunes the far future, so a row dated years out
+	// would be permanent and would sit at the head of the read window forever. A year of
+	// headroom is far past any plausible clock skew and far short of a junk date.
+	permanenceCeiling := capturedAt.AddDate(1, 0, 0).Format(time.DateOnly)
+
+	days := make([]domain.WeatherForecastDay, 0, domain.WeatherOutlookHorizonDays)
+	for i, date := range resp.Daily.Time {
+		if len(days) == domain.WeatherOutlookHorizonDays {
+			break
+		}
+		if date == "" {
+			continue // a day with no calendar date has no natural key to be stored under
+		}
+		if windowEnd != "" && date > windowEnd {
+			continue // outside the window the response itself anchors; see windowEnd above
+		}
+		if date > permanenceCeiling {
+			continue // see permanenceCeiling above
+		}
+		days = append(days, domain.WeatherForecastDay{
+			Provider:      domain.ProviderOpenMeteo,
+			ForecastDate:  date,
+			CapturedAt:    capturedAt,
+			TempMax:       valueAt(resp.Daily.Temperature2mMax, i),
+			TempMin:       valueAt(resp.Daily.Temperature2mMin, i),
+			RainSum:       valueAt(resp.Daily.RainSum, i),
+			SnowfallSum:   valueAt(resp.Daily.SnowfallSum, i),
+			PrecipSum:     valueAt(resp.Daily.PrecipitationSum, i),
+			PrecipProbMax: valueAt(resp.Daily.PrecipitationProbMax, i),
+			WeatherCode:   valueAt(resp.Daily.WeatherCode, i),
+		})
+	}
+
+	// A non-empty daily[] that yields nothing storable is a failure, not an empty forecast.
+	// Returning it as a success would have the collector record the fetch, write no row, and
+	// leave captured_at where it was — so the daily gate stays open and the location is
+	// re-fetched on every tick from then on, behind a log line reading fetched=1 deferred=0
+	// failed=0.
+	if len(days) == 0 {
+		return nil, errors.Join(
+			errors.New("open-meteo forecast range: daily[] holds no storable day"),
+			loginjector.NewTraceError(),
+		)
+	}
+
+	return days, nil
+}
+
+// forecastRangeWindowEnd returns the last calendar date a long-range response may carry,
+// measured from its own first dated entry so the bound stays inside the city-local frame the
+// dates are written in.
+//
+// It returns the empty string when no entry carries a parseable date, which the caller reads
+// as "no relative bound available" and falls back to the row count alone.
+func forecastRangeWindowEnd(times []string) string {
+	for _, date := range times {
+		first, err := time.Parse(time.DateOnly, date)
+		if err != nil {
+			continue
+		}
+		return first.AddDate(0, 0, domain.WeatherOutlookHorizonDays).Format(time.DateOnly)
+	}
+	return ""
+}
+
+func isRetryable(err error) bool {
+	var r retryableError
+	return errors.As(err, &r)
+}
+
+// attemptsMade reports how many attempts a failure represents: a retryable one exhausted
+// the budget, anything else stopped on the first answer.
+func attemptsMade(err error) int {
+	if isRetryable(err) {
+		return openMeteoMaxAttempts
+	}
+	return 1
+}
+
+// retryBackoff is the wait before attempt+1, doubling each time up to
+// openMeteoRetryBackoffCap and randomised within openMeteoRetryJitter so
+// concurrent callers do not re-send in lockstep.
+//
+// The shift is guarded rather than trusted: at attempt 63 it would shift a
+// time.Duration past its own width and hand back a negative or zero wait, which
+// a timer accepts and fires immediately on. The cap makes that unreachable today
+// and the guard makes it unreachable regardless.
+func retryBackoff(attempt int) time.Duration {
+	base := openMeteoRetryBackoffCap
+	if shift := attempt - 1; shift < 32 {
+		base = min(openMeteoRetryBackoff<<shift, openMeteoRetryBackoffCap)
+	}
+	spread := float64(base) * openMeteoRetryJitter
+	// rand is fine here: this randomises timing, it does not protect anything.
+	return time.Duration(float64(base) - spread + rand.Float64()*2*spread)
+}
+
+// retryElapsed reports how long a retried request has been running, rounded to
+// milliseconds: these numbers are read off log lines and compared against each
+// other, and the nanosecond tail time.Duration prints by default makes two of
+// them hard to rank at a glance.
+func retryElapsed(start time.Time) time.Duration {
+	return time.Since(start).Round(time.Millisecond)
+}
+
+// sleepWithContext waits for d, or returns ctx's error the moment it is cancelled.
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// valueAt returns the i-th element of a parallel Open-Meteo measurement array, or nil when
+// the array is shorter than daily.time or holds a null at that index.
+func valueAt[T any](values []*T, i int) *T {
+	if i >= len(values) {
+		return nil
+	}
+	return values[i]
+}
+
+func float64Ptr(v float64) *float64 { return &v }
+func intPtr(v int) *int             { return &v }

@@ -1,0 +1,14 @@
+# Narrow passwordless sudo for the CI/CD deploy user (github_aide).
+# Install to /etc/sudoers.d/beacon-deploy with mode 0440; validate: sudo visudo -c.
+#
+# Restarting/inspecting a service is not privilege escalation, so this is safe to
+# grant; the deploy user writes only inside /opt/beacon/{artifacts,bin} and never
+# touches .env, the DB, or the base dir. restart/start drive the deploy; status
+# and is-active are read-only (they work without sudo too, kept for manual ops);
+# journalctl needs sudo to read the system journal when a deploy fails its health
+# gate. No `systemctl *`, no NOPASSWD: ALL.
+github_aide ALL=(root) NOPASSWD: /usr/bin/systemctl restart beacon, \
+                                 /usr/bin/systemctl status beacon, \
+                                 /usr/bin/systemctl is-active beacon, \
+                                 /usr/bin/systemctl start beacon-migrate, \
+                                 /usr/bin/journalctl -u beacon *
