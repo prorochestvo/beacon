@@ -58,7 +58,7 @@ procedure: `standards-layout` R21.
 
 Pure-Go build, `CGO_ENABLED=0` by default. Standard `make` targets (`build`, `run`, `test`, `lint`, `format`, `clean`) — see the Makefile; `make test` runs fmt + vet + `go test -race` + the WASM suite, `make lint` also checks forbidden imports.
 
-**`make test` is the gate; `make lint-new` is advisory until the lint backlog is cleared** — it lints only what changed since `LINT_BASE` (default `origin/alpha`), while `make lint` scans the whole tree as a worklist. Both run **two** steps, `golangci-lint run` *and* `scripts/lint-checks.sh`, so a green `golangci-lint` is not a green gate.
+**`make test` is the gate; `make lint-new` is advisory until the lint backlog is cleared** — it lints only what changed since `LINT_BASE` (default `origin/dev`), while `make lint` scans the whole tree as a worklist. Both run **two** steps, `golangci-lint run` *and* `scripts/lint-checks.sh`, so a green `golangci-lint` is not a green gate.
 
 Gotcha: `-race` needs cgo, so targeted race runs use `CGO_ENABLED=1 go test -race -run TestX ./<pkg>/` (macOS tolerates `0`, Linux does not). Benchmarks (`-bench=.`, no `-race`) don't need cgo. `make test` starts with `go clean -cache`, so a full run rebuilds `modernc.org/sqlite` from scratch — minutes, not seconds. On the 8 GB Pi (no swap) that rebuild is OOM-killed under `-race`; rerun as `go test -race -p 1`, or cut an `s_*` tag and let CI run the gate. When `node` is missing `make test` skips the WASM suite with a warning and still exits 0.
 
@@ -159,7 +159,7 @@ so a line emitted earlier is attributable to nothing. Operators grep the marker 
 `logger -> settings -> dependencies -> repositories -> runners`.
 
 **There is no staging.** An `r_*` tag, prerelease or not, flips the production symlink and
-restarts the service. Tags are cut from `alpha`, not `main` — see the working agreement. Do
+restarts the service. Tags are cut from `dev`, not `main` — see the working agreement. Do
 not tag casually. Delete the superseded alpha tag, local and remote, once the new one is
 live. An **`s_*` tag runs the gate only** — lint, tests, production-shape build, no host
 contact — for when the full gate will not run locally. Remote hosts are read-freely,
@@ -221,8 +221,8 @@ before starting non-trivial work. Project delta:
 
 - **Gate:** `make test`
 - **Lenses:** standard staged set — see `pipeline:working-agreement`.
-- **Branching:** `type/<issue>-<slug>` off **`alpha`**, PR into **`alpha`** (pass `--base alpha`
+- **Branching:** `type/<issue>-<slug>` off **`dev`**, PR into **`dev`** (pass `--base dev`
   explicitly — `gh pr create` defaults to `main`, the stale release pointer). `main` only moves
-  to the latest non-prerelease tag and trails `alpha`; never commit to either directly. A merge
-  into `alpha` does not auto-close issues (`Closes #N` fires only on the default branch) — close
+  to the latest non-prerelease tag and trails `dev`; never commit to either directly. A merge
+  into `dev` does not auto-close issues (`Closes #N` fires only on the default branch) — close
   them by hand, naming the squash commit and its tag.

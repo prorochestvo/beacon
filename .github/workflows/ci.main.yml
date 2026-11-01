@@ -1,14 +1,14 @@
 # CI for the long-lived branches — lints, runs the full suite, and does a
-# production-shape build on every push to main or alpha and every PR targeting
-# either. alpha is where day-to-day work integrates and where release tags are
+# production-shape build on every push to main or dev and every PR targeting
+# either. dev is where day-to-day work integrates and where release tags are
 # cut; main only ever moves to the latest non-prerelease tag. No deploy — the
 # release pipeline lives in release.yml and triggers on r* tags.
 name: ci-main
 on:
   push:
-    branches: [main, alpha]
+    branches: [main, dev]
   pull_request:
-    branches: [main, alpha]
+    branches: [main, dev]
 
 permissions:
   contents: read
