@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -10,12 +12,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prorochestvo/dsninjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/application/sourceaudit"
+	"github.com/seilbekskindirov/beacon/internal/infrastructure/sqlitedb"
+	"github.com/seilbekskindirov/beacon/internal/repository"
 	"github.com/seilbekskindirov/beacon/internal/tools/proxyutil"
+	"github.com/seilbekskindirov/beacon/migrations"
 )
 
-// runAudit is the entry point for the "doctor audit" subcommand.
+// runAudit is the entry point for the "doctor audit" subcommand. It audits
+// INSERT-only seed rules by default; seed mode does not reflect later UPDATE
+// or DELETE migrations. Use --dsn to audit effective rules from a migrated DB.
 //
 // It must be invoked from the repository root: the default --seed-glob
 // ("migrations/*.seed*.sql") is relative to the working directory.
@@ -23,6 +31,7 @@ import (
 // Flag surface:
 //
 //	--seed-glob string   glob pattern for seed SQL files (default "migrations/*.seed*.sql")
+//	--dsn string         SQLite DSN for effective rules in a migrated database
 //	--all                audit every seeded source
 //	--source string      exact source name to audit (mutually exclusive with --all and --only)
 //	--only string        regex filter on source names (mutually exclusive with --all and --source)
@@ -44,6 +53,7 @@ import (
 func runAudit(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out, errOut io.Writer) int {
 	var (
 		seedGlob string
+		dsn      string
 		onlyRe   string
 		source   string
 		all      bool
@@ -52,6 +62,7 @@ func runAudit(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out, err
 
 	fset := newFlagSet("audit", errOut)
 	fset.StringVar(&seedGlob, "seed-glob", "migrations/*.seed*.sql", "glob for seed SQL files")
+	fset.StringVar(&dsn, "dsn", "", "SQLite DSN for effective rules in a migrated database")
 	fset.StringVar(&onlyRe, "only", "", "regex filter on source names")
 	fset.StringVar(&source, "source", "", "exact source name to audit (shorthand for --only=^<name>$)")
 	fset.BoolVar(&all, "all", false, "audit every seeded source")
@@ -67,6 +78,22 @@ func runAudit(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out, err
 		}
 		fmt.Fprintf(errOut, "Run \"doctor audit --help\" for usage.\n")
 		return 2
+	}
+	seedGlobSet := false
+	fset.Visit(func(f *flag.Flag) {
+		if f.Name == "seed-glob" {
+			seedGlobSet = true
+		}
+	})
+	if dsn != "" && seedGlobSet {
+		fmt.Fprintln(errOut, "doctor audit: --dsn and --seed-glob cannot be used together")
+		return 2
+	}
+	if dsn != "" {
+		if _, err := dsninjector.Parse(dsn); err != nil {
+			fmt.Fprintf(errOut, "doctor audit: parse --dsn: %v\n", err)
+			return 2
+		}
 	}
 
 	// Validate mutually exclusive flag combinations before any I/O.
@@ -99,22 +126,32 @@ func runAudit(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out, err
 		}
 	}
 
-	if strings.Contains(seedGlob, "..") {
-		fmt.Fprintf(errOut, "doctor audit: --seed-glob must not contain '..'\n")
-		return 2
-	}
+	var sources []sourceaudit.SeededSource
+	if dsn != "" {
+		var code int
+		sources, code = loadDBSources(dsn, errOut)
+		if code != 0 {
+			return code
+		}
+	} else {
+		if strings.Contains(seedGlob, "..") {
+			fmt.Fprintf(errOut, "doctor audit: --seed-glob must not contain '..'\n")
+			return 2
+		}
 
-	if seedFS == nil {
-		seedFS = os.DirFS(".")
-	}
-	sources, err := sourceaudit.ParseSeedFiles(seedFS, seedGlob)
-	if err != nil {
-		fmt.Fprintf(errOut, "doctor audit: parse seed files: %v\n", err)
-		return 3
-	}
-	if len(sources) == 0 {
-		fmt.Fprintf(errOut, "doctor audit: no sources found matching glob %q — check --seed-glob\n", seedGlob)
-		return 3
+		if seedFS == nil {
+			seedFS = os.DirFS(".")
+		}
+		var err error
+		sources, err = sourceaudit.ParseSeedFiles(seedFS, seedGlob)
+		if err != nil {
+			fmt.Fprintf(errOut, "doctor audit: parse seed files: %v\n", err)
+			return 3
+		}
+		if len(sources) == 0 {
+			fmt.Fprintf(errOut, "doctor audit: no sources found matching glob %q — check --seed-glob\n", seedGlob)
+			return 3
+		}
 	}
 
 	if nameFilter != nil {
@@ -160,15 +197,69 @@ func runAudit(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out, err
 	return 0
 }
 
+func loadDBSources(dsn string, errOut io.Writer) (sources []sourceaudit.SeededSource, code int) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	ds, err := dsninjector.Parse(dsn)
+	if err != nil {
+		fmt.Fprintf(errOut, "doctor audit: parse --dsn: %v\n", err)
+		return nil, 2
+	}
+	if _, err = os.Stat(ds.Database()); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintln(errOut, "doctor audit: database file not found")
+		} else {
+			fmt.Fprintf(errOut, "doctor audit: stat database: %v\n", err)
+		}
+		return nil, 3
+	}
+	db, err := sqlitedb.NewSQLiteClient(ds)
+	if err != nil {
+		fmt.Fprintf(errOut, "doctor audit: open database: %v\n", err)
+		return nil, 3
+	}
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			fmt.Fprintf(errOut, "doctor audit: close database: %v\n", closeErr)
+			code = 3
+		}
+	}()
+	if err = sqlitedb.RequireMigratedSchema(ctx, db, migrations.MigrationsFS); err != nil {
+		fmt.Fprintf(errOut, "doctor audit: schema behind this build: run cmd/migrator: %v\n", err)
+		return nil, 3
+	}
+	repo, err := repository.NewRateSourceRepository(db)
+	if err != nil {
+		fmt.Fprintf(errOut, "doctor audit: create rate source repository: %v\n", err)
+		return nil, 3
+	}
+	rows, err := repo.ObtainAllRateSources(ctx)
+	if err != nil {
+		fmt.Fprintf(errOut, "doctor audit: read rate_sources: %v\n", err)
+		return nil, 3
+	}
+	sources, skipped, inactive := sourceaudit.SourcesFromRateSources(rows)
+	fmt.Fprintf(errOut, "doctor audit: %d active sources from rate_sources (%d inactive not audited)\n", len(sources)+len(skipped), inactive)
+	for _, row := range skipped {
+		fmt.Fprintf(errOut, "doctor audit: skipped %s: fetcher_kind=%s is not audited (plain HTTP only)\n", row.Name, row.FetcherKind)
+	}
+	return sources, 0
+}
+
 func printAuditUsage(w io.Writer) {
 	fmt.Fprintln(w, `Usage:
   doctor audit [flags]
 
-Probes seeded rate sources against their live URLs to verify extraction rules.
-Must be run from the repository root (--seed-glob is relative to CWD).
+Probes rate sources against their live URLs to verify extraction rules. By default,
+sources come from seed SQL files; --dsn loads effective rules from a migrated database.
+Seed mode's --seed-glob is relative to CWD.
+Seed mode reads INSERT statements only, so later UPDATE/DELETE migrations are not reflected;
+--dsn audits effective rules from a migrated database.
 
 Flags:
   --seed-glob string   glob pattern for seed SQL files (default "migrations/*.seed*.sql")
+  --dsn string         SQLite DSN for effective rules in a migrated database (mutually exclusive with --seed-glob)
   --all                audit every seeded source
   --source string      exact source name to audit (mutually exclusive with --all and --only)
   --only string        regex filter on source names (mutually exclusive with --all and --source)
