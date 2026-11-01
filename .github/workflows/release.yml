@@ -43,10 +43,10 @@ jobs:
       # lint, not lint-new: a release is the whole tree shipping, so the whole tree is
       # what gets linted. The diff-scoped run answered "what does this change add",
       # which needed a base revision to diff against — and picking one for a tag was
-      # its own trap, because the default origin/alpha lints history backwards the
-      # moment a tag is cut anywhere but alpha's tip. Nothing needs a base now.
+      # its own trap, because the default origin/dev lints history backwards the
+      # moment a tag is cut anywhere but dev's tip. Nothing needs a base now.
       #
-      # On a tag cut from alpha's tip this repeats ci.main.yml, which every commit
+      # On a tag cut from dev's tip this repeats ci.main.yml, which every commit
       # already passed on its PR. It is here to catch a tag cut from somewhere
       # unexpected, where that guarantee does not hold.
       #

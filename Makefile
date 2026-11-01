@@ -32,12 +32,12 @@ GO_PKGS := ./cmd/... ./internal/... ./migrations/...
 # Revision the adoption gate compares against: only code newer than this is
 # required to be clean while the standing findings are worked off.
 #
-# origin/alpha, not origin/main: main only ever moves to the latest non-prerelease
-# tag, so it trails alpha by a whole alpha series. Comparing against it would
+# origin/dev, not origin/main: main only ever moves to the latest non-prerelease
+# tag, so it trails dev by a whole alpha series. Comparing against it would
 # classify that entire series as "new code" and demand it be clean today, which is
 # the opposite of a baseline — measured at 88 findings against main versus 0
-# against alpha.
-LINT_BASE ?= origin/alpha
+# against dev.
+LINT_BASE ?= origin/dev
 
 .PHONY: all run build build-collector build-notifier build-web build-wasm build-migrator migrate test lint lint-new check-operator format audit audit-help doctor-help swagger clean init backups db-inspect config-drift deploy-configs verify-edge
 
