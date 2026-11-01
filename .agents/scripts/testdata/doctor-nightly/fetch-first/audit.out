@@ -1,0 +1,4 @@
+audited 3 sources across 2 URLs: 2 OK, 1 MISS
+
+MISS DETAILS:
+KZ_A_USD_KZT	FETCH_ERROR	do request: context deadline exceeded

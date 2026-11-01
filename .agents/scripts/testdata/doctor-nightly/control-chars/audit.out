@@ -1,0 +1,4 @@
+audited 3 sources across 2 URLs: 2 OK, 1 MISS
+
+MISS DETAILS:
+KZ_X_USD_KZT	REGEX_NO_MATCH	no match for pattern

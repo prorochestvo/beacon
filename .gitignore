@@ -56,6 +56,8 @@ dist
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+# Audit fixtures of the nightly launcher test are data, not coverage output
+!.agents/scripts/testdata/doctor-nightly/**/*.out
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
