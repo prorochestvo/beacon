@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/prorochestvo/dsninjector"
+	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/application/sourceaudit"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/infrastructure/sqlitedb"
@@ -80,6 +81,8 @@ func newMigratedAuditDB(t *testing.T) string {
 	return dsn
 }
 
+// openAuditDB opens the database at dsn. The caller closes it before running
+// the audit, because the audit opens the same file on its own connection.
 func openAuditDB(t *testing.T, dsn string) *sqlitedb.SQLiteClient {
 	t.Helper()
 	warmUpSQLite(t)
@@ -87,7 +90,6 @@ func openAuditDB(t *testing.T, dsn string) *sqlitedb.SQLiteClient {
 	require.NoError(t, err)
 	db, err := sqlitedb.NewSQLiteClient(ds)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	return db
 }
 
@@ -362,6 +364,19 @@ func TestRunAuditDatabaseMode(t *testing.T) {
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 
+	t.Run("stat failure other than not-exist is an infrastructure error", func(t *testing.T) {
+		t.Parallel()
+		// A path below a regular file fails with ENOTDIR, not ErrNotExist.
+		blocker := filepath.Join(t.TempDir(), "file")
+		require.NoError(t, os.WriteFile(blocker, nil, 0o600))
+		dsn := "sqlite://_:_@_:_/" + filepath.Join(blocker, "audit.db")
+		var out, errOut bytes.Buffer
+		code := runAudit([]string{"--dsn", dsn, "--all"}, nil, nil, &out, &errOut)
+		assert.Equal(t, 3, code)
+		assert.Contains(t, errOut.String(), "doctor audit: stat database:")
+		assert.Empty(t, out.String())
+	})
+
 	t.Run("empty unmigrated database is rejected", func(t *testing.T) {
 		t.Parallel()
 		dsn := "sqlite://_:_@_:_/" + filepath.Join(t.TempDir(), "audit.db")
@@ -398,8 +413,10 @@ func TestRunAuditDatabaseMode(t *testing.T) {
 		t.Parallel()
 		dsn := newMigratedAuditDB(t)
 		var out, errOut bytes.Buffer
+		// The stub returns empty bodies, so every seeded rule misses: exit 1 proves the run audited sources.
 		code := runAudit([]string{"--dsn", dsn, "--all", "-v"}, &stubFetcher{}, nil, &out, &errOut)
-		assert.NotEqual(t, 2, code)
+		assert.Equal(t, 1, code, "stdout: %s stderr: %s", out.String(), errOut.String())
+		assert.Contains(t, out.String(), "KZ_BCC_FX_BID_USD_KZT")
 		assert.NotContains(t, out.String(), "KZ_BCC_BID_USD_KZT")
 		assert.Contains(t, errOut.String(), "active sources from rate_sources")
 	})
@@ -426,7 +443,7 @@ func TestRunAuditDatabaseMode(t *testing.T) {
 		var out, errOut bytes.Buffer
 		code := runAudit([]string{"--dsn", dsn, "--source", "audit-inactive"}, fetcher, nil, &out, &errOut)
 		assert.Equal(t, 3, code)
-		assert.Contains(t, errOut.String(), "no sources matched")
+		assert.Contains(t, errOut.String(), "no sources matched the given filter")
 		assert.Empty(t, fetcher.requestedURLs())
 
 		out.Reset()
@@ -438,4 +455,28 @@ func TestRunAuditDatabaseMode(t *testing.T) {
 		assert.Empty(t, fetcher.requestedURLs())
 		assert.Empty(t, out.String())
 	})
+}
+
+// TestRunAuditDSNEnvIgnored is not parallel: t.Setenv is not allowed in parallel tests.
+func TestRunAuditDSNEnvIgnored(t *testing.T) {
+	t.Setenv(internal.EnvSQLiteDSN, newMigratedAuditDB(t))
+
+	t.Run("the DSN never comes from the environment", func(t *testing.T) {
+		emptyDir := t.TempDir()
+		var out, errOut bytes.Buffer
+		code := runAudit([]string{"--all", "--seed-glob", "*.sql"}, nil, os.DirFS(emptyDir), &out, &errOut)
+		assert.Equal(t, 3, code)
+		assert.Contains(t, errOut.String(), "no sources found matching glob")
+		assert.Empty(t, out.String())
+	})
+}
+
+// TestRunAuditProxyWarning is not parallel: it sets BEACON_PROXY_URL for the process.
+func TestRunAuditProxyWarning(t *testing.T) {
+	t.Setenv(internal.EnvProxyURL, "http://127.0.0.1:7788")
+	dsn := newMigratedAuditDB(t)
+	var out, errOut bytes.Buffer
+	code := runAudit([]string{"--dsn", dsn, "--source", "KZ_BCC_FX_BID_USD_KZT"}, &stubFetcher{}, nil, &out, &errOut)
+	assert.Equal(t, 1, code, "stdout: %s stderr: %s", out.String(), errOut.String())
+	assert.Contains(t, errOut.String(), "warning: BEACON_PROXY_URL is set")
 }

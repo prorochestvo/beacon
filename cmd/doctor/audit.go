@@ -40,6 +40,10 @@ import (
 // Exactly one of --all, --source, or --only must be supplied; mixing them is a
 // usage error.
 //
+// --dsn opens the database file read-write (the connection applies
+// journal_mode=WAL), so point it at a throwaway copy, never at a live service
+// database. The DSN comes from the flag only, never from BEACON_SQLITEDB_DSN.
+//
 // Exit codes:
 //
 //	0  all probes OK
@@ -89,8 +93,11 @@ func runAudit(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out, err
 		fmt.Fprintln(errOut, "doctor audit: --dsn and --seed-glob cannot be used together")
 		return 2
 	}
+	var ds *dsninjector.DataSourceMapper
 	if dsn != "" {
-		if _, err := dsninjector.Parse(dsn); err != nil {
+		var err error
+		ds, err = dsninjector.Parse(dsn)
+		if err != nil {
 			fmt.Fprintf(errOut, "doctor audit: parse --dsn: %v\n", err)
 			return 2
 		}
@@ -126,12 +133,19 @@ func runAudit(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out, err
 		}
 	}
 
+	// The load step bounds its own time; the audit itself runs for minutes and must not share a deadline.
+	ctx := context.Background()
+
 	var sources []sourceaudit.SeededSource
 	if dsn != "" {
 		var code int
-		sources, code = loadDBSources(dsn, errOut)
+		sources, code = loadDBSources(ctx, ds, errOut)
 		if code != 0 {
 			return code
+		}
+		if len(sources) == 0 {
+			fmt.Fprintln(errOut, "doctor audit: no active plain-fetcher sources in rate_sources")
+			return 3
 		}
 	} else {
 		if strings.Contains(seedGlob, "..") {
@@ -169,8 +183,11 @@ func runAudit(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out, err
 		return 3
 	}
 
+	proxyURL := proxyutil.ResolveURL(internal.EnvProxyURL)
+	if dsn != "" && proxyURL != "" {
+		fmt.Fprintln(errOut, "doctor audit: warning: BEACON_PROXY_URL is set, so the audit proxies every source; the collector proxies only rows with options.use_proxy")
+	}
 	if fetcher == nil {
-		proxyURL := proxyutil.ResolveURL(internal.EnvProxyURL)
 		var fetcherErr error
 		fetcher, fetcherErr = sourceaudit.NewHTTPFetcher(time.Minute, proxyURL, internal.UserAgent)
 		if fetcherErr != nil {
@@ -179,7 +196,7 @@ func runAudit(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out, err
 		}
 	}
 	auditor := &sourceaudit.Auditor{Fetcher: fetcher}
-	results, err := auditor.Run(context.Background(), sources)
+	results, err := auditor.Run(ctx, sources)
 	if err != nil {
 		fmt.Fprintf(errOut, "doctor audit: run: %v\n", err)
 		return 3
@@ -197,16 +214,13 @@ func runAudit(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out, err
 	return 0
 }
 
-func loadDBSources(dsn string, errOut io.Writer) (sources []sourceaudit.SeededSource, code int) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+// loadDBSources reads the effective rate_sources rows of a migrated database,
+// bounded by a 30-second deadline derived from ctx.
+func loadDBSources(ctx context.Context, ds *dsninjector.DataSourceMapper, errOut io.Writer) (sources []sourceaudit.SeededSource, code int) {
+	loadCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	ds, err := dsninjector.Parse(dsn)
-	if err != nil {
-		fmt.Fprintf(errOut, "doctor audit: parse --dsn: %v\n", err)
-		return nil, 2
-	}
-	if _, err = os.Stat(ds.Database()); err != nil {
+	if _, err := os.Stat(ds.Database()); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintln(errOut, "doctor audit: database file not found")
 		} else {
@@ -214,6 +228,7 @@ func loadDBSources(dsn string, errOut io.Writer) (sources []sourceaudit.SeededSo
 		}
 		return nil, 3
 	}
+	//nolint:contextcheck // NewSQLiteClient takes no context; it opens a local file and has no cancellable work
 	db, err := sqlitedb.NewSQLiteClient(ds)
 	if err != nil {
 		fmt.Fprintf(errOut, "doctor audit: open database: %v\n", err)
@@ -225,7 +240,7 @@ func loadDBSources(dsn string, errOut io.Writer) (sources []sourceaudit.SeededSo
 			code = 3
 		}
 	}()
-	if err = sqlitedb.RequireMigratedSchema(ctx, db, migrations.MigrationsFS); err != nil {
+	if err = sqlitedb.RequireMigratedSchema(loadCtx, db, migrations.MigrationsFS); err != nil {
 		fmt.Fprintf(errOut, "doctor audit: schema behind this build: run cmd/migrator: %v\n", err)
 		return nil, 3
 	}
@@ -234,7 +249,7 @@ func loadDBSources(dsn string, errOut io.Writer) (sources []sourceaudit.SeededSo
 		fmt.Fprintf(errOut, "doctor audit: create rate source repository: %v\n", err)
 		return nil, 3
 	}
-	rows, err := repo.ObtainAllRateSources(ctx)
+	rows, err := repo.ObtainAllRateSources(loadCtx)
 	if err != nil {
 		fmt.Fprintf(errOut, "doctor audit: read rate_sources: %v\n", err)
 		return nil, 3
@@ -259,7 +274,8 @@ Seed mode reads INSERT statements only, so later UPDATE/DELETE migrations are no
 
 Flags:
   --seed-glob string   glob pattern for seed SQL files (default "migrations/*.seed*.sql")
-  --dsn string         SQLite DSN for effective rules in a migrated database (mutually exclusive with --seed-glob)
+  --dsn string         SQLite DSN for effective rules in a migrated database (mutually exclusive with --seed-glob).
+                       Opens the file read-write (WAL is applied): use a throwaway copy, never a live database.
   --all                audit every seeded source
   --source string      exact source name to audit (mutually exclusive with --all and --only)
   --only string        regex filter on source names (mutually exclusive with --all and --source)

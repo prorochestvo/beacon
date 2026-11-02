@@ -166,7 +166,8 @@ Without `--dsn`, audit uses seed mode and reads `INSERT` statements from seed
 SQL files only. It does not reflect rules changed by later `UPDATE` or `DELETE`
 migrations. With `--dsn`, audit reads the effective source rows from an existing,
 migrated SQLite database. These modes are mutually exclusive; `--dsn` is never
-read from the environment. Run seed mode from the repository root because
+read from the environment. `--dsn` opens the file read-write (WAL is applied), so point it at a
+throwaway copy, never at a live service database. Run seed mode from the repository root because
 `--seed-glob` is relative to the process CWD.
 
 | Flag | Default | Description |
@@ -184,7 +185,8 @@ Database mode audits active rows with the plain HTTP fetcher. Inactive rows and
 rows using other fetchers are not audited. The command prints the number of
 active database rows and inactive rows not audited to stderr, followed by one
 `doctor audit: skipped <name>: fetcher_kind=<kind> is not audited (plain HTTP only)`
-line for each active row using an unsupported fetcher.
+line for each active row using an unsupported fetcher. When `BEACON_PROXY_URL` is set, `--dsn` mode warns on stderr that every source
+is proxied, while the collector proxies only rows with `options.use_proxy`.
 
 ### Exit codes
 
