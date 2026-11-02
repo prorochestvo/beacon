@@ -278,7 +278,7 @@ data = open(sys.argv[1], "rb").read()
 end = b"\n---\n"
 if data.endswith(end):
     data = data[: -len(end)]
-print(len(data.encode("utf-16-le")) // 2)
+print(len(data))
 ' "$HOME_DIR/calls/tbot-messages.txt"
 }
 
