@@ -527,7 +527,7 @@ case_budget_56() {
   check "keeps the first 15 names" grep -Fq 'KZ_BULK_15_USD_KZT REGEX_NO_MATCH' "$HOME_DIR/calls/tbot-messages.txt"
   check "does not list the sixteenth name" test -z "$(grep -F 'KZ_BULK_16_USD_KZT' "$HOME_DIR/calls/tbot-messages.txt" || true)"
   check "counts the rest" grep -Fq '+41 more' "$HOME_DIR/calls/tbot-messages.txt"
-  check "keeps the log line" grep -Fq 'log: hive-warden-01:' "$HOME_DIR/calls/tbot-messages.txt"
+  check "keeps the log line" grep -Fq "log: $(hostname -s 2>/dev/null || echo unknown):" "$HOME_DIR/calls/tbot-messages.txt"
 }
 
 case_audit_100k() {
@@ -561,6 +561,16 @@ case_lock_held() {
   check "exit 0" test "$LAST_RC" = 0
   check "no go call while another run holds the lock" test ! -e "$HOME_DIR/calls/go.txt"
   check "no claude call while another run holds the lock" test ! -e "$HOME_DIR/calls/claude.txt"
+}
+
+case_lock_error() {
+  setup_home all-ok
+  mkdir -p "$(state_dir)/lock"
+  LAST_RC=$(run_launcher)
+  check "exit 1" test "$LAST_RC" = 1
+  check "one message sent" test "$(grep -c '^---$' "$HOME_DIR/calls/tbot-messages.txt" 2>/dev/null || echo 0)" -le 1
+  check "message names the lock error" grep -Fq 'lock error' "$HOME_DIR/calls/tbot-messages.txt"
+  check "no go call without the lock" test ! -e "$HOME_DIR/calls/go.txt"
 }
 
 case_runs_pruned() {
@@ -737,7 +747,7 @@ unit_limit_checks() {
   limit_case "3:50pm UTC after the reset rolls to tomorrow" "2026-11-01T16:00:00Z" "You've hit your session limit · resets 3:50pm (UTC)" "2026-11-02T15:50:00Z"
   limit_case "6pm Asia/Almaty" "2026-11-01T11:19:00Z" "You've hit your session limit · resets 6pm (Asia/Almaty)" "2026-11-01T13:00:00Z"
   limit_case "weekly 3am Asia/Almaty is the next occurrence" "2026-11-01T11:35:00Z" "You've hit your weekly limit · resets 3am (Asia/Almaty)" "2026-11-01T22:00:00Z"
-  limit_case "zone-less 3pm uses the host zone" "2026-11-01T14:00:00Z" "You've hit your limit · resets 3pm" "2026-11-01T15:00:00Z"
+  limit_case "zone-less 3pm defaults to UTC" "2026-11-01T14:00:00Z" "You've hit your limit · resets 3pm" "2026-11-01T15:00:00Z"
   limit_case "rejects hour 25" "2026-11-01T14:00:00Z" "You've hit your session limit · resets 25pm (UTC)" ""
   limit_case "rejects an unknown zone" "2026-11-01T14:00:00Z" "You've hit your session limit · resets 3pm (Not/AZone)" ""
   limit_case "rejects a dated form" "2026-11-01T14:00:00Z" "You've hit your session limit · resets Nov 5, 9am (UTC)" ""
@@ -765,7 +775,7 @@ ALL_CASES=(
   all-ok regex-fix regex-disagree fetch-first fetch-repeated fetch-gap unparsed
   max-turns limit-regex limit-jev-openrouter limit-none jev-low jev-fail
   openrouter-fail invalid-verdict infra-audit3 go-fail audit-exit1-no-miss
-  limit-with-alertable budget-56 audit-100k control-chars lock-held runs-pruned
+  limit-with-alertable budget-56 audit-100k control-chars lock-held lock-error runs-pruned
   drift skip-future skip-garbage skip-expired gnudate-missing clone-missing no-rev
   claude-timeout untrusted-marker unknown-status budget-overflow
 )

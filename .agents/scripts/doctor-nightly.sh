@@ -112,8 +112,8 @@ def read(path):
 text = read(sys.argv[1])
 try:
     env = json.loads(text)
-    if isinstance(env, dict) and isinstance(env.get("result"), str):
-        text = env["result"]
+    if isinstance(env, dict):
+        text = env["result"] if isinstance(env.get("result"), str) else ""
 except ValueError:
     pass
 combined = text + "\n" + read(sys.argv[2])
@@ -203,7 +203,7 @@ acquire_lock() {
   if ! command -v flock >/dev/null 2>&1; then
     fail_run "flock is missing; no run started"
   fi
-  exec 9>"$LOCK_FILE"
+  exec 9>"$LOCK_FILE" || fail_run "lock error (cannot open $LOCK_FILE); no run started"
   flock -n -E 75 9 || rc=$?
   case "$rc" in
     0) return 0 ;;
@@ -658,7 +658,7 @@ decide_model() {
   MODEL_TAIL=""
   MODEL_UNTIL=""
   cat "$RUN/claude.out" "$RUN/claude.err" >"$RUN/claude.all"
-  if (( CLAUDE_RC == 124 || CLAUDE_RC == 126 || CLAUDE_RC == 127 )); then
+  if (( CLAUDE_RC == 124 || CLAUDE_RC == 125 || CLAUDE_RC == 126 || CLAUDE_RC == 127 || CLAUDE_RC == 137 )); then
     MODEL_REASON="claude exit $CLAUDE_RC"
   else
     read_verdict "$RUN/claude.out" "$CLAUDE_RC" >"$RUN/verdict.txt" || true

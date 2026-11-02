@@ -524,7 +524,8 @@ func TestRunAuditProxyWarning(t *testing.T) {
 
 	t.Run("seed mode does not print the proxy warning", func(t *testing.T) { //nolint:paralleltest // shares the process environment set by the parent
 		var out, errOut bytes.Buffer
-		_ = runAudit([]string{"--source", "KZ_BCC_FX_BID_USD_KZT"}, &stubFetcher{}, os.DirFS("../.."), &out, &errOut)
+		code := runAudit([]string{"--source", "KZ_BCC_FX_BID_USD_KZT"}, &stubFetcher{}, os.DirFS("../.."), &out, &errOut)
+		assert.Equal(t, 1, code, "stderr: %s", errOut.String())
 		assert.NotContains(t, errOut.String(), "warning: BEACON_PROXY_URL")
 	})
 }
