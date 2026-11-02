@@ -116,6 +116,10 @@ func writeTable(w io.Writer, results []ProbeResult) error {
 	return nil
 }
 
+// writeMissDetails writes the MISS DETAILS block: a blank line, the header, then one
+// NAME<TAB>STATUS<TAB>DETAIL line per non-OK result. This shape is a contract with
+// .agents/scripts/doctor-nightly.sh, which parses the name and status fields after the
+// header line; change the shape only together with that script and its fixtures.
 func writeMissDetails(w io.Writer, results []ProbeResult) error {
 	if _, err := fmt.Fprintln(w, "\nMISS DETAILS:"); err != nil {
 		return err

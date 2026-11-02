@@ -15,10 +15,11 @@ per-subcommand flags and exit codes.
 
 ## Lifecycle: one-shot cron binary
 
-Like `cmd/collector` and `cmd/notifier`, `doctor` is a one-shot process — it
-opens the DB, does its work, and exits. The only long-lived binary in this
-project is `cmd/web`. All three one-shot binaries are scheduled by host-side
-cron wrappers; none of them have systemd units.
+Like `cmd/collector` and `cmd/notifier`, `doctor` is a one-shot process. Only
+`rulegen` opens the database by default; `audit` opens a database only when
+`--dsn` is supplied. The only long-lived binary in this project is `cmd/web`.
+The one-shot binaries are scheduled by host-side cron wrappers; none of them
+have systemd units.
 
 Suggested cadences (host-side `crontab`, times in UTC):
 
@@ -26,7 +27,7 @@ Suggested cadences (host-side `crontab`, times in UTC):
 |--------|---------|---------|
 | `collector` | hourly | `0 * * * *` |
 | `notifier` | every 30 minutes | `*/30 * * * *` |
-| `doctor audit --all` | weekly, Saturday 00:00 | `0 0 * * 6` |
+| Nightly doctor audit on warden | nightly, 22:00 UTC (03:00 GMT+5) | `0 22 * * *` |
 
 Tighten `collector` to match your shortest source interval if needed —
 pick whichever is more frequent. `notifier` cadence sets dispatch latency
@@ -146,12 +147,14 @@ find a narrower endpoint (JSON API, per-currency URL) and update the source row'
 If the raw body exceeds 5 MB before stripping, `doctor rulegen` aborts
 immediately without making any LLM call.
 
-## `doctor audit` — Seed source auditing
+## `doctor audit` — Source auditing
 
 ### When to run
 
 - Before deploying a new source to confirm the extraction rule is correct.
 - As a scheduled health check to detect rule breakage caused by page changes.
+- Nightly on `hive-warden-01`, against the effective rows in a freshly migrated
+  throwaway database (details below).
 
 ### Usage
 
@@ -159,7 +162,13 @@ immediately without making any LLM call.
 doctor audit [flags]
 ```
 
-Run from the repository root — `--seed-glob` is relative to the process CWD.
+Without `--dsn`, audit uses seed mode and reads `INSERT` statements from seed
+SQL files only. It does not reflect rules changed by later `UPDATE` or `DELETE`
+migrations. With `--dsn`, audit reads the effective source rows from an existing,
+migrated SQLite database. These modes are mutually exclusive; `--dsn` is never
+read from the environment. `--dsn` opens the file read-write (WAL is applied), so point it at a
+throwaway copy, never at a live service database. Run seed mode from the repository root because
+`--seed-glob` is relative to the process CWD.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -167,9 +176,17 @@ Run from the repository root — `--seed-glob` is relative to the process CWD.
 | `--source NAME` | "" | Audit one source by exact name |
 | `--only REGEX` | "" | Audit sources whose names match a regex |
 | `--seed-glob GLOB` | `migrations/*.seed*.sql` | Glob pattern for seed SQL files |
+| `--dsn DSN` | "" | SQLite DSN for effective rules in a migrated database; cannot be combined with an explicitly supplied `--seed-glob` |
 | `-v` | false | Verbose: print per-source table |
 
 Exactly one of `--all`, `--source`, or `--only` must be supplied.
+
+Database mode audits active rows with the plain HTTP fetcher. Inactive rows and
+rows using other fetchers are not audited. The command prints the number of
+active database rows and inactive rows not audited to stderr, followed by one
+`doctor audit: skipped <name>: fetcher_kind=<kind> is not audited (plain HTTP only)`
+line for each active row using an unsupported fetcher. When `BEACON_PROXY_URL` is set, `--dsn` mode warns on stderr that every source
+is proxied, while the collector proxies only rows with `options.use_proxy`.
 
 ### Exit codes
 
@@ -196,6 +213,48 @@ make audit ARGS="--all -v"
 # Direct invocation
 ./build/doctor audit --all
 ./build/doctor audit --source halyk_usd
+
+# Audit effective rules in a migrated database
+./build/doctor audit --dsn 'sqlite://_:_@_:_/./build/beacon.db' --all -v
+```
+
+### Nightly audit on warden
+
+The `buddy` account on `hive-warden-01` runs the audit nightly from cron at
+22:00 UTC (`0 22 * * *`, or 03:00 GMT+5). The launcher refreshes a dedicated
+`dev` clone, builds `doctor` and `migrator`, migrates a throwaway database, and
+audits its effective source rows. Only actionable source failures or
+infrastructure/model failures produce a Telegram message.
+
+State is stored under `~/.local/state/beacon-doctor/`:
+
+- `repo/` is the dedicated clone; `bin/` contains the built binaries.
+- `runs/<UTC timestamp>/` contains each run's audit output, classification,
+  model output and `run.log`; only the 30 newest run directories are retained.
+- `transient/` stores recent nightly transient-failure state.
+- `skip-until` holds a usage-limit reset time when model calls must pause.
+- `cron.log` receives the launcher's stdout and stderr from cron.
+
+Pause the model by writing a future UTC time to `skip-until`. The audit and the
+deterministic alerts keep running while it is active; only the Claude call is
+skipped. For example:
+
+```bash
+gnudate -u -d '+30 days' +%Y-%m-%dT%H:%M:%SZ > ~/.local/state/beacon-doctor/skip-until
+```
+
+`gnudate` is GNU `date` on warden; the plain `date` there is the uutils build.
+
+To remove the job and its state, remove the `beacon-doctor` line from `buddy`'s
+crontab, then remove `~/.local/state/beacon-doctor/`.
+
+The cron job runs the launcher copy in the state directory, not the one in
+`repo/`. After a change to `.agents/scripts/doctor-nightly.sh` reaches `dev`, the
+copy must be reinstalled by hand. The launcher sends one Telegram message when
+its copy differs from the repository; the reinstall command is:
+
+```bash
+install -m 700 ~/.local/state/beacon-doctor/repo/.agents/scripts/doctor-nightly.sh ~/.local/state/beacon-doctor/doctor-nightly.sh
 ```
 
 ## Headless / chromedp sources
