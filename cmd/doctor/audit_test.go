@@ -421,6 +421,31 @@ func TestRunAuditDatabaseMode(t *testing.T) {
 		assert.Contains(t, errOut.String(), "active sources from rate_sources")
 	})
 
+	t.Run("no active plain-fetcher sources is exit 3, not a filter miss", func(t *testing.T) {
+		t.Parallel()
+		dsn := newMigratedAuditDB(t)
+		db := openAuditDB(t, dsn)
+		repo, err := repository.NewRateSourceRepository(db)
+		require.NoError(t, err)
+		rows, err := repo.ObtainAllRateSources(t.Context())
+		require.NoError(t, err)
+		require.NotEmpty(t, rows)
+		for i := range rows {
+			rows[i].Active = false
+			require.NoError(t, repo.RetainRateSource(t.Context(), &rows[i]))
+		}
+		require.NoError(t, db.Close())
+
+		fetcher := &stubFetcher{}
+		var out, errOut bytes.Buffer
+		code := runAudit([]string{"--dsn", dsn, "--all"}, fetcher, nil, &out, &errOut)
+		assert.Equal(t, 3, code, "stderr: %s", errOut.String())
+		assert.Contains(t, errOut.String(), "no active plain-fetcher sources in rate_sources")
+		assert.NotContains(t, errOut.String(), "no sources matched")
+		assert.Empty(t, fetcher.requestedURLs())
+		assert.Empty(t, out.String())
+	})
+
 	t.Run("inactive rows are excluded and chromedp rows are skipped", func(t *testing.T) {
 		t.Parallel()
 		dsn := newMigratedAuditDB(t)
@@ -457,9 +482,25 @@ func TestRunAuditDatabaseMode(t *testing.T) {
 	})
 }
 
+// unsetProxyEnv removes BEACON_PROXY_URL for the duration of the test. An empty
+// value is not used: proxyutil.ResolveURL treats it as malformed and exits the process.
+func unsetProxyEnv(t *testing.T) {
+	t.Helper()
+	prev, had := os.LookupEnv(internal.EnvProxyURL)
+	require.NoError(t, os.Unsetenv(internal.EnvProxyURL))
+	t.Cleanup(func() {
+		if had {
+			_ = os.Setenv(internal.EnvProxyURL, prev)
+			return
+		}
+		_ = os.Unsetenv(internal.EnvProxyURL)
+	})
+}
+
 // TestRunAuditDSNEnvIgnored is not parallel: t.Setenv is not allowed in parallel tests.
 func TestRunAuditDSNEnvIgnored(t *testing.T) {
 	t.Setenv(internal.EnvSQLiteDSN, newMigratedAuditDB(t))
+	unsetProxyEnv(t)
 
 	t.Run("the DSN never comes from the environment", func(t *testing.T) {
 		emptyDir := t.TempDir()
@@ -475,8 +516,17 @@ func TestRunAuditDSNEnvIgnored(t *testing.T) {
 func TestRunAuditProxyWarning(t *testing.T) {
 	t.Setenv(internal.EnvProxyURL, "http://127.0.0.1:7788")
 	dsn := newMigratedAuditDB(t)
-	var out, errOut bytes.Buffer
-	code := runAudit([]string{"--dsn", dsn, "--source", "KZ_BCC_FX_BID_USD_KZT"}, &stubFetcher{}, nil, &out, &errOut)
-	assert.Equal(t, 1, code, "stdout: %s stderr: %s", out.String(), errOut.String())
-	assert.Contains(t, errOut.String(), "warning: BEACON_PROXY_URL is set")
+
+	t.Run("database mode warns that every source is proxied", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+		code := runAudit([]string{"--dsn", dsn, "--source", "KZ_BCC_FX_BID_USD_KZT"}, &stubFetcher{}, nil, &out, &errOut)
+		assert.Equal(t, 1, code, "stdout: %s stderr: %s", out.String(), errOut.String())
+		assert.Contains(t, errOut.String(), "warning: BEACON_PROXY_URL is set")
+	})
+
+	t.Run("seed mode does not print the proxy warning", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+		_ = runAudit([]string{"--source", "KZ_BCC_FX_BID_USD_KZT"}, &stubFetcher{}, os.DirFS("../.."), &out, &errOut)
+		assert.NotContains(t, errOut.String(), "warning: BEACON_PROXY_URL")
+	})
 }
