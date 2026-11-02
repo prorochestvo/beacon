@@ -257,7 +257,8 @@ message_count() {
   printf '%s' "$n"
 }
 
-# message_chars: characters (not bytes) of the last message, without the tbot separator.
+# message_chars: UTF-16 code units (Telegram's measure, not bytes) of the last message,
+# without the tbot separator.
 message_chars() {
   python3 -c '
 import sys
@@ -265,7 +266,7 @@ data = open(sys.argv[1], "rb").read().decode("utf-8")
 end = "\n---\n"
 if data.endswith(end):
     data = data[: -len(end)]
-print(len(data))
+print(len(data.encode("utf-16-le")) // 2)
 ' "$HOME_DIR/calls/tbot-messages.txt"
 }
 
@@ -277,7 +278,7 @@ data = open(sys.argv[1], "rb").read()
 end = b"\n---\n"
 if data.endswith(end):
     data = data[: -len(end)]
-print(len(data))
+print(len(data.encode("utf-16-le")) // 2)
 ' "$HOME_DIR/calls/tbot-messages.txt"
 }
 
@@ -752,6 +753,26 @@ epoch_case() {
   check "$label" test "$got" = "$want"
 }
 
+# unit_txt_checks: txt measures and clips in UTF-16 code units, so a character outside
+# the Basic Multilingual Plane counts twice.
+unit_txt_checks() {
+  CASE="unit"
+  local emoji ellipsis
+  emoji=$(printf '\360\237\230\200')
+  ellipsis=$(printf '\342\200\246')
+  check "an emoji counts as two units" test "$(printf '%sa' "$emoji" | txt_unit len)" = 3
+  check "head never splits the budget across an emoji" test "$(printf '%s%s' "$emoji" "$emoji" | txt_unit head 3)" = "$emoji$ellipsis"
+}
+
+# txt_unit ARGS: the launcher's txt helper, sourced in a subshell.
+txt_unit() {
+  (
+    # shellcheck source=/dev/null
+    source "$SCRIPT"
+    txt "$@"
+  )
+}
+
 # unit_limit_checks: fixed-clock checks of the usage-limit parsers.
 unit_limit_checks() {
   CASE="unit"
@@ -804,6 +825,7 @@ main() {
   check_static
   preflight
   unit_limit_checks
+  unit_txt_checks
   if (( $# == 0 )); then
     names=("${ALL_CASES[@]}")
   fi

@@ -69,23 +69,32 @@ REPEATED=()
 FIRST=()
 TRANSIENT_NAMES=()
 
-# txt FILTER [N]: filters stdin to stdout by characters, not bytes.
+# txt FILTER [N]: filters stdin to stdout by UTF-16 code units, the unit Telegram's
+# 4096 message limit is measured in, not bytes.
 # Modes: len, clean (drops control and format characters except newline), head N, tail N.
 txt() {
   python3 -I -c '
 import sys, unicodedata
+def units(s):
+    return len(s.encode("utf-16-le")) // 2
 mode = sys.argv[1]
 text = sys.stdin.buffer.read().decode("utf-8", "replace")
 if mode == "len":
-    out = str(len(text))
+    out = str(units(text))
 elif mode == "clean":
     out = "".join(c for c in text if c == "\n" or unicodedata.category(c) not in ("Cc", "Cf", "Co", "Cs"))
 elif mode == "head":
     limit = int(sys.argv[2])
-    if len(text) <= limit:
+    if units(text) <= limit:
         out = text
     elif limit > 0:
-        out = text[: limit - 1] + "…"
+        kept, used = [], 0
+        for c in text:
+            if used + units(c) > limit - 1:
+                break
+            kept.append(c)
+            used += units(c)
+        out = "".join(kept) + "…"
     else:
         out = ""
 elif mode == "tail":
