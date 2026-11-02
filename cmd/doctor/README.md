@@ -235,19 +235,27 @@ State is stored under `~/.local/state/beacon-doctor/`:
 - `skip-until` holds a usage-limit reset time when model calls must pause.
 - `cron.log` receives the launcher's stdout and stderr from cron.
 
-Pause all nightly runs by writing a future UTC time to `skip-until`, for example:
+Pause the model by writing a future UTC time to `skip-until`. The audit and the
+deterministic alerts keep running while it is active; only the Claude call is
+skipped. For example:
 
 ```bash
-date -u -d '+30 days' +%Y-%m-%dT%H:%M:%SZ > ~/.local/state/beacon-doctor/skip-until
+gnudate -u -d '+30 days' +%Y-%m-%dT%H:%M:%SZ > ~/.local/state/beacon-doctor/skip-until
 ```
+
+`gnudate` is GNU `date` on warden; the plain `date` there is the uutils build.
 
 To remove the job and its state, remove the `beacon-doctor` line from `buddy`'s
 crontab, then remove `~/.local/state/beacon-doctor/`.
 
 The cron job runs the launcher copy in the state directory, not the one in
 `repo/`. After a change to `.agents/scripts/doctor-nightly.sh` reaches `dev`, the
-copy must be reinstalled by hand; the launcher sends one Telegram message when
-its copy differs from the repository.
+copy must be reinstalled by hand. The launcher sends one Telegram message when
+its copy differs from the repository; the reinstall command is:
+
+```bash
+install -m 700 ~/.local/state/beacon-doctor/repo/.agents/scripts/doctor-nightly.sh ~/.local/state/beacon-doctor/doctor-nightly.sh
+```
 
 ## Headless / chromedp sources
 
