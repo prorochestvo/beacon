@@ -487,14 +487,12 @@ func TestRunAuditDatabaseMode(t *testing.T) {
 func unsetProxyEnv(t *testing.T) {
 	t.Helper()
 	prev, had := os.LookupEnv(internal.EnvProxyURL)
+	if !had {
+		return
+	}
+	// t.Setenv records prev and restores it at cleanup; the unset follows it.
+	t.Setenv(internal.EnvProxyURL, prev)
 	require.NoError(t, os.Unsetenv(internal.EnvProxyURL))
-	t.Cleanup(func() {
-		if had {
-			_ = os.Setenv(internal.EnvProxyURL, prev)
-			return
-		}
-		_ = os.Unsetenv(internal.EnvProxyURL)
-	})
 }
 
 // TestRunAuditDSNEnvIgnored is not parallel: t.Setenv is not allowed in parallel tests.
@@ -517,14 +515,14 @@ func TestRunAuditProxyWarning(t *testing.T) {
 	t.Setenv(internal.EnvProxyURL, "http://127.0.0.1:7788")
 	dsn := newMigratedAuditDB(t)
 
-	t.Run("database mode warns that every source is proxied", func(t *testing.T) {
+	t.Run("database mode warns that every source is proxied", func(t *testing.T) { //nolint:paralleltest // shares the process environment set by the parent
 		var out, errOut bytes.Buffer
 		code := runAudit([]string{"--dsn", dsn, "--source", "KZ_BCC_FX_BID_USD_KZT"}, &stubFetcher{}, nil, &out, &errOut)
 		assert.Equal(t, 1, code, "stdout: %s stderr: %s", out.String(), errOut.String())
 		assert.Contains(t, errOut.String(), "warning: BEACON_PROXY_URL is set")
 	})
 
-	t.Run("seed mode does not print the proxy warning", func(t *testing.T) {
+	t.Run("seed mode does not print the proxy warning", func(t *testing.T) { //nolint:paralleltest // shares the process environment set by the parent
 		var out, errOut bytes.Buffer
 		_ = runAudit([]string{"--source", "KZ_BCC_FX_BID_USD_KZT"}, &stubFetcher{}, os.DirFS("../.."), &out, &errOut)
 		assert.NotContains(t, errOut.String(), "warning: BEACON_PROXY_URL")
