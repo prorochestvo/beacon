@@ -34,13 +34,16 @@ die() {
 
 # find_gnu NAME FALLBACK: prints the path of a GNU coreutils tool.
 find_gnu() {
-  local candidate=""
+  local candidate="" version=""
   if [[ -x "/usr/bin/gnu$1" ]]; then
     printf '%s\n' "/usr/bin/gnu$1"
     return 0
   fi
   candidate=$(command -v "$2" || true)
-  if [[ -n "$candidate" ]] && "$candidate" --version 2>/dev/null | head -n 1 | grep -q 'GNU coreutils'; then
+  if [[ -n "$candidate" ]]; then
+    version=$("$candidate" --version 2>/dev/null || true)
+  fi
+  if [[ "${version%%$'\n'*}" == *'GNU coreutils'* ]]; then
     printf '%s\n' "$candidate"
     return 0
   fi
@@ -260,6 +263,18 @@ message_chars() {
 import sys
 data = open(sys.argv[1], "rb").read().decode("utf-8")
 end = "\n---\n"
+if data.endswith(end):
+    data = data[: -len(end)]
+print(len(data))
+' "$HOME_DIR/calls/tbot-messages.txt"
+}
+
+# message_bytes: bytes of the last message, without the tbot separator.
+message_bytes() {
+  python3 -c '
+import sys
+data = open(sys.argv[1], "rb").read()
+end = b"\n---\n"
 if data.endswith(end):
     data = data[: -len(end)]
 print(len(data))
@@ -568,7 +583,7 @@ case_lock_error() {
   mkdir -p "$(state_dir)/lock"
   LAST_RC=$(run_launcher)
   check "exit 1" test "$LAST_RC" = 1
-  check "one message sent" test "$(grep -c '^---$' "$HOME_DIR/calls/tbot-messages.txt" 2>/dev/null || echo 0)" -le 1
+  check "one message sent" test "$(message_count)" = 1
   check "message names the lock error" grep -Fq 'lock error' "$HOME_DIR/calls/tbot-messages.txt"
   check "no go call without the lock" test ! -e "$HOME_DIR/calls/go.txt"
 }
@@ -680,7 +695,8 @@ case_budget_overflow() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "message is at most 4096 characters" test "$(message_chars)" -le 4096
+  check "the clipped message fills exactly 4096 characters" test "$(message_chars)" = 4096
+  check "the fixture is multibyte, so 4096 characters exceed 4096 bytes" test "$(message_bytes)" -gt 4096
   check "first-time list falls back to a count" grep -Fq 'first-time transients (not alertable): 15 not listed' "$HOME_DIR/calls/tbot-messages.txt"
   check "immediate list is cut to 12 entries under the 3000-character budget" grep -Fq '+3 more' "$HOME_DIR/calls/tbot-messages.txt"
   check "model text is clipped to the room left" grep -Fq '…' "$HOME_DIR/calls/tbot-messages.txt"
@@ -736,7 +752,7 @@ epoch_case() {
   check "$label" test "$got" = "$want"
 }
 
-# unit_limit_checks: the Task 4 table for the usage-limit parsers.
+# unit_limit_checks: fixed-clock checks of the usage-limit parsers.
 unit_limit_checks() {
   CASE="unit"
   UNIT_HOME=$(mktemp -d "$ROOT_TMP/unit.XXXXXX")

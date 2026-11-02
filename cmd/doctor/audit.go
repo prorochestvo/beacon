@@ -98,7 +98,8 @@ func runAudit(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out, err
 		var err error
 		ds, err = dsninjector.Parse(dsn)
 		if err != nil {
-			fmt.Fprintf(errOut, "doctor audit: parse --dsn: %v\n", err)
+			// dsninjector.Parse embeds its whole input in the error, so its text is not printed.
+			fmt.Fprintln(errOut, "doctor audit: parse --dsn: unparseable value (contents not logged)")
 			return 2
 		}
 	}
@@ -217,7 +218,10 @@ func runAudit(args []string, fetcher sourceaudit.Fetcher, seedFS fs.FS, out, err
 // loadDBSources reads the effective rate_sources rows of a migrated database,
 // bounded by a 30-second deadline derived from ctx.
 func loadDBSources(ctx context.Context, ds *dsninjector.DataSourceMapper, errOut io.Writer) (sources []sourceaudit.SeededSource, code int) {
-	loadCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	loadCtx, cancel := context.WithTimeout(
+		ctx,
+		30*time.Second,
+	)
 	defer cancel()
 
 	if _, err := os.Stat(ds.Database()); err != nil {
@@ -255,9 +259,19 @@ func loadDBSources(ctx context.Context, ds *dsninjector.DataSourceMapper, errOut
 		return nil, 3
 	}
 	sources, skipped, inactive := sourceaudit.SourcesFromRateSources(rows)
-	fmt.Fprintf(errOut, "doctor audit: %d active sources from rate_sources (%d inactive not audited)\n", len(sources)+len(skipped), inactive)
+	fmt.Fprintf(
+		errOut,
+		"doctor audit: %d active sources from rate_sources (%d inactive not audited)\n",
+		len(sources)+len(skipped),
+		inactive,
+	)
 	for _, row := range skipped {
-		fmt.Fprintf(errOut, "doctor audit: skipped %s: fetcher_kind=%s is not audited (plain HTTP only)\n", row.Name, row.FetcherKind)
+		fmt.Fprintf(
+			errOut,
+			"doctor audit: skipped %s: fetcher_kind=%s is not audited (plain HTTP only)\n",
+			row.Name,
+			row.FetcherKind,
+		)
 	}
 	return sources, 0
 }

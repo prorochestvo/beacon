@@ -323,162 +323,163 @@ func TestRunAudit(t *testing.T) {
 		assert.Contains(t, out.String(), "src.with.dots", "report must mention the audited source")
 		assert.NotContains(t, out.String(), "srcXwithXdots", "wildcard source must not appear in report")
 	})
-}
 
-func TestRunAuditDatabaseMode(t *testing.T) {
-	t.Parallel()
-
-	const bccURL = "https://www.bcc.kz/en/personal/currency-rates/"
-	const bccBody = `currencyMain&quot;:&quot;USD&quot;,&quot;sell&quot;:478.5`
-
-	t.Run("--dsn and explicitly set --seed-glob are incompatible", func(t *testing.T) {
+	t.Run("database mode", func(t *testing.T) {
 		t.Parallel()
-		dsn := newMigratedAuditDB(t)
-		var out, errOut bytes.Buffer
-		code := runAudit([]string{"--dsn", dsn, "--seed-glob", "migrations/*.sql", "--all"}, nil, nil, &out, &errOut)
-		assert.Equal(t, 2, code)
-		assert.Contains(t, errOut.String(), "--dsn and --seed-glob")
-		assert.Empty(t, out.String())
-	})
 
-	t.Run("invalid DSN is a usage error", func(t *testing.T) {
-		t.Parallel()
-		var out, errOut bytes.Buffer
-		// dsninjector.Parse rejects only input its pattern cannot match, such as a newline in the query part.
-		code := runAudit([]string{"--dsn", "sqlite://_:_@_:_/audit.db?a=1\nb=2", "--all"}, nil, nil, &out, &errOut)
-		assert.Equal(t, 2, code)
-		assert.Contains(t, errOut.String(), "parse --dsn")
-		assert.Empty(t, out.String())
-	})
+		const bccURL = "https://www.bcc.kz/en/personal/currency-rates/"
+		const bccBody = `currencyMain&quot;:&quot;USD&quot;,&quot;sell&quot;:478.5`
 
-	t.Run("missing database file is not created", func(t *testing.T) {
-		t.Parallel()
-		path := filepath.Join(t.TempDir(), "missing.db")
-		dsn := "sqlite://_:_@_:_/" + path
-		var out, errOut bytes.Buffer
-		code := runAudit([]string{"--dsn", dsn, "--all"}, nil, nil, &out, &errOut)
-		assert.Equal(t, 3, code)
-		assert.Contains(t, errOut.String(), "database file not found")
-		assert.Empty(t, out.String())
-		_, err := os.Stat(path)
-		assert.ErrorIs(t, err, os.ErrNotExist)
-	})
+		t.Run("--dsn and explicitly set --seed-glob are incompatible", func(t *testing.T) {
+			t.Parallel()
+			dsn := newMigratedAuditDB(t)
+			var out, errOut bytes.Buffer
+			code := runAudit([]string{"--dsn", dsn, "--seed-glob", "migrations/*.sql", "--all"}, nil, nil, &out, &errOut)
+			assert.Equal(t, 2, code)
+			assert.Contains(t, errOut.String(), "--dsn and --seed-glob")
+			assert.Empty(t, out.String())
+		})
 
-	t.Run("stat failure other than not-exist is an infrastructure error", func(t *testing.T) {
-		t.Parallel()
-		// A path below a regular file fails with ENOTDIR, not ErrNotExist.
-		blocker := filepath.Join(t.TempDir(), "file")
-		require.NoError(t, os.WriteFile(blocker, nil, 0o600))
-		dsn := "sqlite://_:_@_:_/" + filepath.Join(blocker, "audit.db")
-		var out, errOut bytes.Buffer
-		code := runAudit([]string{"--dsn", dsn, "--all"}, nil, nil, &out, &errOut)
-		assert.Equal(t, 3, code)
-		assert.Contains(t, errOut.String(), "doctor audit: stat database:")
-		assert.Empty(t, out.String())
-	})
+		t.Run("invalid DSN is a usage error", func(t *testing.T) {
+			t.Parallel()
+			var out, errOut bytes.Buffer
+			// dsninjector.Parse rejects only input its pattern cannot match, such as a newline in the query part.
+			code := runAudit([]string{"--dsn", "sqlite://_:_@_:_/audit.db?a=1\nb=2", "--all"}, nil, nil, &out, &errOut)
+			assert.Equal(t, 2, code)
+			assert.Contains(t, errOut.String(), "parse --dsn: unparseable value (contents not logged)")
+			assert.NotContains(t, errOut.String(), "audit.db?a=1")
+			assert.Empty(t, out.String())
+		})
 
-	t.Run("empty unmigrated database is rejected", func(t *testing.T) {
-		t.Parallel()
-		dsn := "sqlite://_:_@_:_/" + filepath.Join(t.TempDir(), "audit.db")
-		db := openAuditDB(t, dsn)
-		require.NoError(t, db.Close())
-		var out, errOut bytes.Buffer
-		code := runAudit([]string{"--dsn", dsn, "--all"}, nil, nil, &out, &errOut)
-		assert.Equal(t, 3, code)
-		assert.Contains(t, errOut.String(), "schema behind this build: run cmd/migrator")
-		assert.Empty(t, out.String())
-	})
+		t.Run("missing database file is not created", func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "missing.db")
+			dsn := "sqlite://_:_@_:_/" + path
+			var out, errOut bytes.Buffer
+			code := runAudit([]string{"--dsn", dsn, "--all"}, nil, nil, &out, &errOut)
+			assert.Equal(t, 3, code)
+			assert.Contains(t, errOut.String(), "database file not found")
+			assert.Empty(t, out.String())
+			_, err := os.Stat(path)
+			assert.ErrorIs(t, err, os.ErrNotExist)
+		})
 
-	t.Run("database mode reads effective BCC rules while seed mode reads INSERT rules", func(t *testing.T) {
-		t.Parallel()
-		dsn := newMigratedAuditDB(t)
-		fetcher := &stubFetcher{responses: map[string]*sourceaudit.FetchResult{
-			bccURL: {Body: []byte(bccBody), StatusCode: 200},
-		}}
-		var dbOut, dbErr bytes.Buffer
-		code := runAudit([]string{"--dsn", dsn, "--source", "KZ_BCC_FX_BID_USD_KZT"}, fetcher, nil, &dbOut, &dbErr)
-		assert.Equal(t, 0, code, "stdout: %s stderr: %s", dbOut.String(), dbErr.String())
-		assert.Contains(t, dbOut.String(), "OK")
+		t.Run("stat failure other than not-exist is an infrastructure error", func(t *testing.T) {
+			t.Parallel()
+			// A path below a regular file fails with ENOTDIR, not ErrNotExist.
+			blocker := filepath.Join(t.TempDir(), "file")
+			require.NoError(t, os.WriteFile(blocker, nil, 0o600))
+			dsn := "sqlite://_:_@_:_/" + filepath.Join(blocker, "audit.db")
+			var out, errOut bytes.Buffer
+			code := runAudit([]string{"--dsn", dsn, "--all"}, nil, nil, &out, &errOut)
+			assert.Equal(t, 3, code)
+			assert.Contains(t, errOut.String(), "doctor audit: stat database:")
+			assert.Empty(t, out.String())
+		})
 
-		seedFetcher := &stubFetcher{responses: map[string]*sourceaudit.FetchResult{
-			bccURL: {Body: []byte(bccBody), StatusCode: 200},
-		}}
-		var seedOut, seedErr bytes.Buffer
-		code = runAudit([]string{"--source", "KZ_BCC_FX_BID_USD_KZT"}, seedFetcher, os.DirFS("../.."), &seedOut, &seedErr)
-		assert.Equal(t, 1, code, "stdout: %s stderr: %s", seedOut.String(), seedErr.String())
-		assert.Contains(t, seedOut.String(), "REGEX_NO_MATCH")
-	})
+		t.Run("empty unmigrated database is rejected", func(t *testing.T) {
+			t.Parallel()
+			dsn := "sqlite://_:_@_:_/" + filepath.Join(t.TempDir(), "audit.db")
+			db := openAuditDB(t, dsn)
+			require.NoError(t, db.Close())
+			var out, errOut bytes.Buffer
+			code := runAudit([]string{"--dsn", dsn, "--all"}, nil, nil, &out, &errOut)
+			assert.Equal(t, 3, code)
+			assert.Contains(t, errOut.String(), "schema behind this build: run cmd/migrator")
+			assert.Empty(t, out.String())
+		})
 
-	t.Run("--all omits source deleted by migration 008", func(t *testing.T) {
-		t.Parallel()
-		dsn := newMigratedAuditDB(t)
-		var out, errOut bytes.Buffer
-		// The stub returns empty bodies, so every seeded rule misses: exit 1 proves the run audited sources.
-		code := runAudit([]string{"--dsn", dsn, "--all", "-v"}, &stubFetcher{}, nil, &out, &errOut)
-		assert.Equal(t, 1, code, "stdout: %s stderr: %s", out.String(), errOut.String())
-		assert.Contains(t, out.String(), "KZ_BCC_FX_BID_USD_KZT")
-		assert.NotContains(t, out.String(), "KZ_BCC_BID_USD_KZT")
-		assert.Contains(t, errOut.String(), "active sources from rate_sources")
-	})
+		t.Run("database mode reads effective BCC rules while seed mode reads INSERT rules", func(t *testing.T) {
+			t.Parallel()
+			dsn := newMigratedAuditDB(t)
+			fetcher := &stubFetcher{responses: map[string]*sourceaudit.FetchResult{
+				bccURL: {Body: []byte(bccBody), StatusCode: 200},
+			}}
+			var dbOut, dbErr bytes.Buffer
+			code := runAudit([]string{"--dsn", dsn, "--source", "KZ_BCC_FX_BID_USD_KZT"}, fetcher, nil, &dbOut, &dbErr)
+			assert.Equal(t, 0, code, "stdout: %s stderr: %s", dbOut.String(), dbErr.String())
+			assert.Contains(t, dbOut.String(), "OK")
 
-	t.Run("no active plain-fetcher sources is exit 3, not a filter miss", func(t *testing.T) {
-		t.Parallel()
-		dsn := newMigratedAuditDB(t)
-		db := openAuditDB(t, dsn)
-		repo, err := repository.NewRateSourceRepository(db)
-		require.NoError(t, err)
-		rows, err := repo.ObtainAllRateSources(t.Context())
-		require.NoError(t, err)
-		require.NotEmpty(t, rows)
-		for i := range rows {
-			rows[i].Active = false
-			require.NoError(t, repo.RetainRateSource(t.Context(), &rows[i]))
-		}
-		require.NoError(t, db.Close())
+			seedFetcher := &stubFetcher{responses: map[string]*sourceaudit.FetchResult{
+				bccURL: {Body: []byte(bccBody), StatusCode: 200},
+			}}
+			var seedOut, seedErr bytes.Buffer
+			code = runAudit([]string{"--source", "KZ_BCC_FX_BID_USD_KZT"}, seedFetcher, os.DirFS("../.."), &seedOut, &seedErr)
+			assert.Equal(t, 1, code, "stdout: %s stderr: %s", seedOut.String(), seedErr.String())
+			assert.Contains(t, seedOut.String(), "REGEX_NO_MATCH")
+		})
 
-		fetcher := &stubFetcher{}
-		var out, errOut bytes.Buffer
-		code := runAudit([]string{"--dsn", dsn, "--all"}, fetcher, nil, &out, &errOut)
-		assert.Equal(t, 3, code, "stderr: %s", errOut.String())
-		assert.Contains(t, errOut.String(), "no active plain-fetcher sources in rate_sources")
-		assert.NotContains(t, errOut.String(), "no sources matched")
-		assert.Empty(t, fetcher.requestedURLs())
-		assert.Empty(t, out.String())
-	})
+		t.Run("--all omits source deleted by migration 008", func(t *testing.T) {
+			t.Parallel()
+			dsn := newMigratedAuditDB(t)
+			var out, errOut bytes.Buffer
+			// The stub returns empty bodies, so every seeded rule misses: exit 1 proves the run audited sources.
+			code := runAudit([]string{"--dsn", dsn, "--all", "-v"}, &stubFetcher{}, nil, &out, &errOut)
+			assert.Equal(t, 1, code, "stdout: %s stderr: %s", out.String(), errOut.String())
+			assert.Contains(t, out.String(), "KZ_BCC_FX_BID_USD_KZT")
+			assert.NotContains(t, out.String(), "KZ_BCC_BID_USD_KZT")
+			assert.Contains(t, errOut.String(), "active sources from rate_sources")
+		})
 
-	t.Run("inactive rows are excluded and chromedp rows are skipped", func(t *testing.T) {
-		t.Parallel()
-		dsn := newMigratedAuditDB(t)
-		db := openAuditDB(t, dsn)
-		repo, err := repository.NewRateSourceRepository(db)
-		require.NoError(t, err)
-		require.NoError(t, repo.RetainRateSource(t.Context(), &domain.RateSource{
-			Name: "audit-inactive", Title: "Inactive", BaseCurrency: "USD", QuoteCurrency: "KZT",
-			URL: "https://inactive.example/", Interval: "1h", Kind: domain.RateSourceKindBID, Active: false,
-			FetcherKind: "plain", Rules: []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: "([0-9]+)"}},
-		}))
-		require.NoError(t, repo.RetainRateSource(t.Context(), &domain.RateSource{
-			Name: "audit-chromedp", Title: "Chromedp", BaseCurrency: "USD", QuoteCurrency: "KZT",
-			URL: "https://chromedp.example/", Interval: "1h", Kind: domain.RateSourceKindBID, Active: true,
-			FetcherKind: "chromedp", Rules: []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: "([0-9]+)"}},
-		}))
-		require.NoError(t, db.Close())
+		t.Run("no active plain-fetcher sources is exit 3, not a filter miss", func(t *testing.T) {
+			t.Parallel()
+			dsn := newMigratedAuditDB(t)
+			db := openAuditDB(t, dsn)
+			repo, err := repository.NewRateSourceRepository(db)
+			require.NoError(t, err)
+			rows, err := repo.ObtainAllRateSources(t.Context())
+			require.NoError(t, err)
+			require.NotEmpty(t, rows)
+			for i := range rows {
+				rows[i].Active = false
+				require.NoError(t, repo.RetainRateSource(t.Context(), &rows[i]))
+			}
+			require.NoError(t, db.Close())
 
-		fetcher := &stubFetcher{}
-		var out, errOut bytes.Buffer
-		code := runAudit([]string{"--dsn", dsn, "--source", "audit-inactive"}, fetcher, nil, &out, &errOut)
-		assert.Equal(t, 3, code)
-		assert.Contains(t, errOut.String(), "no sources matched the given filter")
-		assert.Empty(t, fetcher.requestedURLs())
+			fetcher := &stubFetcher{}
+			var out, errOut bytes.Buffer
+			code := runAudit([]string{"--dsn", dsn, "--all"}, fetcher, nil, &out, &errOut)
+			assert.Equal(t, 3, code, "stderr: %s", errOut.String())
+			assert.Contains(t, errOut.String(), "no active plain-fetcher sources in rate_sources")
+			assert.NotContains(t, errOut.String(), "no sources matched")
+			assert.Empty(t, fetcher.requestedURLs())
+			assert.Empty(t, out.String())
+		})
 
-		out.Reset()
-		errOut.Reset()
-		code = runAudit([]string{"--dsn", dsn, "--source", "audit-chromedp"}, fetcher, nil, &out, &errOut)
-		assert.Equal(t, 3, code)
-		assert.Contains(t, errOut.String(), "skipped audit-chromedp: fetcher_kind=chromedp is not audited (plain HTTP only)")
-		assert.Contains(t, errOut.String(), "active sources from rate_sources")
-		assert.Empty(t, fetcher.requestedURLs())
-		assert.Empty(t, out.String())
+		t.Run("inactive rows are excluded and chromedp rows are skipped", func(t *testing.T) {
+			t.Parallel()
+			dsn := newMigratedAuditDB(t)
+			db := openAuditDB(t, dsn)
+			repo, err := repository.NewRateSourceRepository(db)
+			require.NoError(t, err)
+			require.NoError(t, repo.RetainRateSource(t.Context(), &domain.RateSource{
+				Name: "audit-inactive", Title: "Inactive", BaseCurrency: "USD", QuoteCurrency: "KZT",
+				URL: "https://inactive.example/", Interval: "1h", Kind: domain.RateSourceKindBID, Active: false,
+				FetcherKind: "plain", Rules: []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: "([0-9]+)"}},
+			}))
+			require.NoError(t, repo.RetainRateSource(t.Context(), &domain.RateSource{
+				Name: "audit-chromedp", Title: "Chromedp", BaseCurrency: "USD", QuoteCurrency: "KZT",
+				URL: "https://chromedp.example/", Interval: "1h", Kind: domain.RateSourceKindBID, Active: true,
+				FetcherKind: "chromedp", Rules: []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: "([0-9]+)"}},
+			}))
+			require.NoError(t, db.Close())
+
+			fetcher := &stubFetcher{}
+			var out, errOut bytes.Buffer
+			code := runAudit([]string{"--dsn", dsn, "--source", "audit-inactive"}, fetcher, nil, &out, &errOut)
+			assert.Equal(t, 3, code)
+			assert.Contains(t, errOut.String(), "no sources matched the given filter")
+			assert.Empty(t, fetcher.requestedURLs())
+
+			out.Reset()
+			errOut.Reset()
+			code = runAudit([]string{"--dsn", dsn, "--source", "audit-chromedp"}, fetcher, nil, &out, &errOut)
+			assert.Equal(t, 3, code)
+			assert.Contains(t, errOut.String(), "skipped audit-chromedp: fetcher_kind=chromedp is not audited (plain HTTP only)")
+			assert.Contains(t, errOut.String(), "active sources from rate_sources")
+			assert.Empty(t, fetcher.requestedURLs())
+			assert.Empty(t, out.String())
+		})
 	})
 }
 
