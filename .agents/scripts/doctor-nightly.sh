@@ -8,16 +8,17 @@
 # from the crontab of the buddy account. It refreshes a dedicated clone of the
 # repository, builds doctor and migrator, migrates a throwaway SQLite database,
 # audits its effective rules, classifies every non-OK source deterministically,
-# asks Claude Code (haiku, no tools beyond read-only file access) for a verdict
-# on the audit output, and reports through tbot-cli.
+# asks Claude Code (haiku, read-only file access only) for a verdict on the
+# audit output unless a usage-limit pause is active, and reports through tbot-cli.
 #
 # Linux only: needs GNU coreutils under the gnu-prefixed names gnudate,
 # gnutimeout and gnusha256sum, util-linux flock, python3 and bash 4.4 or newer.
 #
 # Usage: doctor-nightly.sh [--max-delay SECONDS]
 #
-# Exit status: 0 when the run finished, was skipped or stayed silent; 1 when a
-# Telegram message could not be delivered; 2 on a usage error.
+# Exit status: 0 when the run finished or stayed silent; 1 when a Telegram
+# message could not be delivered or the run could not start; 2 on a usage
+# error. An unexpected abort sends one message and keeps its exit status.
 
 set -euo pipefail
 
@@ -48,6 +49,8 @@ OR_SYSTEM='You extract one timestamp. Output exactly one line: the moment the us
 # Run state, set by main and the step functions.
 RUN=""
 D=""
+FINISHED=0
+SKIP_UNTIL=""
 INFRA=0
 INFRA_STEP=""
 INFRA_RC=0
@@ -67,16 +70,16 @@ FIRST=()
 TRANSIENT_NAMES=()
 
 # txt FILTER [N]: filters stdin to stdout by characters, not bytes.
-# Modes: len, clean (drops control characters except newline), head N, tail N.
+# Modes: len, clean (drops control and format characters except newline), head N, tail N.
 txt() {
   python3 -I -c '
-import sys
+import sys, unicodedata
 mode = sys.argv[1]
 text = sys.stdin.buffer.read().decode("utf-8", "replace")
 if mode == "len":
     out = str(len(text))
 elif mode == "clean":
-    out = "".join(c for c in text if c == "\n" or (ord(c) >= 32 and ord(c) != 127))
+    out = "".join(c for c in text if c == "\n" or unicodedata.category(c) not in ("Cc", "Cf", "Co", "Cs"))
 elif mode == "head":
     limit = int(sys.argv[2])
     if len(text) <= limit:
@@ -92,6 +95,31 @@ else:
     sys.exit(2)
 sys.stdout.buffer.write(out.encode("utf-8", "replace"))
 ' "$@"
+}
+
+# claude_tail OUT_FILE ERR_FILE: the last 2048 characters of the model's result text
+# and its stderr, with control and format characters removed. The raw JSON envelope
+# never leaves the host.
+claude_tail() {
+  python3 -I -c '
+import json, sys, unicodedata
+def read(path):
+    try:
+        with open(path, "rb") as fh:
+            return fh.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+text = read(sys.argv[1])
+try:
+    env = json.loads(text)
+    if isinstance(env, dict) and isinstance(env.get("result"), str):
+        text = env["result"]
+except ValueError:
+    pass
+combined = text + "\n" + read(sys.argv[2])
+combined = "".join(c for c in combined if c == "\n" or unicodedata.category(c) not in ("Cc", "Cf", "Co", "Cs"))
+sys.stdout.buffer.write(combined[-2048:].encode("utf-8", "replace"))
+' "$1" "$2"
 }
 
 utc_now() {
@@ -112,13 +140,39 @@ step_log() {
   fi
 }
 
+# timed SECONDS CMD...: gnutimeout with a 30 s kill grace. The command does not
+# inherit the lock descriptor, so a child that outlives the launcher cannot hold the lock.
+timed() {
+  local seconds="$1"
+  shift
+  gnutimeout -k 30 "$seconds" "$@" 9>&-
+}
+
 usage() {
   printf 'usage: %s [--max-delay SECONDS]\n' "$(basename -- "$0")" >&2
 }
 
 setup_path() {
   PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
-  export PATH LC_ALL=C
+  export PATH LC_ALL=C GIT_CEILING_DIRECTORIES="$STATE" GIT_TERMINAL_PROMPT=0
+}
+
+# fail_run TEXT: a run that cannot start properly sends one message and exits 1.
+fail_run() {
+  FINISHED=1
+  printf '%s\n' "$1" >&2
+  timed 60 "$TBOT_CLI" "#BEACON doctor nightly: $1" >/dev/null 2>&1 || true
+  exit 1
+}
+
+# on_exit: an abort the launcher did not plan sends one message. Set FINISHED before every intended exit.
+on_exit() {
+  local status=$?
+  if (( FINISHED == 0 )); then
+    local host
+    host=$(hostname -s 2>/dev/null || echo unknown)
+    timed 60 "$TBOT_CLI" "#BEACON doctor nightly: launcher aborted (exit $status); see $CRON_LOG on $host" >/dev/null 2>&1 || true
+  fi
 }
 
 # rotate_cron_log: keeps the last 256 KiB once cron.log exceeds 1 MiB.
@@ -142,10 +196,20 @@ wait_random_delay() {
   fi
 }
 
-# acquire_lock: holds the run lock on descriptor 9 until exit; fails when another run holds it.
+# acquire_lock: holds the run lock on descriptor 9 until exit.
+# Returns 1 when another run holds it; exits through fail_run when flock is missing or the lock cannot be taken.
 acquire_lock() {
+  local rc=0
+  if ! command -v flock >/dev/null 2>&1; then
+    fail_run "flock is missing; no run started"
+  fi
   exec 9>"$LOCK_FILE"
-  flock -n 9
+  flock -n -E 75 9 || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    75) return 1 ;;
+    *) fail_run "lock error (flock exit $rc); no run started" ;;
+  esac
 }
 
 # active_skip_until: prints the skip-until time when it lies in the future.
@@ -193,7 +257,7 @@ prune_transient() {
   prune_oldest 3 "${files[@]}"
 }
 
-# run_step NAME SECONDS ATTEMPTS CMD...: runs CMD under gnutimeout with its output in RUN/NAME.log.
+# run_step NAME SECONDS ATTEMPTS CMD...: runs CMD under timed, output in RUN/NAME.log.
 # Skipped once an earlier step failed. A failure is recorded in INFRA_STEP and INFRA_RC.
 run_step() {
   local name="$1" seconds="$2" attempts="$3" attempt rc=0
@@ -204,7 +268,7 @@ run_step() {
   fi
   for (( attempt = 1; attempt <= attempts; attempt++ )); do
     rc=0
-    gnutimeout "$seconds" "$@" >"$RUN/$name.log" 2>&1 || rc=$?
+    timed "$seconds" "$@" >"$RUN/$name.log" 2>&1 || rc=$?
     if (( rc == 0 )); then
       break
     fi
@@ -224,13 +288,25 @@ run_step() {
 }
 
 # refresh_and_build: refreshes the clone to origin/dev, builds both binaries and migrates the throwaway database.
+# reset and clean run only inside an existing clone.
 refresh_and_build() {
+  if [[ ! -e "$REPO/.git" ]]; then
+    INFRA_STEP=clone
+    INFRA_RC=1
+    step_log clone "failed: $REPO has no .git; reset and clean refused"
+    return 0
+  fi
   run_step fetch 120 2 git -C "$REPO" fetch --prune origin dev
   run_step reset 60 1 git -C "$REPO" reset --hard origin/dev
   run_step clean 60 1 git -C "$REPO" clean -fdx
   run_step rev 30 1 git -C "$REPO" rev-parse HEAD
   if [[ -z "$INFRA_STEP" ]]; then
-    REV=$(head -n 1 "$RUN/rev.log")
+    REV=$(grep -Eom1 '^[0-9a-f]{40}$' "$RUN/rev.log" || true)
+    if [[ -z "$REV" ]]; then
+      INFRA_STEP=rev
+      INFRA_RC=1
+      step_log rev "failed: no commit hash in output"
+    fi
   fi
   run_step build-doctor 600 1 env CGO_ENABLED=0 go -C "$REPO" build -trimpath -ldflags "-X main.BuildHash=$REV" -o "$BIN/doctor" ./cmd/doctor
   run_step build-migrator 300 1 env CGO_ENABLED=0 go -C "$REPO" build -trimpath -ldflags "-X main.BuildHash=$REV" -o "$BIN/migrator" ./cmd/migrator
@@ -241,7 +317,7 @@ refresh_and_build() {
 run_audit() {
   local rc=0
   if [[ -z "$INFRA_STEP" ]]; then
-    gnutimeout 1800 env -u BEACON_PROXY_URL -u BEACON_SQLITEDB_DSN "$BIN/doctor" audit --dsn "sqlite://_:_@_:_/$RUN/audit.db" --all -v >"$RUN/audit.out" 2>"$RUN/audit.err" || rc=$?
+    timed 1800 env -u BEACON_PROXY_URL -u BEACON_SQLITEDB_DSN "$BIN/doctor" audit --dsn "sqlite://_:_@_:_/$RUN/audit.db" --all -v >"$RUN/audit.out" 2>"$RUN/audit.err" || rc=$?
     AUDIT_EXIT="$rc"
     step_log audit "exit=$rc"
   else
@@ -250,16 +326,9 @@ run_audit() {
   rm -f "$RUN/audit.db" "$RUN/audit.db-wal" "$RUN/audit.db-shm"
 }
 
-# known_status STATUS: succeeds for the statuses a MISS DETAILS line may carry.
-known_status() {
-  case "$1" in
-    REGEX_NO_MATCH|JSON_PATH_ERROR|VALUE_PARSE_ERROR|UNSUPPORTED_METHOD|UNSUPPORTED_HEADERS|FETCH_ERROR|HTTP_NON_2XX) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 # parse_miss_details FILE: prints "NAME<TAB>STATUS" for each line after MISS DETAILS:.
-# A line that does not fit the format prints "<unparsed>" with status UNPARSED.
+# The status is not checked here; classify_audit decides what it means.
+# A line without a tab or with a name outside the pattern prints "<unparsed>" with status UNPARSED.
 parse_miss_details() {
   local file="$1" line name status in_section=0 name_re='^[A-Za-z0-9_.-]+$'
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -279,7 +348,7 @@ parse_miss_details() {
     name="${line%%$'\t'*}"
     status="${line#*$'\t'}"
     status="${status%%$'\t'*}"
-    if [[ ! "$name" =~ $name_re ]] || ! known_status "$status"; then
+    if [[ ! "$name" =~ $name_re ]]; then
       printf '<unparsed>\tUNPARSED\n'
       continue
     fi
@@ -290,8 +359,7 @@ parse_miss_details() {
 # classify_audit: sets INFRA and the entry arrays, writes classification.txt and,
 # when the audit result is reliable, this night's transient file.
 classify_audit() {
-  local name status parsed=0 unparsed=0 prev_file entry
-  local prev_day
+  local name status parsed=0 unparsed=0 prev_file entry prev_day
   IMMEDIATE=()
   REPEATED=()
   FIRST=()
@@ -309,10 +377,6 @@ classify_audit() {
     while IFS=$'\t' read -r name status; do
       parsed=$((parsed + 1))
       case "$status" in
-        UNPARSED)
-          unparsed=$((unparsed + 1))
-          IMMEDIATE+=("$name $status")
-          ;;
         REGEX_NO_MATCH|JSON_PATH_ERROR|VALUE_PARSE_ERROR|UNSUPPORTED_METHOD|UNSUPPORTED_HEADERS)
           IMMEDIATE+=("$name $status")
           ;;
@@ -323,6 +387,10 @@ classify_audit() {
           else
             FIRST+=("$name $status")
           fi
+          ;;
+        *)
+          unparsed=$((unparsed + 1))
+          IMMEDIATE+=("<unparsed> UNPARSED")
           ;;
       esac
     done <"$RUN/miss.tsv"
@@ -371,9 +439,10 @@ emit_tail() {
   fi
 }
 
-# write_prompt_data: builds the model input, the audit data capped at 32 KB inside the untrusted-data markers.
+# write_prompt_data: builds the model input. The audit data is capped at 32 KB, and
+# the end marker is neutralised inside it so that page text cannot close the block.
 write_prompt_data() {
-  local body="$RUN/prompt-body.txt" data="$RUN/prompt-data.txt"
+  local body="$RUN/prompt-body.txt" clean="$RUN/prompt-body.clean" data="$RUN/prompt-data.txt"
   {
     printf 'Classification:\n'
     cat "$RUN/classification.txt"
@@ -387,19 +456,20 @@ write_prompt_data() {
       emit_tail "$RUN/$INFRA_STEP.log" 2048
     fi
   } >"$body"
+  sed 's/UNTRUSTED_AUDIT_OUTPUT/UNTRUSTED-AUDIT-OUTPUT/g' "$body" >"$clean"
   {
     printf '<<<UNTRUSTED_AUDIT_OUTPUT\n'
-    head -c 32000 "$body"
+    head -c 32000 "$clean"
     printf '\nUNTRUSTED_AUDIT_OUTPUT>>>\n'
   } >"$data"
-  rm -f "$body"
+  rm -f "$body" "$clean"
 }
 
 # call_claude: one headless Claude Code call from the empty run directory.
 call_claude() {
   local rc=0
   (
-    cd "$RUN" && gnutimeout 600 claude -p \
+    cd "$RUN" && timed 600 claude -p \
       --model haiku --effort medium \
       --restricted --safe-mode \
       --tools "Read,Grep,Glob" --allowedTools "Read,Grep,Glob" \
@@ -418,10 +488,10 @@ call_claude() {
 # STATUS is ok, fix or failed. Only a schema-valid verdict object yields ok or fix.
 read_verdict() {
   python3 -I -c '
-import json, sys
+import json, sys, unicodedata
 path, rc = sys.argv[1], int(sys.argv[2])
 def clean(s):
-    return "".join(c for c in s if c == "\n" or (ord(c) >= 32 and ord(c) != 127))
+    return "".join(c for c in s if c == "\n" or unicodedata.category(c) not in ("Cc", "Cf", "Co", "Cs"))
 def emit(status, reason, message=""):
     sys.stdout.buffer.write((status + "\t" + reason + "\n" + message).encode("utf-8", "replace"))
     sys.exit(0)
@@ -517,7 +587,7 @@ reset_epoch_from_line() {
   return 0
 }
 
-# write_skip EPOCH: records the reset time that pauses every later run and marks the model as limited.
+# write_skip EPOCH: records the reset time that pauses later model calls and marks the model as limited.
 write_skip() {
   MODEL_UNTIL=$(gnudate -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ)
   printf '%s\n' "$MODEL_UNTIL" >"$SKIP_FILE"
@@ -535,8 +605,8 @@ try_limit_then_fail() {
     return 0
   fi
 
-  tail -c 2048 "$RUN/claude.all" >"$RUN/claude.tail"
-  gnutimeout 60 "$JEV_CLI" noul -S - "$JEV_QUESTION" --true "$JEV_TRUE" --false "$JEV_FALSE" <"$RUN/claude.tail" >"$RUN/jev.out" 2>>"$RUN/jev.err" || rc=$?
+  claude_tail "$RUN/claude.out" "$RUN/claude.err" >"$RUN/claude.tail"
+  timed 60 "$JEV_CLI" noul -S - "$JEV_QUESTION" --true "$JEV_TRUE" --false "$JEV_FALSE" <"$RUN/claude.tail" >"$RUN/jev.out" 2>>"$RUN/jev.err" || rc=$?
   step_log jev "exit=$rc"
   if (( rc != 0 )); then
     MODEL_REASON="jev failed"
@@ -560,7 +630,7 @@ try_limit_then_fail() {
   zone_name=$(gnudate +%Z)
   zone_offset=$(gnudate +%:z)
   rc=0
-  gnutimeout 120 openrouter-cli -t luna -T 0 -n 40 -s "$OR_SYSTEM" "Now: $now_iso. Host time zone: $zone_name ($zone_offset). Return the reset time." <"$RUN/claude.tail" >"$RUN/openrouter.out" 2>>"$RUN/openrouter.err" || rc=$?
+  timed 120 openrouter-cli -t luna -T 0 -n 40 -s "$OR_SYSTEM" "Now: $now_iso. Host time zone: $zone_name ($zone_offset). Return the reset time." <"$RUN/claude.tail" >"$RUN/openrouter.out" 2>>"$RUN/openrouter.err" || rc=$?
   step_log openrouter "exit=$rc"
   if (( rc != 0 )); then
     MODEL_REASON="openrouter failed"
@@ -579,6 +649,7 @@ try_limit_then_fail() {
 }
 
 # decide_model: sets MODEL_STATUS, MODEL_REASON, MODEL_TEXT, MODEL_TAIL and MODEL_UNTIL.
+# Exit codes of timeout, permission and missing binary are model failures, not limits.
 decide_model() {
   local first=""
   MODEL_STATUS="failed"
@@ -587,23 +658,27 @@ decide_model() {
   MODEL_TAIL=""
   MODEL_UNTIL=""
   cat "$RUN/claude.out" "$RUN/claude.err" >"$RUN/claude.all"
-  read_verdict "$RUN/claude.out" "$CLAUDE_RC" >"$RUN/verdict.txt" || true
-  first=$(head -n 1 "$RUN/verdict.txt")
-  MODEL_STATUS="${first%%$'\t'*}"
-  MODEL_REASON="${first#*$'\t'}"
-  case "$MODEL_STATUS" in
-    ok|fix)
-      MODEL_TEXT=$(tail -n +2 "$RUN/verdict.txt")
-      ;;
-    failed)
-      ;;
-    *)
-      MODEL_STATUS="failed"
-      MODEL_REASON="claude failed"
-      ;;
-  esac
-  if [[ "$MODEL_STATUS" == failed && "$MODEL_REASON" != "max turns reached" ]]; then
-    try_limit_then_fail
+  if (( CLAUDE_RC == 124 || CLAUDE_RC == 126 || CLAUDE_RC == 127 )); then
+    MODEL_REASON="claude exit $CLAUDE_RC"
+  else
+    read_verdict "$RUN/claude.out" "$CLAUDE_RC" >"$RUN/verdict.txt" || true
+    first=$(head -n 1 "$RUN/verdict.txt")
+    MODEL_STATUS="${first%%$'\t'*}"
+    MODEL_REASON="${first#*$'\t'}"
+    case "$MODEL_STATUS" in
+      ok|fix)
+        MODEL_TEXT=$(tail -n +2 "$RUN/verdict.txt")
+        ;;
+      failed)
+        ;;
+      *)
+        MODEL_STATUS="failed"
+        MODEL_REASON="claude failed"
+        ;;
+    esac
+    if [[ "$MODEL_STATUS" == failed && "$MODEL_REASON" != "max turns reached" ]]; then
+      try_limit_then_fail
+    fi
   fi
   if [[ "$MODEL_STATUS" == failed ]]; then
     MODEL_TAIL=$(tail -c 4096 "$RUN/claude.all" | txt clean | txt tail 500)
@@ -662,9 +737,12 @@ assemble() {
 # compose_message HEADER MODEL_BLOCK: the Telegram text, at most 4096 characters.
 # Lists keep 15 entries each; when the lists exceed 3000 characters, first-time
 # transients fall to a count, then repeated, then immediate entries are cut.
+# The model block gets the room left, clamped to 1500 characters.
 compose_message() {
-  local header="#BEACON doctor audit $D: $1" model="$2" infra_line="" log_line="log: hive-warden-01:$RUN"
+  local header="#BEACON doctor audit $D: $1" model="$2" infra_line="" log_line="" host=""
   local first_mode=list rep_mode=list imm_cap=15 lists="" base="" blen=0 room=0 mblock=""
+  host=$(hostname -s 2>/dev/null || echo unknown)
+  log_line="log: $host:$RUN"
   if (( INFRA )); then
     infra_line="infra: $INFRA_REASON"
   fi
@@ -696,10 +774,13 @@ compose_message() {
 }
 
 # model_block: the model part of the message, or the reason the model did not answer.
+# Model text is marked unverified: it was produced from page text.
 model_block() {
   case "$MODEL_STATUS" in
     ok|fix)
-      printf '%s' "$MODEL_TEXT"
+      if [[ -n "$MODEL_TEXT" ]]; then
+        printf 'model (unverified): %s' "$MODEL_TEXT"
+      fi
       ;;
     limit)
       printf 'model unavailable: usage limit; model skipped until %s' "$MODEL_UNTIL"
@@ -721,7 +802,7 @@ send_message() {
   local attempt rc
   for (( attempt = 1; attempt <= 2; attempt++ )); do
     rc=0
-    gnutimeout 60 "$TBOT_CLI" "$1" >>"$RUN/tbot.log" 2>&1 || rc=$?
+    timed 60 "$TBOT_CLI" "$1" >>"$RUN/tbot.log" 2>&1 || rc=$?
     if (( rc == 0 )); then
       return 0
     fi
@@ -779,7 +860,7 @@ check_launcher_drift() {
   if [[ "$repo" == "$notified" ]]; then
     return 0
   fi
-  if send_message "#BEACON doctor nightly: launcher copy is out of date; reinstall it (plan 261101.0007 Task 6, launcher command)"; then
+  if send_message "#BEACON doctor nightly: launcher copy is out of date; reinstall it (see cmd/doctor/README.md, Nightly audit on warden)"; then
     printf '%s\n' "$repo" >"$NOTIFIED_FILE"
     step_log drift "notified"
   else
@@ -790,10 +871,12 @@ check_launcher_drift() {
 
 main() {
   local max_delay=1800 skip_at=""
+  trap on_exit EXIT
   while (( $# > 0 )); do
     case "$1" in
       --max-delay)
         if (( $# < 2 )) || [[ ! "$2" =~ ^[0-9]+$ ]]; then
+          FINISHED=1
           usage
           exit 2
         fi
@@ -801,6 +884,7 @@ main() {
         shift 2
         ;;
       *)
+        FINISHED=1
         usage
         exit 2
         ;;
@@ -815,11 +899,8 @@ main() {
   wait_random_delay "$max_delay"
 
   if ! acquire_lock; then
-    log "another run holds the lock"
-    exit 0
-  fi
-  if skip_at=$(active_skip_until); then
-    log "skip window: model and audit paused until $skip_at"
+    FINISHED=1
+    printf '%s another run holds the lock\n' "$(utc_now)"
     exit 0
   fi
 
@@ -829,15 +910,26 @@ main() {
   prune_runs
   step_log start "run $RUN"
 
+  if skip_at=$(active_skip_until); then
+    SKIP_UNTIL="$skip_at"
+    step_log skip "model paused until $SKIP_UNTIL; audit still runs"
+  fi
+
   refresh_and_build
   run_audit
   classify_audit
   write_prompt_data
-  call_claude
-  decide_model
+  if [[ -n "$SKIP_UNTIL" ]]; then
+    MODEL_STATUS=limit
+    MODEL_UNTIL="$SKIP_UNTIL"
+  else
+    call_claude
+    decide_model
+  fi
   decide_report
   check_launcher_drift
   step_log finish "failures=$FINAL_FAILURE"
+  FINISHED=1
   exit "$FINAL_FAILURE"
 }
 

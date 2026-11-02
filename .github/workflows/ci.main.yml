@@ -54,6 +54,12 @@ jobs:
         run: |
           exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
           make test
+      # The nightly launcher's fixture test. It needs GNU coreutils and util-linux
+      # flock, both on this runner; find_gnu falls back to the plain GNU names.
+      - name: Nightly launcher fixture test
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
+          bash .agents/scripts/doctor-nightly.test.sh
       # production-shape build: CGO off, linux/amd64, the same artifacts
       # release.yml ships. Catches "tests pass but prod build breaks" (build
       # tags, race-only files, missing wasm assets).
