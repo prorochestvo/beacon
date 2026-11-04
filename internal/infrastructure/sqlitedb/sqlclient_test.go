@@ -5,19 +5,19 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
 
+	"github.com/prorochestvo/dsninjector"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
 
 var _ committer = (*mockFailCommitter)(nil)
+var _ Committer = (*SQLiteClient)(nil)
 
 // newTestClient opens an in-memory SQLite DB, applies the migration table, and
 // returns a ready-to-use *SQLiteClient. The DB is closed automatically when the
@@ -30,7 +30,7 @@ func newTestClient(t *testing.T) *SQLiteClient {
 	t.Cleanup(func() { _ = mem.Close() })
 	mem.SetMaxOpenConns(1)
 
-	c, err := NewSQLiteClientEx(mem, os.Stdout)
+	c, err := NewSQLiteClientEx(mem)
 	require.NoError(t, err)
 
 	// Bootstrap the migration table so Ping works.
@@ -52,7 +52,7 @@ func TestNewSQLiteClientEx(t *testing.T) {
 		mem, err := sql.Open("sqlite", ":memory:")
 		require.NoError(t, err)
 		require.NoError(t, mem.Close())
-		_, err = NewSQLiteClientEx(mem, os.Stdout)
+		_, err = NewSQLiteClientEx(mem)
 		require.Error(t, err)
 	})
 }
@@ -65,7 +65,7 @@ func TestNewSQLiteClient(t *testing.T) {
 		dbPath := filepath.Join(t.TempDir(), "test.db")
 		dsn := &stubDataSource{path: dbPath}
 
-		c, err := NewSQLiteClient(dsn, os.Stdout)
+		c, err := NewSQLiteClient(dsn)
 		require.NoError(t, err)
 		require.NotNil(t, c)
 		t.Cleanup(func() { _ = c.Close() })
@@ -86,7 +86,7 @@ func TestNewSQLiteClient(t *testing.T) {
 		// when executing the first statement (WAL/foreign-key pragmas inside
 		// NewSQLiteClientEx), exercising the constructor error path.
 		dsn := &stubDataSource{path: "/nonexistent/path/that/cannot/be/created/test.db"}
-		_, err := NewSQLiteClient(dsn, os.Stdout)
+		_, err := NewSQLiteClient(dsn)
 		require.Error(t, err)
 	})
 }
@@ -107,7 +107,7 @@ func TestSQLiteClient_Ping(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = mem.Close() })
 		mem.SetMaxOpenConns(1)
-		c, err := NewSQLiteClientEx(mem, os.Stdout)
+		c, err := NewSQLiteClientEx(mem)
 		require.NoError(t, err)
 		require.Error(t, c.Ping(t.Context()))
 	})
@@ -116,7 +116,7 @@ func TestSQLiteClient_Ping(t *testing.T) {
 		mem, err := sql.Open("sqlite", ":memory:")
 		require.NoError(t, err)
 		mem.SetMaxOpenConns(1)
-		c, err := NewSQLiteClientEx(mem, os.Stdout)
+		c, err := NewSQLiteClientEx(mem)
 		require.NoError(t, err)
 		require.NoError(t, mem.Close())
 		require.Error(t, c.Ping(t.Context()))
@@ -143,7 +143,7 @@ func TestSQLiteClient_Commit(t *testing.T) {
 		t.Helper()
 		tx, err := c.Transaction(t.Context())
 		require.NoError(t, err)
-		_, err = tx.Exec("CREATE TABLE IF NOT EXISTS " + tableName + " (id INTEGER PRIMARY KEY, val TEXT);")
+		_, err = tx.ExecContext(t.Context(), "CREATE TABLE IF NOT EXISTS "+tableName+" (id INTEGER PRIMARY KEY, val TEXT);")
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 	}
@@ -161,7 +161,7 @@ func TestSQLiteClient_Commit(t *testing.T) {
 		defer func() { _ = tx2.Rollback() }()
 
 		var count int
-		require.NoError(t, tx2.QueryRow("SELECT COUNT(*) FROM test_commit_single WHERE val = 'hello';").Scan(&count))
+		require.NoError(t, tx2.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM test_commit_single WHERE val = 'hello';").Scan(&count))
 		require.Equal(t, 1, count)
 	})
 	t.Run("extra action is also committed", func(t *testing.T) {
@@ -178,7 +178,7 @@ func TestSQLiteClient_Commit(t *testing.T) {
 		defer func() { _ = tx2.Rollback() }()
 
 		var count int
-		require.NoError(t, tx2.QueryRow("SELECT COUNT(*) FROM test_commit_extra;").Scan(&count))
+		require.NoError(t, tx2.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM test_commit_extra;").Scan(&count))
 		require.Equal(t, 2, count)
 	})
 	t.Run("primary action failure returns error", func(t *testing.T) {
@@ -200,7 +200,7 @@ func TestSQLiteClient_Commit(t *testing.T) {
 		defer func() { _ = tx2.Rollback() }()
 
 		var count int
-		require.NoError(t, tx2.QueryRow("SELECT COUNT(*) FROM test_commit_fail;").Scan(&count))
+		require.NoError(t, tx2.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM test_commit_fail;").Scan(&count))
 		require.Equal(t, 0, count)
 	})
 	t.Run("returns error when db is closed", func(t *testing.T) {
@@ -208,7 +208,7 @@ func TestSQLiteClient_Commit(t *testing.T) {
 		mem, err := sql.Open("sqlite", ":memory:")
 		require.NoError(t, err)
 		mem.SetMaxOpenConns(1)
-		c, err := NewSQLiteClientEx(mem, os.Stdout)
+		c, err := NewSQLiteClientEx(mem)
 		require.NoError(t, err)
 		require.NoError(t, mem.Close())
 		require.Error(t, c.Commit(t.Context(), &execAction{sql: "SELECT 1;"}))
@@ -222,7 +222,7 @@ func TestSQLiteClient_Rollback(t *testing.T) {
 		t.Helper()
 		tx, err := c.Transaction(t.Context())
 		require.NoError(t, err)
-		_, err = tx.Exec("CREATE TABLE IF NOT EXISTS " + tableName + " (id INTEGER PRIMARY KEY, val TEXT);")
+		_, err = tx.ExecContext(t.Context(), "CREATE TABLE IF NOT EXISTS "+tableName+" (id INTEGER PRIMARY KEY, val TEXT);")
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 	}
@@ -240,7 +240,7 @@ func TestSQLiteClient_Rollback(t *testing.T) {
 		defer func() { _ = tx2.Rollback() }()
 
 		var count int
-		require.NoError(t, tx2.QueryRow("SELECT COUNT(*) FROM test_rollback_single WHERE val = 'world';").Scan(&count))
+		require.NoError(t, tx2.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM test_rollback_single WHERE val = 'world';").Scan(&count))
 		require.Equal(t, 0, count)
 	})
 	t.Run("extra action is also not persisted", func(t *testing.T) {
@@ -257,7 +257,7 @@ func TestSQLiteClient_Rollback(t *testing.T) {
 		defer func() { _ = tx2.Rollback() }()
 
 		var count int
-		require.NoError(t, tx2.QueryRow("SELECT COUNT(*) FROM test_rollback_extra;").Scan(&count))
+		require.NoError(t, tx2.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM test_rollback_extra;").Scan(&count))
 		require.Equal(t, 0, count)
 	})
 	t.Run("primary action failure returns error", func(t *testing.T) {
@@ -270,7 +270,7 @@ func TestSQLiteClient_Rollback(t *testing.T) {
 		mem, err := sql.Open("sqlite", ":memory:")
 		require.NoError(t, err)
 		mem.SetMaxOpenConns(1)
-		c, err := NewSQLiteClientEx(mem, os.Stdout)
+		c, err := NewSQLiteClientEx(mem)
 		require.NoError(t, err)
 		require.NoError(t, mem.Close())
 		require.Error(t, c.Rollback(t.Context(), &execAction{sql: "SELECT 1;"}))
@@ -296,18 +296,18 @@ func TestSQLiteClient_Close(t *testing.T) {
 		require.NoError(t, err)
 		mem.SetMaxOpenConns(1)
 
-		c, err := NewSQLiteClientEx(mem, os.Stdout)
+		c, err := NewSQLiteClientEx(mem)
 		require.NoError(t, err)
 
 		require.NoError(t, c.Close())
-		require.Error(t, mem.Ping())
+		require.Error(t, mem.PingContext(t.Context()))
 	})
 }
 
 // execAction is a minimal sqlAction for tests.
 type execAction struct{ sql string }
 
-func (a *execAction) Run(tx *sql.Tx, ctx context.Context) error {
+func (a *execAction) Run(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, a.sql)
 	return err
 }
@@ -315,7 +315,7 @@ func (a *execAction) Run(tx *sql.Tx, ctx context.Context) error {
 // errAction is a sqlAction that always returns the configured error.
 type errAction struct{ err error }
 
-func (a *errAction) Run(_ *sql.Tx, _ context.Context) error {
+func (a *errAction) Run(_ context.Context, _ *sql.Tx) error {
 	return a.err
 }
 
@@ -328,6 +328,8 @@ func (m *mockFailCommitter) Transaction(_ context.Context) (*sql.Tx, error) {
 
 // stubDataSource implements dsninjector.DataSource for testing by returning a
 // fixed file path from Database().
+var _ dsninjector.DataSource = (*stubDataSource)(nil)
+
 type stubDataSource struct{ path string }
 
 func (s *stubDataSource) Database() string                    { return s.path }
@@ -376,7 +378,7 @@ func TestSQLitePoolPerConnectionPragmas(t *testing.T) {
 		// fresh connection. With the pre-fix wiring all but one would report
 		// foreign_keys=0 / busy_timeout=0.
 		conns := make([]*sql.Conn, poolSize)
-		for i := 0; i < poolSize; i++ {
+		for i := range poolSize {
 			c, err := db.Conn(ctx)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = c.Close() })
@@ -410,50 +412,185 @@ func TestSQLitePoolPerConnectionPragmas(t *testing.T) {
 		);`)
 		require.NoError(t, err)
 
-		// poolSize goroutines each open a transaction (pinning a distinct
-		// connection), wait at the barrier, then race their orphan INSERT.
-		// Without per-connection foreign_keys=ON, most would succeed silently.
-		var (
-			wg      sync.WaitGroup
-			ready   = make(chan struct{}, poolSize)
-			start   = make(chan struct{})
-			results = make(chan error, poolSize)
-		)
-		for i := 0; i < poolSize; i++ {
-			wg.Add(1)
-			go func(idx int) {
-				defer wg.Done()
-				tx, err := db.BeginTx(ctx, nil)
-				if err != nil {
-					results <- fmt.Errorf("worker %d begin: %w", idx, err)
-					return
-				}
-				defer func() { _ = tx.Rollback() }()
-				ready <- struct{}{}
-				<-start
-				_, err = tx.ExecContext(ctx,
-					`INSERT INTO rate_values (id, source_name, price) VALUES (?, ?, ?);`,
-					fmt.Sprintf("rv-%d-%d", idx, time.Now().UnixNano()),
-					"DOES_NOT_EXIST",
-					100.0,
-				)
-				results <- err
-			}(i)
+		// Reserve every pool slot before writing anything, exactly as the sibling
+		// subtest does, so each INSERT provably runs on its own connection —
+		// without per-connection foreign_keys=ON, most would succeed silently.
+		//
+		// The reservation replaces an earlier barrier that held poolSize write
+		// transactions open at once and raced their INSERTs. That shape stopped
+		// being expressible with _txlock=immediate: the write lock is taken at
+		// BEGIN, so only the first of those transactions can exist and the rest
+		// block until the barrier they are themselves supposed to release. Holding
+		// concurrent write transactions is not something the repository layer does
+		// — every write opens, writes and commits inside one function — and it is
+		// not what this subtest is about.
+		conns := make([]*sql.Conn, poolSize)
+		for i := range poolSize {
+			c, err := db.Conn(ctx)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = c.Close() })
+			conns[i] = c
 		}
-		for i := 0; i < poolSize; i++ {
-			<-ready
-		}
-		close(start)
-		wg.Wait()
-		close(results)
-
-		var n int
-		for err := range results {
-			n++
-			require.Error(t, err, "INSERT with orphan source_name must be rejected")
+		for i, c := range conns {
+			_, err := c.ExecContext(ctx,
+				`INSERT INTO rate_values (id, source_name, price) VALUES (?, ?, ?);`,
+				fmt.Sprintf("rv-%d-%d", i, time.Now().UnixNano()),
+				"DOES_NOT_EXIST",
+				100.0,
+			)
+			require.Errorf(t, err, "pool connection %d: INSERT with orphan source_name must be rejected", i)
 			require.Containsf(t, strings.ToLower(err.Error()), "foreign key",
-				"expected FOREIGN KEY constraint failure, got: %v", err)
+				"pool connection %d: expected FOREIGN KEY constraint failure, got: %v", i, err)
 		}
-		require.Equal(t, poolSize, n)
+	})
+}
+
+// TestWriteTransactionsWaitInsteadOfFailing pins _txlock=immediate, the reason
+// busy_timeout reaches write transactions at all.
+//
+// The database is file-backed rather than the ":memory:" the other tests use:
+// SetMaxOpenConns(1) cannot express two connections contending, and the assertions
+// would pass vacuously.
+//
+// The first subtest is the regression: with the parameter removed it fails with
+// SQLITE_BUSY in about a millisecond, which is both the error and the timing the
+// production logs carried. The second does not fail today — reads are deferred
+// either way — and is here as the guard for the other direction, so that widening
+// immediate mode to every transaction shows up as a blocked reader rather than as
+// a quiet loss of read concurrency.
+func TestWriteTransactionsWaitInsteadOfFailing(t *testing.T) {
+	t.Parallel()
+
+	const holdFor = 200 * time.Millisecond
+
+	newContendedClient := func(t *testing.T) *SQLiteClient {
+		t.Helper()
+		db, err := sql.Open("sqlite", connectionOptions(filepath.Join(t.TempDir(), "contended.db")))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = db.Close() })
+		db.SetMaxOpenConns(4)
+
+		c, err := NewSQLiteClientEx(db)
+		require.NoError(t, err)
+		_, err = db.ExecContext(t.Context(), "CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT);")
+		require.NoError(t, err)
+		return c
+	}
+
+	// holdWriteLock opens a write transaction, writes, and signals once the WAL
+	// write lock is actually held — after the INSERT, not after BEGIN, or the
+	// contending side would be racing an unlocked database. release commits and
+	// returns the outcome rather than asserting on it: one caller invokes it from
+	// a timer goroutine, and require.NoError there would land FailNow off the test
+	// goroutine.
+	holdWriteLock := func(t *testing.T, c *SQLiteClient) (held <-chan struct{}, release func() error) {
+		t.Helper()
+		gate := make(chan struct{})
+		unblock := make(chan struct{})
+		outcome := make(chan error, 1)
+		go func() {
+			tx, err := c.Transaction(t.Context())
+			if err != nil {
+				close(gate)
+				outcome <- err
+				return
+			}
+			if _, err = tx.ExecContext(t.Context(), "INSERT INTO t (val) VALUES ('holder');"); err != nil {
+				close(gate)
+				outcome <- errors.Join(err, tx.Rollback())
+				return
+			}
+			close(gate)
+			<-unblock
+			outcome <- tx.Commit()
+		}()
+		return gate, func() error {
+			close(unblock)
+			return <-outcome
+		}
+	}
+
+	t.Run("contended write waits for the lock and commits", func(t *testing.T) {
+		t.Parallel()
+		c := newContendedClient(t)
+
+		held, release := holdWriteLock(t, c)
+		<-held
+		// Released on a timer rather than on a handshake: this subtest asserts the
+		// contending BEGIN blocks and then succeeds, so the lock has to go away on
+		// its own while that BEGIN is already waiting.
+		released := make(chan error, 1)
+		go func() {
+			//nolint:forbidigo // the timer is the point: the lock has to fall away while
+			// the contending BEGIN is already waiting, which no handshake can express
+			time.Sleep(holdFor)
+			released <- release()
+		}()
+
+		// The shape of every Retain* path: read to decide INSERT vs UPDATE, then
+		// write. Under DEFERRED that write is a promotion and fails on the spot.
+		tx, err := c.Transaction(t.Context())
+		require.NoError(t, err)
+		defer func() { _ = tx.Rollback() }()
+
+		var count int
+		require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM t;").Scan(&count))
+		_, err = tx.ExecContext(t.Context(), "INSERT INTO t (val) VALUES ('contender');")
+		require.NoError(t, err, "write under contention must wait for the lock, not fail")
+		require.NoError(t, tx.Commit())
+		require.NoError(t, <-released)
+	})
+
+	t.Run("read-only transaction is not blocked by an open writer", func(t *testing.T) {
+		t.Parallel()
+		c := newContendedClient(t)
+
+		held, release := holdWriteLock(t, c)
+		<-held
+
+		done := make(chan error, 1)
+		go func() {
+			tx, err := c.ReadOnlyTransaction(t.Context())
+			if err != nil {
+				done <- err
+				return
+			}
+			var count int
+			err = tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM t;").Scan(&count)
+			if err == nil && count != 0 {
+				err = fmt.Errorf("reader saw %d row(s); an uncommitted write must not be visible", count)
+			}
+			done <- errors.Join(err, tx.Rollback())
+		}()
+
+		// The writer is still open, so a reader that had taken the write lock could
+		// only finish after release() — which does not run until this select does.
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("read-only transaction blocked behind an open writer")
+		}
+		require.NoError(t, release())
+	})
+}
+
+// TestConnectionOptions covers the DSN assembly that carries the pragmas and the
+// begin mode.
+func TestConnectionOptions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("carries the pragmas and immediate begin mode", func(t *testing.T) {
+		t.Parallel()
+		dsn := connectionOptions("/var/lib/beacon/beacon.sqlite")
+		require.Contains(t, dsn, "_pragma=busy_timeout(5000)")
+		require.Contains(t, dsn, "_pragma=foreign_keys(1)")
+		require.Contains(t, dsn, "_txlock=immediate")
+	})
+	t.Run("appends to a path that already carries a query", func(t *testing.T) {
+		t.Parallel()
+		dsn := connectionOptions("file:beacon?mode=memory&cache=shared")
+		require.Equal(t, 1, strings.Count(dsn, "?"))
+		require.Contains(t, dsn, "cache=shared&_pragma=busy_timeout(5000)")
 	})
 }

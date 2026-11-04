@@ -2,7 +2,9 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/seilbekskindirov/beacon/cmd/wasm/apiclient"
@@ -183,6 +185,18 @@ func (p *MeWeatherCitiesPage) DeleteCity(ctx context.Context, id string) error {
 	return p.LoadCities(ctx)
 }
 
+// RemoveCity removes the whole city (all alert kinds, including the forced thaw alert) at
+// locationID and reloads the list on success. Sets AuthFailure on 401.
+func (p *MeWeatherCitiesPage) RemoveCity(ctx context.Context, locationID string) error {
+	if err := p.client.MeWeatherLocationDelete(ctx, p.initData, locationID); err != nil {
+		if strings.Contains(err.Error(), AuthFailureSentinel) {
+			p.state.AuthFailure = true
+		}
+		return err
+	}
+	return p.LoadCities(ctx)
+}
+
 // ClearSearch resets the search form to its initial empty state.
 func (p *MeWeatherCitiesPage) ClearSearch() {
 	p.state.SearchQuery = ""
@@ -242,15 +256,32 @@ func (p *MeWeatherCitiesPage) SavePendingAlert(ctx context.Context) error {
 	}
 
 	body := dto.WeatherCityCreateRequest{
-		LocationID:     base.LocationID,
-		DisplayName:    base.DisplayName,
-		Latitude:       base.Latitude,
-		Longitude:      base.Longitude,
-		Timezone:       base.Timezone,
-		Country:        base.Country,
-		Admin1:         base.Admin1,
-		NotifyKind:     p.state.AlertFormKind,
-		ConditionValue: p.state.AlertFormValue,
+		LocationID:  base.LocationID,
+		DisplayName: base.DisplayName,
+		Latitude:    base.Latitude,
+		Longitude:   base.Longitude,
+		Timezone:    base.Timezone,
+		Country:     base.Country,
+		Admin1:      base.Admin1,
+		NotifyKind:  p.state.AlertFormKind,
+	}
+
+	// morning_summary and forecast_outlook reuse the numeric form input as a 0–23
+	// local hour, not a threshold: both are timed rather than thresholded. Blank →
+	// omit NotifyHour so the server applies its default (07:00). A non-numeric hour is
+	// rejected here rather than POSTed as garbage; the 0–23 range itself is validated
+	// server-side (single source of truth).
+	if p.state.AlertFormKind == "morning_summary" || p.state.AlertFormKind == "forecast_outlook" {
+		if hourStr := strings.TrimSpace(p.state.AlertFormValue); hourStr != "" {
+			hour, err := strconv.Atoi(hourStr)
+			if err != nil {
+				p.state.AlertSaveError = errors.New("hour must be a whole number between 0 and 23")
+				return p.state.AlertSaveError
+			}
+			body.NotifyHour = &hour
+		}
+	} else {
+		body.ConditionValue = p.state.AlertFormValue
 	}
 
 	if _, err := p.client.MeWeatherCityCreate(ctx, p.initData, body); err != nil {

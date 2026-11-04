@@ -9,29 +9,8 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"github.com/seilbekskindirov/beacon/internal/tools/rateextractor"
 )
-
-// NewChromedpFetcher constructs a ChromedpFetcher with the given options, applying
-// defaults for any zero-valued numeric fields.
-func NewChromedpFetcher(opts ChromedpFetcherOptions) *ChromedpFetcher {
-	if opts.Timeout <= 0 {
-		opts.Timeout = defaultChromedpTimeout
-	}
-	if opts.NetworkIdleMillis <= 0 {
-		opts.NetworkIdleMillis = defaultChromedpNetworkIdleMs
-	}
-	if opts.Logger == nil {
-		opts.Logger = io.Discard
-	}
-	return &ChromedpFetcher{
-		timeout:       opts.Timeout,
-		chromiumPath:  opts.ChromiumPath,
-		proxyURL:      opts.ProxyURL,
-		networkIdleMs: opts.NetworkIdleMillis,
-		waitSelector:  strings.TrimSpace(opts.WaitSelector),
-		logger:        opts.Logger,
-	}
-}
 
 // ChromedpFetcher renders pages with headless Chrome and returns the
 // post-hydration outer HTML of the <html> element. Implements rulegen.Fetcher.
@@ -47,6 +26,28 @@ type ChromedpFetcher struct {
 	networkIdleMs int
 	waitSelector  string // empty means "wait for body only"
 	logger        io.Writer
+}
+
+// NewChromedpFetcher constructs a ChromedpFetcher with the given options, applying
+// defaults for any zero-valued numeric fields.
+func NewChromedpFetcher(opts ChromedpFetcherOptions) *ChromedpFetcher {
+	if opts.Timeout <= 0 {
+		opts.Timeout = rateextractor.DefaultChromedpTimeout
+	}
+	if opts.NetworkIdleMillis <= 0 {
+		opts.NetworkIdleMillis = rateextractor.DefaultChromedpNetworkIdleMs
+	}
+	if opts.Logger == nil {
+		opts.Logger = io.Discard
+	}
+	return &ChromedpFetcher{
+		timeout:       opts.Timeout,
+		chromiumPath:  opts.ChromiumPath,
+		proxyURL:      opts.ProxyURL,
+		networkIdleMs: opts.NetworkIdleMillis,
+		waitSelector:  strings.TrimSpace(opts.WaitSelector),
+		logger:        opts.Logger,
+	}
 }
 
 // Fetch navigates to url with a headless Chrome instance and returns the
@@ -99,41 +100,6 @@ func (f *ChromedpFetcher) networkIdleMillisForTest() int {
 	return f.networkIdleMs
 }
 
-// ChromedpFetcherOptions carries construction parameters for ChromedpFetcher.
-// Zero values for numeric fields default to the package constants below.
-type ChromedpFetcherOptions struct {
-	// Timeout is the hard wall-clock deadline per Fetch call. Defaults to 30 s.
-	Timeout time.Duration
-	// ChromiumPath is the absolute path to the Chromium/Chrome binary. When
-	// empty, chromedp falls back to its own PATH lookup order: chromium,
-	// chromium-browser, google-chrome, chrome.
-	ChromiumPath string
-	// ProxyURL is an optional HTTP proxy URL string (e.g. "http://127.0.0.1:7788").
-	// When empty, Chromium runs without a proxy.
-	ProxyURL string
-	// NetworkIdleMillis is the additional wait after body is visible before
-	// capturing outerHTML. Defaults to 5000 ms — bank SPAs need 3–5 s post-body
-	// for the rate table to hydrate.
-	NetworkIdleMillis int
-	// WaitSelector, if non-empty, replaces the default body+sleep strategy with
-	// WaitVisible(selector) for SPAs where the rate table appears only after JS
-	// hydration. Empty falls back to WaitVisible("body") + NetworkIdleMillis sleep.
-	WaitSelector string
-	// Logger receives one-line diagnostic messages per fetch. Nil defaults to
-	// io.Discard (best-effort; errors writing to logger are not returned).
-	Logger io.Writer
-}
-
-const (
-	defaultChromedpTimeout       = 30 * time.Second
-	defaultChromedpNetworkIdleMs = 5000
-)
-
-// fixedExecAllocatorOptionCount is the count of options buildExecAllocatorOptions
-// appends unconditionally (Headless, DisableGPU, NoSandbox, disable-blink-features).
-// Tests use it to compute the baseline option count without a magic literal.
-const fixedExecAllocatorOptionCount = 4
-
 // buildExecAllocatorOptions builds the full chromedp allocator option slice.
 // A non-empty proxyURL appends a ProxyServer option — Chromium does not inherit
 // the Go proxy env, so the URL must be passed explicitly.
@@ -157,3 +123,34 @@ func (f *ChromedpFetcher) buildExecAllocatorOptions(proxyURL string) []chromedp.
 	}
 	return opts
 }
+
+// ChromedpFetcherOptions carries construction parameters for ChromedpFetcher.
+// Zero values for the numeric fields fall back to the shared browser budgets in
+// rateextractor, which bound the same browser over the same pages.
+type ChromedpFetcherOptions struct {
+	// Timeout is the hard wall-clock deadline per Fetch call. Defaults to
+	// rateextractor.DefaultChromedpTimeout.
+	Timeout time.Duration
+	// ChromiumPath is the absolute path to the Chromium/Chrome binary. When
+	// empty, chromedp falls back to its own PATH lookup order: chromium,
+	// chromium-browser, google-chrome, chrome.
+	ChromiumPath string
+	// ProxyURL is an optional HTTP proxy URL string (e.g. "http://127.0.0.1:7788").
+	// When empty, Chromium runs without a proxy.
+	ProxyURL string
+	// NetworkIdleMillis is the additional wait after body is visible before
+	// capturing outerHTML. Defaults to rateextractor.DefaultChromedpNetworkIdleMs.
+	NetworkIdleMillis int
+	// WaitSelector, if non-empty, replaces the default body+sleep strategy with
+	// WaitVisible(selector) for SPAs where the rate table appears only after JS
+	// hydration. Empty falls back to WaitVisible("body") + NetworkIdleMillis sleep.
+	WaitSelector string
+	// Logger receives one-line diagnostic messages per fetch. Nil defaults to
+	// io.Discard (best-effort; errors writing to logger are not returned).
+	Logger io.Writer
+}
+
+// fixedExecAllocatorOptionCount is the count of options buildExecAllocatorOptions
+// appends unconditionally (Headless, DisableGPU, NoSandbox, disable-blink-features).
+// Tests use it to compute the baseline option count without a magic literal.
+const fixedExecAllocatorOptionCount = 4

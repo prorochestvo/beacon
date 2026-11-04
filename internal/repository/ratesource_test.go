@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 
@@ -73,7 +72,7 @@ func TestSourceRepository_RetainSource(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM"+" "+rateSourceTableName+
 				" WHERE "+rateSourceNameFieldName+" = ?",
 			src.Name,
@@ -103,7 +102,7 @@ func TestSourceRepository_RetainSource(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var url, interval string
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT "+rateSourceURLFieldName+", "+reteSourceIntervalFieldName+
 				" FROM "+rateSourceTableName+" WHERE "+rateSourceNameFieldName+" = ?",
 			src.Name,
@@ -353,7 +352,7 @@ func TestSourceRepository_RemoveSource(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM"+" "+rateSourceTableName+
 				" WHERE "+rateSourceNameFieldName+" = ?",
 			src.Name,
@@ -460,7 +459,7 @@ func newCascadeDB(t *testing.T) *sqlitedb.SQLiteClient {
 	t.Cleanup(func() { _ = mem.Close() })
 	mem.SetMaxOpenConns(4)
 
-	db, err := sqlitedb.NewSQLiteClientEx(mem, os.Stdout)
+	db, err := sqlitedb.NewSQLiteClientEx(mem)
 	require.NoError(t, err)
 	sqlitedbtest.Apply(t, db)
 	return db
@@ -473,7 +472,7 @@ func countRowsBySource(t *testing.T, db *sqlitedb.SQLiteClient, table, field, na
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	var n int
-	require.NoError(t, tx.QueryRow(
+	require.NoError(t, tx.QueryRowContext(t.Context(),
 		"SELECT COUNT(*) FROM"+" "+table+" WHERE "+field+" = ?",
 		name,
 	).Scan(&n))

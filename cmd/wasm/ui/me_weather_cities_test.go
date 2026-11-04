@@ -62,6 +62,22 @@ func TestRenderMeWeatherCities(t *testing.T) {
 		require.NotContains(t, html, "weather-city-row")
 	})
 
+	t.Run("global thaw note shown when cities exist, absent when empty", func(t *testing.T) {
+		t.Parallel()
+		withCities := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities: []dto.WeatherCityRow{
+				{ID: "c1", LocationID: "loc1", DisplayName: "Almaty", Timezone: "Asia/Almaty",
+					NotifyKind: "morning_summary"},
+			},
+		})
+		require.Contains(t, withCities, "weather-thaw-note")
+
+		empty := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities: []dto.WeatherCityRow{},
+		})
+		require.NotContains(t, empty, "weather-thaw-note")
+	})
+
 	t.Run("city rows are rendered with delete button", func(t *testing.T) {
 		t.Parallel()
 		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
@@ -401,6 +417,69 @@ func TestRenderMeWeatherCities_AlertForm(t *testing.T) {
 		assert.Contains(t, html, "Rain alert (%)")
 	})
 
+	t.Run("thaw option does not appear in kind selector (forced, not user-addable)", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities:              []dto.WeatherCityRow{baseCity},
+			AlertFormLocationID: "loc1",
+			AlertFormKind:       "alert_heat",
+		})
+		assert.NotContains(t, html, `value="alert_thaw"`)
+	})
+
+	t.Run("thaw is not rendered as a per-city row; a single global note replaces it", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities: []dto.WeatherCityRow{
+				baseCity,
+				{ID: "c2", LocationID: "loc1", DisplayName: "Almaty", Timezone: "Asia/Almaty",
+					NotifyKind: "alert_thaw"},
+			},
+		})
+		// The forced thaw subscription is surfaced once, globally — never as a
+		// per-city row with an "always on" chip.
+		assert.Contains(t, html, "weather-thaw-note")
+		assert.NotContains(t, html, "weather-kind-locked", "the per-row always-on chip is gone")
+		assert.NotContains(t, html, `data-id="c2"`, "the thaw row must not be rendered at all")
+
+		// The sibling non-thaw row must still keep its own delete button and data-id.
+		assert.Contains(t, html, `data-id="`+baseCity.ID+`"`, "non-thaw sibling row must keep its data-id")
+		assert.Contains(t, html, "weather-city-delete", "non-thaw sibling row must keep its delete button")
+	})
+
+	t.Run("morning_summary option appears in kind selector (re-addable after delete)", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities:              []dto.WeatherCityRow{baseCity},
+			AlertFormLocationID: "loc1",
+			AlertFormKind:       "alert_heat",
+		})
+		assert.Contains(t, html, `value="morning_summary"`)
+		assert.Contains(t, html, "Morning summary (daily)")
+	})
+
+	t.Run("morning_summary form shows an hour input, not a threshold", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities:              []dto.WeatherCityRow{baseCity},
+			AlertFormLocationID: "loc1",
+			AlertFormKind:       "morning_summary",
+			AlertFormValue:      "9",
+		})
+		assert.Contains(t, html, "weather-alert-value")
+		assert.Contains(t, html, `max="23"`, "morning summary input is a 0–23 hour picker")
+		assert.Contains(t, html, `value="9"`)
+	})
+
+	t.Run("each city group renders a Remove city control carrying data-location-id", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities: []dto.WeatherCityRow{baseCity},
+		})
+		assert.Contains(t, html, "weather-city-remove")
+		assert.Contains(t, html, `data-location-id="loc1"`)
+	})
+
 	t.Run("different city gets Add alert button when another city has form open", func(t *testing.T) {
 		t.Parallel()
 		city2 := dto.WeatherCityRow{
@@ -422,3 +501,51 @@ func TestRenderMeWeatherCities_AlertForm(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+// TestRenderMeWeatherCitiesForcedRain covers the Mini App side of the forced rain
+// subscription: the row stays visible because its threshold is user-tunable, but it
+// carries no delete control, since DELETE on a forced row can only ever answer 409.
+func TestRenderMeWeatherCitiesForcedRain(t *testing.T) {
+	t.Parallel()
+
+	summary := dto.WeatherCityRow{
+		ID: "c1", LocationID: "loc1", DisplayName: "Astana", Timezone: "Asia/Almaty",
+		NotifyKind: "morning_summary", NotifyHour: 7,
+	}
+	rain := dto.WeatherCityRow{
+		ID: "c-rain", LocationID: "loc1", DisplayName: "Astana", Timezone: "Asia/Almaty",
+		NotifyKind: "rain_alert", ConditionValue: "60",
+	}
+
+	t.Run("the rain row is listed with its threshold but has no delete control", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities: []dto.WeatherCityRow{summary, rain},
+		})
+
+		assert.Contains(t, html, "Rain alert ≥ 60% within 6h", "the tunable threshold must stay visible")
+		assert.NotContains(t, html, `data-id="c-rain"`,
+			"a delete button for a forced row would only ever produce a 409")
+		assert.Contains(t, html, `data-id="c1"`, "the deletable sibling row keeps its delete button")
+	})
+
+	t.Run("the always-on note covers rain alongside thaw", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities: []dto.WeatherCityRow{summary, rain},
+		})
+		assert.Contains(t, html, "weather-thaw-note")
+		assert.Contains(t, strings.ToLower(html), "rain alerts are always on")
+	})
+
+	t.Run("rain stays in the kind selector so its threshold can be retuned", func(t *testing.T) {
+		t.Parallel()
+		html := ui.RenderMeWeatherCities(application.WeatherCitiesState{
+			Cities:              []dto.WeatherCityRow{summary, rain},
+			AlertFormLocationID: "loc1",
+			AlertFormKind:       "alert_heat",
+		})
+		assert.Contains(t, html, `value="rain_alert"`)
+		assert.NotContains(t, html, `value="alert_thaw"`, "thaw carries no threshold and stays unlistable")
+	})
+}

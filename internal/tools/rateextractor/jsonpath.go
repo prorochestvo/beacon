@@ -1,6 +1,7 @@
 package rateextractor
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -8,19 +9,30 @@ import (
 )
 
 var (
-	reArraySegment = regexp.MustCompile(`^(\w+)\[(\d+)\]$`)
-	rePlainSegment = regexp.MustCompile(`^\w+$`)
+	// Keys allow a hyphen because JSON objects are keyed by whatever the upstream chose,
+	// and Yahoo keys its batched quote response by ticker — "BTC-USD" is a key, not a
+	// subtraction. The charset stays otherwise narrow so a typo in a rule is still
+	// rejected by name rather than silently treated as a missing key.
+	//
+	// The index accepts a leading minus: negative indices count from the end, which is
+	// the only way to address "the newest point" in a series whose length changes
+	// between requests.
+	reArraySegment = regexp.MustCompile(`^([\w-]+)\[(-?\d+)\]$`)
+	rePlainSegment = regexp.MustCompile(`^[\w-]+$`)
 )
 
 type pathSegment struct {
 	Key      string
 	HasIndex bool
-	Index    int
+	// Index may be negative, counting back from the end of the array: -1 is the last
+	// element. Resolution against the actual length happens at evaluation time, in
+	// ApplyJSONPath, because the length is not known until the payload is parsed.
+	Index int
 }
 
 func parseJSONPath(pattern string) ([]pathSegment, error) {
 	if pattern == "" {
-		return nil, fmt.Errorf("json_path: path pattern must not be empty")
+		return nil, errors.New("json_path: path pattern must not be empty")
 	}
 
 	rawSegments := strings.Split(pattern, ".")

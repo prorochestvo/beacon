@@ -2,12 +2,13 @@ package rateextractor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -17,6 +18,26 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/repository"
 	"github.com/seilbekskindirov/beacon/internal/tools/threadsafe"
 	"github.com/stretchr/testify/require"
+)
+
+// testUserAgent stands in for the value the composition root injects. It is deliberately
+// not the project's real User-Agent: this package must not know the brand, and a test that
+// spelled it would quietly reintroduce the fourth copy #65 removed.
+const testUserAgent = "TestAgent/1.0 (+https://example.invalid/test)"
+
+// Response bodies captured from live validation of the two seeded sources. They are
+// fed to an httptest server rather than read from disk: nothing here exercises file
+// I/O, and at this size a separate testdata file only hides what the test asserts.
+const (
+	// kaseLastDealHTML keeps the Angular SSR _ngcontent attributes, which prove the
+	// regex tolerates attribute prefixes, and the "4 630,00" comma decimal with a
+	// space thousands-separator, which the normaliser has to reduce to 4630.00.
+	kaseLastDealHTML = `<div _ngcontent-ng-c179376686 class="price"><div _ngcontent-ng-c179376686 class="last-deal">` +
+		`<div _ngcontent-ng-c179376686 class="value"> 4 630,00 </div>` +
+		`<div _ngcontent-ng-c179376686 class="label"> price of the last deal </div></div></div>`
+
+	// yahooV8AAPLJSON is the shape the seed rule's json_path walks.
+	yahooV8AAPLJSON = `{"chart":{"result":[{"meta":{"regularMarketPrice":282.0}}]}}`
 )
 
 // compile-time interface checks
@@ -34,8 +55,8 @@ func TestNewRateExtractorWithHTTPClient(t *testing.T) {
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
 			&http.Client{},
-			logger,
-		)
+			logger, testUserAgent)
+
 		require.NoError(t, err)
 		require.NotNil(t, ext)
 	})
@@ -45,9 +66,49 @@ func TestNewRateExtractorWithHTTPClient(t *testing.T) {
 		_, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
 			nil,
-			logger,
-		)
+			logger, testUserAgent)
+
 		require.Error(t, err)
+	})
+
+	t.Run("a client with no timeout fetches instead of expiring instantly", func(t *testing.T) {
+		t.Parallel()
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = fmt.Fprint(w, `<span class="rate">450.75</span>`)
+		}))
+		defer srv.Close()
+
+		// srv.Client() leaves Timeout at zero, and it is the client these tests must
+		// pass — a bare &http.Client{} shares http.DefaultTransport across parallel
+		// tests. Forwarding that zero to context.WithTimeout produced a deadline
+		// already in the past, so every fetch died in under a millisecond looking
+		// like a network fault.
+		client := srv.Client()
+		require.Zero(t, client.Timeout, "the case under test is a client with no timeout")
+
+		rateRepo := &mockRateValueRepository{}
+		ownLogger := threadsafe.NewBuffer(nil)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, client, ownLogger, testUserAgent)
+		require.NoError(t, err)
+
+		source := &domain.RateSource{
+			Name:          "no_timeout_src",
+			URL:           srv.URL,
+			BaseCurrency:  "USD",
+			QuoteCurrency: "KZT",
+			Rules: []domain.RateSourceRule{
+				{Method: domain.MethodRegex, Pattern: `class="rate">([\d.]+)`},
+			},
+		}
+		require.NoError(t, ext.Run(t.Context(), source))
+		require.Len(t, rateRepo.retained, 1)
+		require.InDelta(t, 450.75, rateRepo.retained[0].Price, 0.001)
+
+		// Defaulting silently is the standing objection to defaulting at all, so the
+		// substitution has to be visible somewhere.
+		require.Contains(t, ownLogger.String(), "direct http client has no timeout",
+			"the substituted bound must be announced, not applied in silence")
 	})
 }
 
@@ -63,8 +124,8 @@ func TestNewRateExtractor(t *testing.T) {
 			&mockRateValueRepository{},
 			"",
 			5*time.Second,
-			logger,
-		)
+			logger, testUserAgent)
+
 		require.NoError(t, err)
 		require.NotNil(t, ext)
 	})
@@ -76,8 +137,8 @@ func TestNewRateExtractor(t *testing.T) {
 			&mockRateValueRepository{},
 			"://bad url",
 			5*time.Second,
-			logger,
-		)
+			logger, testUserAgent)
+
 		require.Error(t, err)
 	})
 
@@ -89,8 +150,8 @@ func TestNewRateExtractor(t *testing.T) {
 			&mockRateValueRepository{},
 			badProxy,
 			5*time.Second,
-			logger,
-		)
+			logger, testUserAgent)
+
 		require.Error(t, err)
 		// The error must not leak any substring from the raw URL into the log.
 		require.NotContains(t, err.Error(), "%xx")
@@ -98,39 +159,55 @@ func TestNewRateExtractor(t *testing.T) {
 		require.Contains(t, err.Error(), "parse proxy URL")
 	})
 
-	t.Run("explicit proxyURL is set on the transport", func(t *testing.T) {
-		t.Parallel()
+	// A configured proxy URL builds the proxied client but routes nothing by itself.
+	// This pair is the whole two-level contract: BEACON_PROXY_URL says a proxy exists,
+	// options.use_proxy says a source wants it, and only their conjunction proxies.
+	// The first subtest is what keeps issue #16's measured default in place when an
+	// operator sets the variable — it used to be the opposite assertion.
+	newProxiedExtractor := func(t *testing.T) (ext *RateExtractor, targetURL string, proxyHits *atomic.Int32) {
+		t.Helper()
+		proxyHits = &atomic.Int32{}
 
-		var correctHits atomic.Int32
-		correctProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			correctHits.Add(1)
-			w.WriteHeader(http.StatusOK)
+		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			proxyHits.Add(1)
 			_, _ = w.Write([]byte("correct-proxy"))
 		}))
-		t.Cleanup(correctProxy.Close)
+		t.Cleanup(proxy.Close)
 
 		target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("target"))
 		}))
 		t.Cleanup(target.Close)
 
-		ext, err := NewRateExtractor(
-			&mockRateValueRepository{},
-			correctProxy.URL,
-			5*time.Second,
-			logger,
-		)
+		ext, err := NewRateExtractor(&mockRateValueRepository{}, proxy.URL, 5*time.Second, logger, testUserAgent)
 		require.NoError(t, err)
+		return ext, target.URL, proxyHits
+	}
 
-		source := &domain.RateSource{
-			Name:  "proxy_src",
-			URL:   target.URL,
-			Rules: []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: `(correct-proxy|target)`}},
+	proxySource := func(name, targetURL string, useProxy bool) *domain.RateSource {
+		return &domain.RateSource{
+			Name:    name,
+			URL:     targetURL,
+			Options: domain.RateSourceOptions{UseProxy: useProxy},
+			Rules:   []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: `(correct-proxy|target)`}},
 		}
+	}
 
-		_ = ext.Run(t.Context(), source)
-		require.Positive(t, correctHits.Load(), "explicit proxyURL must route traffic through the proxy")
+	t.Run("a configured proxyURL alone routes nothing", func(t *testing.T) {
+		t.Parallel()
+
+		ext, targetURL, proxyHits := newProxiedExtractor(t)
+		_ = ext.Run(t.Context(), proxySource("direct_src", targetURL, false))
+		require.Zero(t, proxyHits.Load(),
+			"a source that has not opted in must stay direct even with a proxy configured")
+	})
+
+	t.Run("a source opted in routes through the proxy", func(t *testing.T) {
+		t.Parallel()
+
+		ext, targetURL, proxyHits := newProxiedExtractor(t)
+		_ = ext.Run(t.Context(), proxySource("proxy_src", targetURL, true))
+		require.Positive(t, proxyHits.Load(), "options.use_proxy must route traffic through the proxy")
 	})
 }
 
@@ -142,8 +219,8 @@ func TestRateExtractor_Name(t *testing.T) {
 	ext, err := NewRateExtractorWithHTTPClient(
 		&mockRateValueRepository{},
 		&http.Client{},
-		logger,
-	)
+		logger, testUserAgent)
+
 	require.NoError(t, err)
 	require.Equal(t, "rate_extractor", ext.Name())
 }
@@ -173,7 +250,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.NoError(t, ext.Run(t.Context(), source))
@@ -202,7 +279,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.NoError(t, ext.Run(t.Context(), source))
@@ -225,7 +302,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			Rules: []domain.RateSourceRule{{Method: domain.MethodStoreToRate}},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.NoError(t, ext.Run(t.Context(), source))
@@ -251,7 +328,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.NoError(t, ext.Run(t.Context(), source))
@@ -268,7 +345,7 @@ func TestRateExtractor_Run(t *testing.T) {
 
 		source := &domain.RateSource{Name: "fail_src", URL: srv.URL}
 
-		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -278,7 +355,10 @@ func TestRateExtractor_Run(t *testing.T) {
 
 		source := &domain.RateSource{Name: "bad_url_src", URL: "http://127.0.0.1:1"} // nothing listening
 
-		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, &http.Client{Timeout: 500 * time.Millisecond}, logger)
+		// No httptest server here to take a client from, and a refused dial pools no
+		// connection, so the shared-transport concern does not arise. The short timeout
+		// keeps the case quick if the dial ever hangs instead of being refused.
+		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, &http.Client{Timeout: 500 * time.Millisecond}, logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -299,7 +379,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -320,7 +400,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -341,7 +421,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -362,7 +442,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -383,7 +463,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(&mockRateValueRepository{}, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -408,7 +488,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.NoError(t, ext.Run(t.Context(), source))
@@ -433,7 +513,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.NoError(t, ext.Run(t.Context(), source))
@@ -458,7 +538,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -482,7 +562,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -507,7 +587,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.NoError(t, ext.Run(t.Context(), source))
@@ -536,11 +616,11 @@ func TestRateExtractor_Run(t *testing.T) {
 			Rules: []domain.RateSourceRule{{Method: domain.MethodStoreToRate}},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 		require.NoError(t, ext.Run(t.Context(), source))
 
-		require.Equal(t, "CustomBot/2.0", receivedUA, "per-source User-Agent must override the Beacon/1.0 default")
+		require.Equal(t, "CustomBot/2.0", receivedUA, "a per-source User-Agent must override the injected default")
 	})
 
 	t.Run("default User-Agent sent when Options.Headers is nil", func(t *testing.T) {
@@ -560,24 +640,18 @@ func TestRateExtractor_Run(t *testing.T) {
 			Rules: []domain.RateSourceRule{{Method: domain.MethodStoreToRate}},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 		require.NoError(t, ext.Run(t.Context(), source))
 
-		require.Contains(t, receivedUA, "Beacon/1.0", "default UA must start with Beacon/1.0 when no override")
+		require.Equal(t, testUserAgent, receivedUA, "with no override the injected User-Agent is sent verbatim")
 	})
 
 	t.Run("KASE last-deal comma-decimal format parses correctly", func(t *testing.T) {
 		t.Parallel()
 
-		// Real KASE HTML fixture from live validation — see testdata/kase_ccbn_last_deal.html.
-		// The Angular SSR _ngcontent attributes prove the regex is robust to attribute prefixes.
-		// Comma decimal and space thousands-separator (4 630,00) validate end-of-pipeline normalisation.
-		kaseFixture, err := os.ReadFile("testdata/kase_ccbn_last_deal.html")
-		require.NoError(t, err, "testdata/kase_ccbn_last_deal.html must exist")
-
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write(kaseFixture)
+			_, _ = w.Write([]byte(kaseLastDealHTML))
 		}))
 		defer srv.Close()
 
@@ -595,7 +669,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 		require.NoError(t, ext.Run(t.Context(), source))
 
@@ -609,13 +683,8 @@ func TestRateExtractor_Run(t *testing.T) {
 	t.Run("Yahoo v8 JSON regularMarketPrice extracted via json path", func(t *testing.T) {
 		t.Parallel()
 
-		// Real Yahoo Finance v8 JSON fixture from live validation — see testdata/yahoo_v8_aapl.json.
-		// Uses the seed rule's json_path to validate the extraction path end-to-end.
-		yahooFixture, err := os.ReadFile("testdata/yahoo_v8_aapl.json")
-		require.NoError(t, err, "testdata/yahoo_v8_aapl.json must exist")
-
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write(yahooFixture)
+			_, _ = w.Write([]byte(yahooV8AAPLJSON))
 		}))
 		defer srv.Close()
 
@@ -630,7 +699,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 		require.NoError(t, ext.Run(t.Context(), source))
 
@@ -658,7 +727,7 @@ func TestRateExtractor_Run(t *testing.T) {
 			},
 		}
 
-		ext, err := NewRateExtractorWithHTTPClient(rateRepo, &http.Client{Timeout: 5 * time.Second}, logger)
+		ext, err := NewRateExtractorWithHTTPClient(rateRepo, srv.Client(), logger, testUserAgent)
 		require.NoError(t, err)
 
 		require.Error(t, ext.Run(t.Context(), source))
@@ -674,9 +743,9 @@ func TestRateExtractor_Run(t *testing.T) {
 
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
-			&http.Client{Timeout: 5 * time.Second},
-			logger,
-		)
+			srv.Client(),
+			logger, testUserAgent)
+
 		require.NoError(t, err)
 
 		err = ext.Run(t.Context(), &domain.RateSource{
@@ -708,8 +777,8 @@ func TestRateExtractor_Run(t *testing.T) {
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
 			&http.Client{Timeout: 5 * time.Second, Transport: transport},
-			logger,
-		)
+			logger, testUserAgent)
+
 		require.NoError(t, err)
 
 		err = ext.Run(t.Context(), &domain.RateSource{
@@ -741,11 +810,18 @@ func TestRateExtractor_Run(t *testing.T) {
 		}))
 		defer srv.Close()
 
+		// The server's client, for a transport of its own, carrying the deadline this
+		// subtest is about rather than a fail-fast bound: clientTimeout has to expire
+		// before the handler's 200ms, which neither srv.Client()'s zero (a minute, via
+		// defaultFetchTimeout) nor timedClient's five seconds would do.
+		client := srv.Client()
+		client.Timeout = clientTimeout
+
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
-			&http.Client{Timeout: clientTimeout},
-			logger,
-		)
+			client,
+			logger, testUserAgent)
+
 		require.NoError(t, err)
 
 		err = ext.Run(t.Context(), &domain.RateSource{
@@ -784,12 +860,12 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
-			&http.Client{Timeout: 5 * time.Second},
-			logger,
-		)
+			srv.Client(),
+			logger, testUserAgent)
+
 		require.NoError(t, err)
 
-		body, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil)
+		body, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil, false)
 		require.NoError(t, err)
 		require.Equal(t, []byte(responseBody), body)
 	})
@@ -807,16 +883,16 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
-			&http.Client{Timeout: 5 * time.Second},
-			logger,
-		)
+			srv.Client(),
+			logger, testUserAgent)
+
 		require.NoError(t, err)
 
-		body1, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil)
+		body1, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil, false)
 		require.NoError(t, err)
 		require.Equal(t, []byte(responseBody), body1)
 
-		body2, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil)
+		body2, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil, false)
 		require.NoError(t, err)
 		require.Equal(t, []byte(responseBody), body2)
 
@@ -825,14 +901,16 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 	t.Run("invalid url", func(t *testing.T) {
 		t.Parallel()
 
+		// No server, and the URL fails to parse before a request is ever built, so this
+		// client never reaches a transport at all.
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
 			&http.Client{Timeout: 5 * time.Second},
-			logger,
-		)
+			logger, testUserAgent)
+
 		require.NoError(t, err)
 
-		_, err = ext.fetchHtmlPage(t.Context(), "://bad", nil)
+		_, err = ext.fetchHtmlPage(t.Context(), "://bad", nil, false)
 		require.Error(t, err)
 	})
 	t.Run("non-nil headers forwarded to server", func(t *testing.T) {
@@ -847,12 +925,12 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
-			&http.Client{Timeout: 5 * time.Second},
-			logger,
-		)
+			srv.Client(),
+			logger, testUserAgent)
+
 		require.NoError(t, err)
 
-		body, err := ext.fetchHtmlPage(t.Context(), srv.URL, map[string]string{"User-Agent": "TestAgent/3.0"})
+		body, err := ext.fetchHtmlPage(t.Context(), srv.URL, map[string]string{"User-Agent": "TestAgent/3.0"}, false)
 		require.NoError(t, err)
 		require.NotNil(t, body)
 		require.Equal(t, "TestAgent/3.0", receivedUA,
@@ -869,24 +947,42 @@ func TestRateExtractor_fetchHtmlPage(t *testing.T) {
 		}))
 		defer srv.Close()
 
+		// Its own buffer, not the one shared with the sibling subtests: the assertion
+		// below is on log content, and against a shared buffer it would be satisfied by
+		// any parallel subtest that happened to log the same line.
+		ownLogger := threadsafe.NewBuffer(nil)
+
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
-			&http.Client{Timeout: 5 * time.Second},
-			logger,
-		)
+			srv.Client(),
+			ownLogger, testUserAgent)
+
 		require.NoError(t, err)
 
 		// Pre-populate the cache key with an empty value so:
 		//   1. Fetch() finds the key but the empty-byte guard skips the cache hit.
 		//   2. The post-fetch Push() fails (key already exists in go-cache.Add).
 		//   3. fetchHtmlPage logs the error and still returns the body with nil error.
-		cacheKey := fmt.Sprintf("GET:%s", srv.URL)
+		//
+		// The key comes from fetchKey rather than being spelled out. A hand-built
+		// "GET:<url>" drifted silently when the route segment was added with per-source
+		// proxy routing: the seeded entry stopped matching, so the fetch simply
+		// succeeded and none of the three steps above ran. The subtest passed and would
+		// have passed with the entire error path deleted (#62).
+		cacheKey := fetchKey(srv.URL, false)
 		require.NoError(t, ext.cache.Push(cacheKey, []byte{}))
 
-		body, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil)
+		body, err := ext.fetchHtmlPage(t.Context(), srv.URL, nil, false)
 		require.NoError(t, err)
 		require.NotNil(t, body)
 		require.Equal(t, []byte(responseBody), body)
+
+		// The assertion that makes the subtest about the Push-error branch rather than
+		// about a fetch that happens to work. Without it, deleting that branch leaves
+		// every requirement above satisfied.
+		require.Contains(t, ownLogger.String(),
+			"rate_extractor: could not push response payload to cache",
+			"a failed cache Push must be reported, not swallowed")
 	})
 }
 
@@ -906,9 +1002,9 @@ func TestRateExtractor_failFast(t *testing.T) {
 		logger := threadsafe.NewBuffer(nil)
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
-			&http.Client{Timeout: 5 * time.Second},
-			logger,
-		)
+			srv.Client(),
+			logger, testUserAgent)
+
 		require.NoError(t, err)
 
 		srcA := &domain.RateSource{Name: "a", URL: srv.URL, Rules: []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: `.+`}}}
@@ -940,9 +1036,9 @@ func TestRateExtractor_failFast(t *testing.T) {
 		rateRepo := &mockRateValueRepository{}
 		ext, err := NewRateExtractorWithHTTPClient(
 			rateRepo,
-			&http.Client{Timeout: 5 * time.Second},
-			logger,
-		)
+			srv.Client(),
+			logger, testUserAgent)
+
 		require.NoError(t, err)
 
 		srcA := &domain.RateSource{Name: "a", URL: srv.URL, Rules: []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: `<span>([\d.]+)</span>`}}}
@@ -979,9 +1075,10 @@ func TestRateExtractor_failFast(t *testing.T) {
 		rateRepo := &mockRateValueRepository{}
 		ext, err := NewRateExtractorWithHTTPClient(
 			rateRepo,
-			&http.Client{Timeout: 5 * time.Second},
-			logger,
-		)
+
+			srv500.Client(),
+			logger, testUserAgent)
+
 		require.NoError(t, err)
 
 		src500 := &domain.RateSource{Name: "fail_src", URL: srv500.URL, Rules: []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: `.+`}}}
@@ -1001,9 +1098,10 @@ func TestRateExtractor_failFast(t *testing.T) {
 		logger := threadsafe.NewBuffer(nil)
 		ext, err := NewRateExtractorWithHTTPClient(
 			&mockRateValueRepository{},
+
 			&http.Client{Timeout: 500 * time.Millisecond},
-			logger,
-		)
+			logger, testUserAgent)
+
 		require.NoError(t, err)
 
 		srcA := &domain.RateSource{Name: "a", URL: "http://127.0.0.1:1", Rules: []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: `.+`}}}
@@ -1051,4 +1149,189 @@ func (emptyBodyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		Body:       io.NopCloser(strings.NewReader("")),
 		Request:    req,
 	}, nil
+}
+
+// TestRateExtractorPerSourceProxy covers routing: which of the two clients a source
+// fetches through, and that the two routes do not share cache or tombstone slots.
+//
+// The proxied client is a real http.Transport with Proxy set, pointed at an httptest
+// server standing in for the proxy. A plain-HTTP proxy receives the request itself
+// (absolute-URI form) rather than a CONNECT, so the stand-in can answer directly and
+// the assertion covers actual routing rather than which struct field was read.
+func TestRateExtractorPerSourceProxy(t *testing.T) {
+	t.Parallel()
+
+	newRouted := func(t *testing.T, directBody, proxyBody string) (
+		ext *RateExtractor, originURL string, log *threadsafe.Buffer,
+		directHits, proxyHits *atomic.Int32,
+	) {
+		t.Helper()
+		directHits, proxyHits = &atomic.Int32{}, &atomic.Int32{}
+
+		origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			directHits.Add(1)
+			_, _ = fmt.Fprint(w, directBody)
+		}))
+		t.Cleanup(origin.Close)
+
+		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			proxyHits.Add(1)
+			_, _ = fmt.Fprint(w, proxyBody)
+		}))
+		t.Cleanup(proxy.Close)
+
+		proxyTarget, err := url.Parse(proxy.URL)
+		require.NoError(t, err)
+
+		log = threadsafe.NewBuffer(nil)
+		ext, err = NewRateExtractorWithHTTPClients(
+			&mockRateValueRepository{},
+
+			timedClient(origin.Client()),
+			&http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(proxyTarget)}},
+			log, testUserAgent)
+
+		require.NoError(t, err)
+		return ext, origin.URL, log, directHits, proxyHits
+	}
+
+	t.Run("a source without the flag fetches direct", func(t *testing.T) {
+		t.Parallel()
+		ext, origin, _, directHits, proxyHits := newRouted(t, "DIRECT", "PROXIED")
+
+		body, err := ext.fetchHtmlPage(t.Context(), origin, nil, false)
+		require.NoError(t, err)
+		require.Equal(t, []byte("DIRECT"), body)
+		require.Equal(t, int32(1), directHits.Load())
+		require.Equal(t, int32(0), proxyHits.Load(), "an unflagged source must never reach the proxy")
+	})
+
+	t.Run("a flagged source fetches through the proxy", func(t *testing.T) {
+		t.Parallel()
+		ext, origin, log, directHits, proxyHits := newRouted(t, "DIRECT", "PROXIED")
+
+		body, err := ext.fetchHtmlPage(t.Context(), origin, nil, true)
+		require.NoError(t, err)
+		require.Equal(t, []byte("PROXIED"), body)
+		require.Equal(t, int32(1), proxyHits.Load())
+		require.Equal(t, int32(0), directHits.Load())
+		require.Contains(t, log.String(), "via=proxy")
+	})
+
+	t.Run("two sources on one URL do not share a cache slot across routes", func(t *testing.T) {
+		t.Parallel()
+		// This is the collision the batched Yahoo sources made reachable: 20 of them
+		// share one URL by design, so a URL-only key would hand whichever fetched
+		// first to the other route as well.
+		ext, origin, _, directHits, proxyHits := newRouted(t, "DIRECT", "PROXIED")
+
+		direct, err := ext.fetchHtmlPage(t.Context(), origin, nil, false)
+		require.NoError(t, err)
+		proxied, err := ext.fetchHtmlPage(t.Context(), origin, nil, true)
+		require.NoError(t, err)
+
+		require.Equal(t, []byte("DIRECT"), direct)
+		require.Equal(t, []byte("PROXIED"), proxied, "the proxied fetch must not be served the direct response")
+		require.Equal(t, int32(1), directHits.Load())
+		require.Equal(t, int32(1), proxyHits.Load())
+	})
+
+	t.Run("a failure on one route does not tombstone the other", func(t *testing.T) {
+		t.Parallel()
+		// The tombstone stops one dead source burning a whole run. Keyed on the URL
+		// alone it would also stop a source that reaches the same host by the other
+		// route and would have succeeded.
+		var proxyHits atomic.Int32
+		origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "nope", http.StatusInternalServerError)
+		}))
+		t.Cleanup(origin.Close)
+		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			proxyHits.Add(1)
+			_, _ = fmt.Fprint(w, "PROXIED")
+		}))
+		t.Cleanup(proxy.Close)
+		proxyTarget, err := url.Parse(proxy.URL)
+		require.NoError(t, err)
+
+		ext, err := NewRateExtractorWithHTTPClients(
+			&mockRateValueRepository{},
+			timedClient(origin.Client()),
+			&http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(proxyTarget)}},
+			threadsafe.NewBuffer(nil), testUserAgent)
+
+		require.NoError(t, err)
+
+		_, err = ext.fetchHtmlPage(t.Context(), origin.URL, nil, false)
+		require.Error(t, err, "the direct fetch is expected to fail and tombstone its own route")
+
+		body, err := ext.fetchHtmlPage(t.Context(), origin.URL, nil, true)
+		require.NoError(t, err, "the proxied route must not inherit the direct route's tombstone")
+		require.Equal(t, []byte("PROXIED"), body)
+		require.Equal(t, int32(1), proxyHits.Load())
+	})
+
+	t.Run("a flagged source falls back to direct when no proxy is configured", func(t *testing.T) {
+		t.Parallel()
+		var directHits atomic.Int32
+		origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			directHits.Add(1)
+			_, _ = fmt.Fprint(w, "DIRECT")
+		}))
+		t.Cleanup(origin.Close)
+
+		log := threadsafe.NewBuffer(nil)
+		ext, err := NewRateExtractorWithHTTPClients(
+			&mockRateValueRepository{}, timedClient(origin.Client()), nil, log, testUserAgent)
+
+		require.NoError(t, err)
+
+		body, err := ext.fetchHtmlPage(t.Context(), origin.URL, nil, true)
+		require.NoError(t, err, "a missing BEACON_PROXY_URL must not stop a source that reaches its host direct")
+		require.Equal(t, []byte("DIRECT"), body)
+		require.Equal(t, int32(1), directHits.Load())
+		require.Contains(t, log.String(), "requests the proxy but none is configured")
+	})
+
+	t.Run("Run passes the source flag through", func(t *testing.T) {
+		t.Parallel()
+		ext, origin, _, directHits, proxyHits := newRouted(t, "1.5", "2.5")
+
+		source := &domain.RateSource{
+			Name:          "TEST_PROXIED",
+			URL:           origin,
+			BaseCurrency:  "USD",
+			QuoteCurrency: "KZT",
+			Options:       domain.RateSourceOptions{UseProxy: true},
+			Rules:         []domain.RateSourceRule{{Method: domain.MethodParseFloat}},
+		}
+		require.NoError(t, ext.Run(t.Context(), source))
+		require.Equal(t, int32(1), proxyHits.Load())
+		require.Equal(t, int32(0), directHits.Load())
+	})
+}
+
+// TestRateSourceOptionsUseProxyDefault pins that the flag is absent-means-direct, so a
+// source row written before the option existed, or one that simply omits it, is never
+// routed through the proxy.
+func TestRateSourceOptionsUseProxyDefault(t *testing.T) {
+	t.Parallel()
+
+	var opts domain.RateSourceOptions
+	require.NoError(t, json.Unmarshal([]byte(`{"headers":{"User-Agent":"x"}}`), &opts))
+	require.False(t, opts.UseProxy)
+
+	encoded, err := json.Marshal(domain.RateSourceOptions{})
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "use_proxy",
+		"the default must not be written back into stored options")
+}
+
+// timedClient gives an httptest client a short request timeout. A zero Timeout is no
+// longer a trap — fetchHtmlPage substitutes defaultFetchTimeout for it — but that
+// default is a minute, and a routing test that somehow hangs should fail in seconds
+// rather than sit there. The zero-timeout path has its own test on the constructor.
+func timedClient(c *http.Client) *http.Client {
+	c.Timeout = 5 * time.Second
+	return c
 }

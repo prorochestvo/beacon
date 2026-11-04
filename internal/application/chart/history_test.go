@@ -2,7 +2,6 @@ package chart_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -90,7 +89,7 @@ func TestService_ObtainMeHistory(t *testing.T) {
 		require.EqualValues(t, 2, res.Total)
 		require.Len(t, res.Items, 2)
 		require.NotNil(t, res.Items[0].Bid)
-		assert.Equal(t, 490.0, *res.Items[0].Bid)
+		assert.InDelta(t, 490.0, *res.Items[0].Bid, 0.001)
 		assert.Nil(t, res.Items[0].Ask)
 		assert.Equal(t, "USD/KZT BID", res.Items[0].SourceTitle)
 	})
@@ -114,7 +113,7 @@ func TestService_ObtainMeHistory(t *testing.T) {
 		require.Len(t, res.Items, 3)
 		// BID at base is newest.
 		require.NotNil(t, res.Items[0].Bid)
-		assert.Equal(t, 490.0, *res.Items[0].Bid)
+		assert.InDelta(t, 490.0, *res.Items[0].Bid, 0.001)
 		assert.Nil(t, res.Items[0].Ask)
 	})
 
@@ -198,7 +197,7 @@ func TestService_ObtainMeHistory(t *testing.T) {
 		cancel()
 		_, err := svc.ObtainMeHistory(ctx, "user1", "USD/KZT", "", 1, 20)
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, context.Canceled))
+		assert.ErrorIs(t, err, context.Canceled)
 	})
 
 	t.Run("filters by source_title yields rows from that provider only", func(t *testing.T) {
@@ -309,8 +308,8 @@ func TestService_ObtainMeHistory(t *testing.T) {
 		assert.Equal(t, sharedTitle, res.Items[0].SourceTitle)
 		require.NotNil(t, res.Items[0].Bid)
 		require.NotNil(t, res.Items[0].Ask)
-		assert.Equal(t, 487.0, *res.Items[0].Bid)
-		assert.Equal(t, 489.0, *res.Items[0].Ask)
+		assert.InDelta(t, 487.0, *res.Items[0].Bid, 0.001)
+		assert.InDelta(t, 489.0, *res.Items[0].Ask, 0.001)
 	})
 
 	t.Run("LAST-kind price lands in Last slot, Bid and Ask remain nil", func(t *testing.T) {
@@ -338,7 +337,7 @@ func TestService_ObtainMeHistory(t *testing.T) {
 		// LAST routes to the dedicated Last slot; Bid and Ask must remain nil.
 		require.NotNil(t, res.Items[0].Last,
 			"LAST-kind price must appear in the Last slot")
-		assert.Equal(t, 300.0, *res.Items[0].Last)
+		assert.InDelta(t, 300.0, *res.Items[0].Last, 0.001)
 		assert.Nil(t, res.Items[0].Bid,
 			"Bid must remain nil for a LAST-kind source")
 		assert.Nil(t, res.Items[0].Ask,

@@ -5,25 +5,25 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"math"
 	"strings"
 	"time"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/domain/identity"
 )
 
-// NewRateUserEventRepository returns a repository for the rate_user_events table.
-func NewRateUserEventRepository(db db) (*RateUserEventRepository, error) {
-	return &RateUserEventRepository{db: db}, nil
-}
-
 // RateUserEventRepository persists and retrieves domain.RateUserEvent notification records.
 type RateUserEventRepository struct {
 	db db
+}
+
+// NewRateUserEventRepository returns a repository for the rate_user_events table.
+func NewRateUserEventRepository(db db) (*RateUserEventRepository, error) {
+	return &RateUserEventRepository{db: db}, nil
 }
 
 // Name returns the name of the underlying database table.
@@ -33,20 +33,20 @@ func (r *RateUserEventRepository) Name() string { return rateUserEventTableName 
 func (r *RateUserEventRepository) CheckUP(ctx context.Context) error {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
 
-	count, err := rateUserEventCount(tx, ctx, ";")
+	count, err := rateUserEventCount(ctx, tx, ";")
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if count < 0 {
 		err = errors.New("unexpected result")
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -59,7 +59,7 @@ func (r *RateUserEventRepository) CheckUP(ctx context.Context) error {
 func (r *RateUserEventRepository) ObtainLastNRateUserEvents(ctx context.Context, offset, limit int64, status ...domain.RateUserEventStatus) ([]domain.RateUserEvent, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	defer printRollbackError(tx)
@@ -74,9 +74,9 @@ func (r *RateUserEventRepository) ObtainLastNRateUserEvents(ctx context.Context,
 		}
 	}
 
-	count, err := rateUserEventCount(tx, ctx, whereClause+";", statusArgs...)
+	count, err := rateUserEventCount(ctx, tx, whereClause+";", statusArgs...)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	if count == 0 {
@@ -85,13 +85,18 @@ func (r *RateUserEventRepository) ObtainLastNRateUserEvents(ctx context.Context,
 
 	// Full condition adds ORDER BY / LIMIT / OFFSET for the SELECT.
 	fullCondition := whereClause + "ORDER BY " + rateUserEventCreatedAtFieldName + " ASC\nLIMIT ?\nOFFSET ?;"
-	selectArgs := append(statusArgs, limit, offset)
+	// Copied rather than appended in place: statusArgs is also the count query's
+	// argument list, and appending into its spare capacity would rewrite what that
+	// caller sees. It happens to run first today, which is not a property to rely on.
+	selectArgs := make([]any, 0, len(statusArgs)+2)
+	selectArgs = append(selectArgs, statusArgs...)
+	selectArgs = append(selectArgs, limit, offset)
 
 	query := rateUserEventSqlSelect + "\n" + fullCondition
 	dbRows, err := tx.QueryContext(ctx, query, selectArgs...)
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, dbRows.Close()) }()
@@ -113,24 +118,27 @@ func (r *RateUserEventRepository) ObtainLastNRateUserEvents(ctx context.Context,
 			&createdAt,
 			&sentAt,
 		); scanErr != nil {
-			return nil, errors.Join(scanErr, internal.NewTraceError())
+			return nil, errors.Join(scanErr, loginjector.NewTraceError())
 		}
 
 		item.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
 		if err != nil {
 			err = fmt.Errorf("rate %s has invalid timestamp %s: %w", item.ID, createdAt, err)
-			return nil, errors.Join(err, internal.NewTraceError())
+			return nil, errors.Join(err, loginjector.NewTraceError())
 		}
 
 		if sentAt != nil && *sentAt != "" {
 			item.SentAt, err = time.Parse(time.RFC3339, *sentAt)
 			if err != nil {
 				err = fmt.Errorf("rate %s has invalid timestamp %s: %w", item.ID, *sentAt, err)
-				return nil, errors.Join(err, internal.NewTraceError())
+				return nil, errors.Join(err, loginjector.NewTraceError())
 			}
 		}
 
 		items = append(items, item)
+	}
+	if iterErr := dbRows.Err(); iterErr != nil {
+		return nil, errors.Join(iterErr, loginjector.NewTraceError())
 	}
 
 	return items, nil
@@ -143,7 +151,7 @@ func (r *RateUserEventRepository) ObtainLastNRateUserEvents(ctx context.Context,
 func (r *RateUserEventRepository) ObtainRateUserEventsBySourceName(ctx context.Context, sourceName string, offset, limit int64, status ...domain.RateUserEventStatus) ([]domain.RateUserEvent, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -158,9 +166,9 @@ func (r *RateUserEventRepository) ObtainRateUserEventsBySourceName(ctx context.C
 		}
 	}
 
-	count, err := rateUserEventCount(tx, ctx, where+";", args...)
+	count, err := rateUserEventCount(ctx, tx, where+";", args...)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	if count == 0 {
 		return []domain.RateUserEvent{}, nil
@@ -172,7 +180,7 @@ func (r *RateUserEventRepository) ObtainRateUserEventsBySourceName(ctx context.C
 		append(args, limit, offset)...,
 	)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 
@@ -186,14 +194,14 @@ func (r *RateUserEventRepository) ObtainRateUserEventsBySourceName(ctx context.C
 			&item.Message, &item.Status, &item.LastError,
 			&createdAt, &sentAt,
 		); scanErr != nil {
-			return nil, errors.Join(scanErr, internal.NewTraceError())
+			return nil, errors.Join(scanErr, loginjector.NewTraceError())
 		}
 		var parseErr error
 		item.CreatedAt, parseErr = time.Parse(time.RFC3339, createdAt)
 		if parseErr != nil {
 			log.Print(errors.Join(
 				fmt.Errorf("rate user event %s has invalid created_at %q: %w", item.ID, createdAt, parseErr),
-				internal.NewTraceError(),
+				loginjector.NewTraceError(),
 			))
 		}
 		if sentAt != nil && *sentAt != "" {
@@ -201,11 +209,14 @@ func (r *RateUserEventRepository) ObtainRateUserEventsBySourceName(ctx context.C
 			if parseErr != nil {
 				log.Print(errors.Join(
 					fmt.Errorf("rate user event %s has invalid sent_at %q: %w", item.ID, *sentAt, parseErr),
-					internal.NewTraceError(),
+					loginjector.NewTraceError(),
 				))
 			}
 		}
 		items = append(items, item)
+	}
+	if iterErr := rows.Err(); iterErr != nil {
+		return nil, errors.Join(iterErr, loginjector.NewTraceError())
 	}
 	return items, nil
 }
@@ -228,13 +239,13 @@ func (r *RateUserEventRepository) ObtainDailyEventSummaryBySource(ctx context.Co
 
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
 	rows, err := tx.QueryContext(ctx, query, sourceName, limit, offset)
 	if err != nil {
-		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), internal.NewTraceError())
+		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 
@@ -243,12 +254,15 @@ func (r *RateUserEventRepository) ObtainDailyEventSummaryBySource(ctx context.Co
 		var item domain.RateUserEventDailySummary
 		var date *string
 		if scanErr := rows.Scan(&item.UserType, &date, &item.SuccessCount, &item.FailedCount); scanErr != nil {
-			return nil, errors.Join(scanErr, internal.NewTraceError())
+			return nil, errors.Join(scanErr, loginjector.NewTraceError())
 		}
 		if date != nil {
 			item.Date = *date
 		}
 		items = append(items, item)
+	}
+	if iterErr := rows.Err(); iterErr != nil {
+		return nil, errors.Join(iterErr, loginjector.NewTraceError())
 	}
 
 	return items, nil
@@ -259,12 +273,12 @@ func (r *RateUserEventRepository) ObtainDailyEventSummaryBySource(ctx context.Co
 func (r *RateUserEventRepository) ObtainUnprocessedRateUserEvents(ctx context.Context) ([]domain.RateUserEvent, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	defer printRollbackError(tx)
 
-	rows, err := rateUserEventQueryContext(tx, ctx, "WHERE "+rateUserEventStatusFieldName+" in (?, ?) ORDER BY "+rateUserEventCreatedAtFieldName+" ASC;", domain.RateUserEventStatusPending, domain.RateUserEventStatusFailed)
+	rows, err := rateUserEventQueryContext(ctx, tx, "WHERE "+rateUserEventStatusFieldName+" in (?, ?) ORDER BY "+rateUserEventCreatedAtFieldName+" ASC;", domain.RateUserEventStatusPending, domain.RateUserEventStatusFailed)
 	if err != nil {
 		return nil, err
 	}
@@ -276,12 +290,12 @@ func (r *RateUserEventRepository) ObtainUnprocessedRateUserEvents(ctx context.Co
 func (r *RateUserEventRepository) ObtainRateUserEventById(ctx context.Context, id string) (*domain.RateUserEvent, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	defer printRollbackError(tx)
 
-	row, err := rateUserEventQueryRowContext(tx, ctx, "WHERE "+rateUserEventIdFieldName+" = ? ORDER BY "+rateUserEventCreatedAtFieldName+" ASC;", id)
+	row, err := rateUserEventQueryRowContext(ctx, tx, "WHERE "+rateUserEventIdFieldName+" = ? ORDER BY "+rateUserEventCreatedAtFieldName+" ASC;", id)
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +307,7 @@ func (r *RateUserEventRepository) ObtainRateUserEventById(ctx context.Context, i
 func (r *RateUserEventRepository) RetainRateUserEvent(ctx context.Context, record *domain.RateUserEvent) error {
 	if record == nil {
 		err := errors.New("notification record is nil")
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -309,14 +323,14 @@ func (r *RateUserEventRepository) RetainRateUserEvent(ctx context.Context, recor
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
 
-	count, err := rateUserEventCount(tx, ctx, " WHERE "+rateUserEventIdFieldName+" = ?;", record.ID)
+	count, err := rateUserEventCount(ctx, tx, " WHERE "+rateUserEventIdFieldName+" = ?;", record.ID)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -379,24 +393,24 @@ func (r *RateUserEventRepository) RetainRateUserEvent(ctx context.Context, recor
 		)
 	}
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	rows, err := res.RowsAffected()
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	if rows <= 0 {
 		err = errors.New("unexpected result: no rows affected")
 		err = errors.Join(err, internal.ErrNotFound)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if err = tx.Commit(); err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -407,13 +421,13 @@ func (r *RateUserEventRepository) RetainRateUserEvent(ctx context.Context, recor
 func (r *RateUserEventRepository) RemoveRateUserEvent(ctx context.Context, record *domain.RateUserEvent) error {
 	if record == nil {
 		err := errors.New("rate value is nil")
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
@@ -422,12 +436,12 @@ func (r *RateUserEventRepository) RemoveRateUserEvent(ctx context.Context, recor
 	_, err = tx.ExecContext(ctx, cmd, record.ID)
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", cmd))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if err = tx.Commit(); err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -442,7 +456,7 @@ func (r *RateUserEventRepository) RemoveRateUserEventOlderThan(ctx context.Conte
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
@@ -454,12 +468,12 @@ func (r *RateUserEventRepository) RemoveRateUserEventOlderThan(ctx context.Conte
 
 	_, err = tx.ExecContext(ctx, cmd, before.Format(time.RFC3339))
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if err = tx.Commit(); err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -504,7 +518,7 @@ func sourceNameForDB(s string) any {
 	return s
 }
 
-func rateUserEventCount(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
+func rateUserEventCount(ctx context.Context, tx *sql.Tx, condition string, args ...any) (int64, error) {
 	query := "SELECT\n" +
 		" COUNT(*)\n" +
 		"FROM " + rateUserEventTableName + "\n" + condition
@@ -515,22 +529,22 @@ func rateUserEventCount(tx *sql.Tx, ctx context.Context, condition string, args 
 		return 0, nil
 	} else if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return 0, err
 	}
 
 	return count, nil
 }
 
-func rateUserEventQueryContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (items []domain.RateUserEvent, err error) {
-	count, err := rateUserEventCount(tx, ctx, condition, args...)
+func rateUserEventQueryContext(ctx context.Context, tx *sql.Tx, condition string, args ...any) (items []domain.RateUserEvent, err error) {
+	count, err := rateUserEventCount(ctx, tx, condition, args...)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
-		return
+		err = errors.Join(err, loginjector.NewTraceError())
+		return items, err
 	}
 	if count == 0 {
 		items = []domain.RateUserEvent{}
-		return
+		return items, err
 	}
 
 	query := rateUserEventSqlSelect + "\n" + condition
@@ -538,10 +552,10 @@ func rateUserEventQueryContext(tx *sql.Tx, ctx context.Context, condition string
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
-		return
+		err = errors.Join(err, loginjector.NewTraceError())
+		return items, err
 	}
-	defer func(rows io.Closer) { err = errors.Join(err, rows.Close()) }(rows)
+	defer func() { err = errors.Join(err, rows.Close()) }()
 
 	items = make([]domain.RateUserEvent, 0, count)
 
@@ -562,14 +576,14 @@ func rateUserEventQueryContext(tx *sql.Tx, ctx context.Context, condition string
 			&sentAt,
 		)
 		if err != nil {
-			err = errors.Join(err, internal.NewTraceError())
-			return
+			err = errors.Join(err, loginjector.NewTraceError())
+			return items, err
 		}
 
 		item.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
 		if err != nil {
 			err = fmt.Errorf("rate %s has invalid timestamp %s: %w", item.ID, createdAt, err)
-			err = errors.Join(err, internal.NewTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return nil, err
 		}
 
@@ -577,7 +591,7 @@ func rateUserEventQueryContext(tx *sql.Tx, ctx context.Context, condition string
 			item.SentAt, err = time.Parse(time.RFC3339, *sentAt)
 			if err != nil {
 				err = fmt.Errorf("rate %s has invalid timestamp %s: %w", item.ID, *sentAt, err)
-				err = errors.Join(err, internal.NewTraceError())
+				err = errors.Join(err, loginjector.NewTraceError())
 				return nil, err
 			}
 		} else {
@@ -587,10 +601,15 @@ func rateUserEventQueryContext(tx *sql.Tx, ctx context.Context, condition string
 		items = append(items, item)
 	}
 
-	return
+	if err = rows.Err(); err != nil {
+		err = errors.Join(err, loginjector.NewTraceError())
+		return nil, err
+	}
+
+	return items, err
 }
 
-func rateUserEventQueryRowContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (*domain.RateUserEvent, error) {
+func rateUserEventQueryRowContext(ctx context.Context, tx *sql.Tx, condition string, args ...any) (*domain.RateUserEvent, error) {
 	query := rateUserEventSqlSelect + "\n" + condition
 
 	var item domain.RateUserEvent
@@ -608,17 +627,18 @@ func rateUserEventQueryRowContext(tx *sql.Tx, ctx context.Context, condition str
 		&sentAt,
 	)
 	if err != nil && errors.Is(err, sql.ErrNoRows) {
+		//nolint:nilnil // (nil, nil) for "no such row" is this layer's contract, relied on by every caller
 		return nil, nil
 	} else if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
 	item.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
 	if err != nil {
 		err = fmt.Errorf("rate %s has invalid timestamp %s: %w", item.ID, createdAt, err)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
@@ -626,7 +646,7 @@ func rateUserEventQueryRowContext(tx *sql.Tx, ctx context.Context, condition str
 		item.SentAt, err = time.Parse(time.RFC3339, *sentAt)
 		if err != nil {
 			err = fmt.Errorf("rate %s has invalid timestamp %s: %w", item.ID, *sentAt, err)
-			err = errors.Join(err, internal.NewTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return nil, err
 		}
 	} else {

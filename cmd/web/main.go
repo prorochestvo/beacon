@@ -1,6 +1,7 @@
 // Command web serves the HTTP API and the embedded Mini App static files.
 // It reads BEACON_SQLITEDB_DSN and BEACON_TELEGRAMBOT_DSN from the environment, starts the
-// Telegram bot update loop, and listens on the port configured by --port (default 8080).
+// Telegram bot update loop, and listens on the address configured by --bind and --port
+// (default 127.0.0.1:8080).
 package main
 
 import (
@@ -8,7 +9,6 @@ import (
 	"embed"
 	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -17,51 +17,32 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
-	_ "time/tzdata" // embedded IANA tzdata for time.LoadLocation in profile-upsert
+	_ "time/tzdata" // embedded IANA tzdata for time.LoadLocation in profile and weather-city validation
 
 	"github.com/prorochestvo/dsninjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	appchart "github.com/seilbekskindirov/beacon/internal/application/chart"
+	appdigest "github.com/seilbekskindirov/beacon/internal/application/digest"
 	"github.com/seilbekskindirov/beacon/internal/application/inspector"
+	appprofile "github.com/seilbekskindirov/beacon/internal/application/profile"
 	"github.com/seilbekskindirov/beacon/internal/application/service"
-	"github.com/seilbekskindirov/beacon/internal/domain"
+	appsub "github.com/seilbekskindirov/beacon/internal/application/subscription"
+	appweather "github.com/seilbekskindirov/beacon/internal/application/weather"
 	"github.com/seilbekskindirov/beacon/internal/dto"
 	"github.com/seilbekskindirov/beacon/internal/gateway"
 	"github.com/seilbekskindirov/beacon/internal/gateway/middleware"
+	telegramgw "github.com/seilbekskindirov/beacon/internal/gateway/telegram"
 	"github.com/seilbekskindirov/beacon/internal/infrastructure/sqlitedb"
 	integration "github.com/seilbekskindirov/beacon/internal/infrastructure/telegrambot"
 	weatherinfra "github.com/seilbekskindirov/beacon/internal/infrastructure/weather"
 	"github.com/seilbekskindirov/beacon/internal/repository"
+	"github.com/seilbekskindirov/beacon/internal/tools/hashedassets"
+	"github.com/seilbekskindirov/beacon/migrations"
 	_ "modernc.org/sqlite"
-)
-
-var (
-	// BuildVersion is the application version string, injected at link time via -ldflags.
-	BuildVersion = "dev"
-	// BuildTime is the build timestamp, injected at link time via -ldflags.
-	BuildTime = "unknown"
-	// BuildHash is the VCS commit hash, injected at link time via -ldflags.
-	BuildHash = "undefined"
-	// LogsDir is the directory where log files are written.
-	LogsDir = path.Join(os.TempDir(), "logs")
-	// LogVerbosity controls the minimum log level emitted by the logger.
-	LogVerbosity = internal.LogLevelWarning
-	// HttpPort is the TCP port the HTTP server listens on.
-	HttpPort = 8080
-	// HttpTimeOut is the read/write/idle timeout for the HTTP server.
-	HttpTimeOut = 30 * time.Second
-	// StaticDir overrides the embedded static file system when non-empty.
-	StaticDir = ""
-	// APIDsn is the public HTTPS origin passed via --api-dsn; used by the WASM client.
-	APIDsn = ""
-)
-
-const (
-	envDsnTelegramBOT = "BEACON_TELEGRAMBOT_DSN"
-	envDsnSqliteDB    = "BEACON_SQLITEDB_DSN"
 )
 
 func main() {
@@ -69,7 +50,6 @@ func main() {
 	flag.Parse()
 	initFlags()
 
-	log.Printf("build: %s (%s) at %s\n", BuildVersion, BuildHash, BuildTime)
 	if StaticDir != "" {
 		log.Printf("static directory (override): %s\n", StaticDir)
 	} else {
@@ -80,6 +60,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("logger: %v", err)
 	}
+	// First line of every run in the log file: which build wrote everything below.
+	// Logged after the logger exists — before it, this went to a stderr the cron
+	// wrappers discard, so no line in the file could be attributed to a release.
+	log.Printf("build: %s (%s) at %s\n", BuildVersion, BuildHash, BuildTime)
 	log.Println("logger: initiated")
 
 	// web only calls Telegram (bot polling/webhook), and Telegram traffic bypasses
@@ -87,9 +71,9 @@ func main() {
 	// parsed here.
 
 	// init settings
-	dsnTelegramBOT, err := dsninjector.Unmarshal(envDsnTelegramBOT)
+	dsnTelegramBOT, err := dsninjector.Unmarshal(internal.EnvTelegramBotDSN)
 	if err != nil {
-		log.Fatalf("settings: %s, %s", envDsnTelegramBOT, err.Error())
+		log.Fatalf("settings: %s: unparseable value (contents not logged)", internal.EnvTelegramBotDSN)
 		return
 	}
 	if APIDsn == "" {
@@ -97,7 +81,7 @@ func main() {
 	}
 	dsnAPI, err := dsninjector.Parse(APIDsn)
 	if err != nil {
-		log.Fatalf("settings: --api-dsn, %s", err.Error())
+		log.Fatalf("settings: --api-dsn: unparseable value (contents not logged; expected https://<host>/)")
 		return
 	}
 	// Telegram WebApp buttons reject non-HTTPS, IP literals, and localhost, so the
@@ -107,20 +91,20 @@ func main() {
 	// Echo the resolved URL so operators can confirm the BotFather Menu Button
 	// still points at the same origin after each deploy. Not a secret.
 	log.Printf("settings: webAppURL=%s (must match BotFather Menu Button URL)", webAppURL)
-	dsnDB, err := dsninjector.Unmarshal(envDsnSqliteDB)
+	dsnDB, err := dsninjector.Unmarshal(internal.EnvSQLiteDSN)
 	if err != nil {
-		log.Fatalf("settings: %s, %s", envDsnSqliteDB, err.Error())
+		log.Fatalf("settings: %s: unparseable value (contents not logged)", internal.EnvSQLiteDSN)
 		return
 	}
 	log.Println("settings: initiated")
 
 	// init dependencies
-	db, err := sqlitedb.NewSQLiteClient(dsnDB, l.WriterAs(internal.LogLevelInfo))
+	db, err := sqlitedb.NewSQLiteClient(dsnDB)
 	if err != nil {
 		log.Fatalf("dependencies: %s", err.Error())
 		return
 	}
-	if err = sqlitedb.RequireMigratedSchema(context.Background(), db); err != nil {
+	if err = sqlitedb.RequireMigratedSchema(context.Background(), db, migrations.MigrationsFS); err != nil {
 		log.Fatalf("dependencies: schema check: %s", err.Error())
 		return
 	}
@@ -129,33 +113,26 @@ func main() {
 			log.Printf("close sqlite client: %v", e)
 		}
 	}(db)
-	tbot, err := integration.NewTBotClient(dsnTelegramBOT, l.WriterAs(internal.LogLevelInfo))
+	tbot, err := integration.NewTBotClient(dsnTelegramBOT)
 	if err != nil {
+		//nolint:gocritic // a fatal here is a refusal to start: the deferred close is
+		// skipped, and the OS reclaims the descriptor a moment later. Threading an
+		// error out of every startup step would add plumbing for a path that ends
+		// the process anyway.
 		log.Fatalf("dependencies: telegram bot connection is failed, %s", err.Error())
 		return
 	}
-	if id, username, err := tbot.Me(context.Background()); err != nil {
-		log.Printf("telegram: identity probe failed: %v", err)
+	if id, username, probeErr := tbot.Me(context.Background()); probeErr != nil {
+		log.Printf("telegram: identity probe failed: %v", probeErr)
 	} else {
 		log.Printf("telegram: authenticated as @%s (id=%d)", username, id)
-	}
-	// Construct the weather-source repository here, ahead of the health agent, so the
-	// gismeteo inspector can be aligned with the operator's active flag and configured
-	// base URL. This is the one repository built in the dependencies section; the rest
-	// follow under "init repositories".
-	weatherSourceRepo, err := repository.NewWeatherSourceRepository(db)
-	if err != nil {
-		// This constructor runs in the dependencies phase (before "dependencies:
-		// initiated"), so its fatal must carry the "dependencies:" marker to keep the
-		// startup-marker grep sequence operators triage on intact.
-		log.Fatalf("dependencies: weather source repository: %s", err.Error())
 	}
 	healthAgent := inspector.NewAgentWithAdvisory(0,
 		[]inspector.Inspector{
 			inspector.NewDBInspector(db),
 			inspector.NewTelegramInspector(tbot),
 		},
-		buildWeatherAdvisoryInspectors(context.Background(), weatherSourceRepo),
+		[]inspector.Inspector{inspector.NewOpenMeteoInspector()},
 	)
 	log.Println("dependencies: initiated")
 
@@ -192,6 +169,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("repositories: %s", err.Error())
 	}
+	weatherForecastRepo, err := repository.NewWeatherForecastDayRepository(db)
+	if err != nil {
+		log.Fatalf("repositories: %s", err.Error())
+	}
 	log.Println("repositories: initiated")
 
 	restAPI, err := service.NewRateRestAPI(
@@ -208,7 +189,7 @@ func main() {
 	botToken := tbot.BotToken()
 	if botToken == "" {
 		// Without a bot token the Mini App initData HMAC can't be verified, so
-		// every /api/me/* call returns 401. Fail at startup rather than silently
+		// every /api/v1/me/* call returns 401. Fail at startup rather than silently
 		// rejecting every authenticated request.
 		log.Fatalf("services: bot token is empty — check BEACON_TELEGRAMBOT_DSN")
 	}
@@ -216,21 +197,23 @@ func main() {
 	// HistoryValuesLoader (ObtainMeHistory); sourceRepo also satisfies
 	// PublicSourcesLoader (ObtainPublicChart).
 	chartSvc := appchart.NewService(subscriptionRepo, sourceRepo, rateValueRepo, rateValueRepo, sourceRepo, time.Now)
+	subSvc := appsub.NewService(subscriptionRepo, sourceRepo, rateValueRepo)
+	weatherSvc := appweather.NewService(weatherCityRepo, weatherObsRepo, weatherForecastRepo, time.Now)
+	profileSvc := appprofile.NewService(profileRepo)
 
 	// Open-Meteo geocoder for city search. cmd/web always uses a direct connection
 	// (no proxy) — Telegram traffic already bypasses the proxy, and geocoding calls
 	// from the web handler are ephemeral lookups. The proxy URL is intentionally
 	// empty here; collector and doctor pass BEACON_PROXY_URL instead.
-	openMeteoClient, err := weatherinfra.NewOpenMeteo("")
+	openMeteoClient, err := weatherinfra.NewOpenMeteo("", l.WriterAs(internal.LogLevelInfo))
 	if err != nil {
 		log.Fatalf("geocoder: open-meteo: %s", err.Error())
 	}
 	geoAdapter := &openMeteoGeoAdapter{client: openMeteoClient}
 
-	mux, err := gateway.NewGateway(restAPI, botToken, subscriptionRepo, sourceRepo, rateValueRepo, profileRepo, chartSvc, healthAgent, BuildVersion, serviceStart, gateway.WeatherGatewayDeps{
-		CityRepo: weatherCityRepo,
+	mux, err := gateway.NewGateway(restAPI, botToken, subSvc, profileSvc, chartSvc, healthAgent, BuildVersion, serviceStart, gateway.WeatherGatewayDeps{
+		Service:  weatherSvc,
 		Geocoder: geoAdapter,
-		ObsRepo:  weatherObsRepo,
 	})
 	if err != nil {
 		log.Fatalf("services: mux api is failed, %s", err.Error())
@@ -243,9 +226,9 @@ func main() {
 		fsSub = dirFS
 		httpFsys = http.FS(dirFS)
 	} else {
-		sub, err := fs.Sub(staticFS, "static")
-		if err != nil {
-			log.Fatalf("embed sub: %v", err)
+		sub, subErr := fs.Sub(staticFS, "static")
+		if subErr != nil {
+			log.Fatalf("embed sub: %v", subErr)
 		}
 		fsSub = sub
 		httpFsys = http.FS(sub)
@@ -254,36 +237,41 @@ func main() {
 	// Build the hashed-asset registry from the active FS. It hashes raw bytes (not
 	// .gz siblings) so a gzip-level change alone doesn't invalidate the cache-busting
 	// URL. Missing assets are fatal here.
-	hashSpecs := []assetSpec{
-		{sourcePath: "app.wasm", contentType: "application/wasm", gzipPath: "app.wasm.gz"},
-		{sourcePath: "wasm_exec.js", contentType: "text/javascript; charset=utf-8"},
+	hashSpecs := []hashedassets.Spec{
+		{SourcePath: "app.wasm", ContentType: "application/wasm", GzipPath: "app.wasm.gz"},
+		{SourcePath: "wasm_exec.js", ContentType: "text/javascript; charset=utf-8"},
 	}
-	registry, err := newHashedAssetRegistry(fsSub, hashSpecs)
+	registry, err := hashedassets.NewRegistry(fsSub, hashSpecs)
 	if err != nil {
 		log.Fatalf("hashed assets: %v", err)
 	}
-	registry.logEntries()
+	registry.LogEntries()
 
 	// Build the boot-time HTML caches: both entry points are rewritten once so the
 	// served HTML references the registry's hashed asset URLs.
 	bootTime := time.Now()
-	indexCache, err := newHTMLCache(fsSub, "index.html", registry, bootTime)
+	indexCache, err := hashedassets.NewHTMLCache(fsSub, "index.html", registry, bootTime)
 	if err != nil {
 		log.Fatalf("html cache: %v", err)
 	}
-	adminCache, err := newHTMLCache(fsSub, "admin/index.html", registry, bootTime)
+	adminCache, err := hashedassets.NewHTMLCache(fsSub, "admin/index.html", registry, bootTime)
 	if err != nil {
 		log.Fatalf("html cache: %v", err)
 	}
 
-	// staticHandler dispatches hashed-asset and HTML-cache paths first, then falls
+	// hashedassets.Handler dispatches hashed-asset and HTML-cache paths first, then falls
 	// through to the plain FileServer for unhashed paths (stale-HTML recovery) and
 	// other static content. The mux's API routes shadow this catch-all.
 	fileHandler := http.FileServer(httpFsys)
-	mux.Handle("/", staticHandler(fileHandler, fsSub, indexCache, adminCache, registry))
-	tbotAPI, err := service.NewTelegramApi(tbot, subscriptionRepo, rateValueRepo, sourceRepo, profileRepo, webAppURL)
+	mux.Handle("/", hashedassets.Handler(fileHandler, fsSub, indexCache, adminCache, registry))
+	digestSvc := appdigest.NewService(subscriptionRepo, sourceRepo, rateValueRepo, profileRepo, time.Now, l.WriterAs(internal.LogLevelInfo))
+	tbotRouter, err := telegramgw.NewRouter(telegramgw.Config{
+		Bot:       tbot,
+		Digest:    digestSvc,
+		WebAppURL: webAppURL,
+	})
 	if err != nil {
-		log.Fatalf("services: telegram api is failed, %s", err.Error())
+		log.Fatalf("services: telegram router is failed, %s", err.Error())
 		return
 	}
 	log.Println("services: initiated")
@@ -294,21 +282,24 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// run telegram server (bound to ctx so SIGTERM cancels the bot poll loop)
-	tbotAPI.Run(ctx)
+	// run telegram server (bound to ctx so SIGTERM cancels the bot poll loop).
+	// Run blocks on the update channel, so the goroutine is the caller's here
+	// rather than hidden inside it.
+	go tbotRouter.Run(ctx)
 
 	// run http server. Bind the listener before logging "listening" so the
 	// readiness marker fires only after the kernel has bound the port; otherwise
 	// a probe grepping for the marker can race the goroutine and connect to a
 	// not-yet-bound port.
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", HttpPort),
+		Addr:         listenAddress(HttpBindAddress, HttpPort),
 		Handler:      middleware.Logger(mux, l.WriterAs(internal.LogLevelInfo)),
 		ReadTimeout:  HttpTimeOut,
 		WriteTimeout: HttpTimeOut,
 		IdleTimeout:  HttpTimeOut >> 1,
 	}
-	listener, err := net.Listen("tcp", srv.Addr)
+	var listenCfg net.ListenConfig
+	listener, err := listenCfg.Listen(ctx, "tcp", srv.Addr)
 	if err != nil {
 		log.Fatalf("http server: bind %s: %s", srv.Addr, err)
 	}
@@ -316,7 +307,10 @@ func main() {
 	// between bind and Serve. Double-close on the happy path is a harmless no-op,
 	// so the error is intentionally discarded.
 	defer func() { _ = listener.Close() }()
-	log.Printf("http server: listening on %d port", HttpPort)
+	// The full bound address, not just the port: a wildcard bind and a loopback bind
+	// are otherwise indistinguishable in the log, and telling them apart is the whole
+	// point of --bind.
+	log.Printf("http server: listening on %s", srv.Addr)
 	go func() {
 		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("http server: %s", err)
@@ -334,8 +328,70 @@ func main() {
 	}
 }
 
+// test binary sees the flags too. The rule this package does follow is the one
+// that matters: nothing here logs or exits, because a line written before the
+// logger exists goes to a stderr the cron wrappers discard.
+//
+//nolint:gochecknoinits // flag registration has to happen before main runs so the
+func init() {
+	// Register flags here so the test binary can see them, but do NOT call
+	// flag.Parse() in init() — it would consume go test's own flags before the
+	// testing package registers them ("flag provided but not defined"). main()
+	// calls flag.Parse() once; tests never invoke main().
+	flagPort = flag.Int("port", HttpPort, "http server port")
+	flagBindAddress = flag.String("bind", HttpBindAddress, "http server bind address, IP literal without a port (127.0.0.1 loopback-only, 0.0.0.0 or :: every interface)")
+	flagTimeout = flag.String("timeout", HttpTimeOut.String(), "HTTP read/write/idle timeout duration")
+	flagLogsDir = flag.String("logs-dir", LogsDir, "path to logs directory")
+	flagVerbosity = flag.String("verbosity", "warning", "minimum stdout log level (debug, info, warning, error, severe, critical)")
+	flagStaticDir = flag.String("static-dir", StaticDir, "path to static files directory")
+	flagAPIDsn = flag.String("api-dsn", APIDsn, "public HTTPS origin DSN, format: https://<host>/")
+}
+
+var (
+	// BuildVersion is the application version string, injected at link time via -ldflags.
+	BuildVersion = "dev"
+	// BuildTime is the build timestamp, injected at link time via -ldflags.
+	BuildTime = "unknown"
+	// BuildHash is the VCS commit hash, injected at link time via -ldflags.
+	BuildHash = "undefined"
+	// LogsDir is the directory where log files are written.
+	LogsDir = path.Join(os.TempDir(), "logs")
+	// LogVerbosity controls the minimum log level emitted by the logger.
+	LogVerbosity = internal.LogLevelWarning
+	// HttpPort is the TCP port the HTTP server listens on.
+	HttpPort = 8080
+	// HttpBindAddress is the interface the HTTP server binds, overridable with --bind.
+	//
+	// The default is the IPv4 loopback because nginx is the only client: the vhost
+	// reaches the origin over loopback either way, so a wildcard bind buys nothing and
+	// publishes the API on every interface the host happens to have. That left the
+	// firewall as the only thing between an unauthenticated /health/check and the
+	// network (issue #93). A container deployment that must publish the port passes
+	// --bind 0.0.0.0 explicitly.
+	HttpBindAddress = "127.0.0.1"
+	// HttpTimeOut is the read/write/idle timeout for the HTTP server.
+	HttpTimeOut = 30 * time.Second
+	// StaticDir overrides the embedded static file system when non-empty.
+	StaticDir = ""
+	// APIDsn is the public HTTPS origin passed via --api-dsn; used by the WASM client.
+	APIDsn = ""
+)
+
 //go:embed static
 var staticFS embed.FS
+
+// flagPort, flagTimeout, etc. hold the raw flag values populated by flag.Parse in
+// main. They are package-level so initFlags can apply them to the exported globals,
+// keeping the flag-registration init() free of flag.Parse.
+var (
+	flagPort        *int
+	flagBindAddress *string
+	flagTimeout     *string
+	flagLogsDir     *string
+	flagVerbosity   *string
+	flagStaticDir   *string
+	flagAPIDsn      *string
+)
 
 // openMeteoGeoAdapter adapts *weatherinfra.OpenMeteo to the gateway's
 // weatherGeocoder interface, which expects []dto.WeatherCitySearchItem rather
@@ -367,72 +423,6 @@ func (a *openMeteoGeoAdapter) Geocode(ctx context.Context, name string, count in
 	return items, nil
 }
 
-// gismeteoSourceLoader is the narrow weather_sources surface that
-// buildWeatherAdvisoryInspectors needs to decide gismeteo inspector registration.
-type gismeteoSourceLoader interface {
-	ObtainWeatherSourceByProvider(ctx context.Context, provider string) (*domain.WeatherSource, error)
-}
-
-// buildWeatherAdvisoryInspectors returns the advisory weather inspectors registered on
-// the health agent. Open-Meteo is always advisory. Gismeteo is registered with its
-// configured base URL when active — a missing row defaults to active — and omitted when
-// the operator has set active=0, so a disabled provider is not reported as a health
-// component (the ok|<error> services contract is not widened with a "disabled" value).
-// A config-read failure falls back to the default-URL inspector: the gismeteo inspector
-// is advisory, so a false "down" can never fail the deploy health-gate.
-//
-// Registration is evaluated once at process boot. Toggling weather_sources.active or
-// base_url for gismeteo at runtime has no effect on /health/check until cmd/web is
-// restarted — unlike the collector, which re-reads the row every tick.
-func buildWeatherAdvisoryInspectors(ctx context.Context, loader gismeteoSourceLoader) []inspector.Inspector {
-	advisory := []inspector.Inspector{inspector.NewOpenMeteoInspector()}
-
-	row, err := loader.ObtainWeatherSourceByProvider(ctx, domain.ProviderGismeteo)
-	switch {
-	case err != nil:
-		log.Printf("weather: gismeteo health config load failed, using default probe URL: %v", err)
-		advisory = append(advisory, inspector.NewGismeteoInspector())
-	case row == nil || row.Active:
-		baseURL := ""
-		if row != nil {
-			baseURL = row.BaseURL
-		}
-		// Record which base URL the probe uses (empty ⇒ compiled-in default) so an
-		// operator can confirm the active weather providers from the boot log.
-		log.Printf("weather: gismeteo health inspector registered (base_url=%q)", baseURL)
-		advisory = append(advisory, inspector.NewGismeteoInspectorWithURL(baseURL))
-	default:
-		log.Printf("weather: gismeteo inactive — health inspector not registered")
-	}
-
-	return advisory
-}
-
-// flagPort, flagTimeout, etc. hold the raw flag values populated by flag.Parse in
-// main. They are package-level so initFlags can apply them to the exported globals,
-// keeping the flag-registration init() free of flag.Parse.
-var (
-	flagPort      *int
-	flagTimeout   *string
-	flagLogsDir   *string
-	flagVerbosity *string
-	flagStaticDir *string
-	flagAPIDsn    *string
-)
-
-func init() {
-	// Register flags here so the test binary can see them, but do NOT call
-	// flag.Parse() in init() — it would consume go test's own flags before the
-	// testing package registers them ("flag provided but not defined"). main()
-	// calls flag.Parse() once; tests never invoke main().
-	flagPort = flag.Int("port", HttpPort, "http server port")
-	flagTimeout = flag.String("timeout", HttpTimeOut.String(), "HTTP read/write/idle timeout duration")
-	flagLogsDir = flag.String("logs-dir", LogsDir, "path to logs directory")
-	flagVerbosity = flag.String("verbosity", "warning", "minimum stdout log level (debug, info, warning, error, severe, critical)")
-	flagStaticDir = flag.String("static-dir", StaticDir, "path to static files directory")
-	flagAPIDsn = flag.String("api-dsn", APIDsn, "public HTTPS origin DSN, format: https://<host>/")
-}
-
 // initFlags applies the parsed flag values to the exported globals. Called once
 // from main() after flag.Parse().
 func initFlags() {
@@ -440,6 +430,19 @@ func initFlags() {
 		log.Printf("invalid port value: %d, using default %d", *flagPort, HttpPort)
 	} else {
 		HttpPort = *flagPort
+	}
+
+	// Only an IP literal is accepted. A hostname would let net.Listen pick one of
+	// several resolved addresses, and the forms that carry a port (":8000",
+	// "127.0.0.1:8000", "[::1]:8000") would be re-joined with HttpPort into an
+	// address nothing can bind. Rejection falls back to the loopback default, so a
+	// malformed --bind can never widen exposure.
+	if addr := strings.TrimSpace(*flagBindAddress); addr != "" {
+		if net.ParseIP(addr) == nil {
+			log.Printf("invalid bind address: %s, expected an IP literal without a port, using default %s", addr, HttpBindAddress)
+		} else {
+			HttpBindAddress = addr
+		}
 	}
 
 	if value, err := time.ParseDuration(*flagTimeout); err != nil {
@@ -463,4 +466,11 @@ func initFlags() {
 	if v := *flagAPIDsn; v != "" {
 		APIDsn = v
 	}
+}
+
+// listenAddress returns the address net.Listen binds for the given host and port,
+// bracketing an IPv6 literal the way net.Listen requires. It takes its inputs as
+// arguments rather than reading the globals so it stays a pure function under test.
+func listenAddress(host string, port int) string {
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }

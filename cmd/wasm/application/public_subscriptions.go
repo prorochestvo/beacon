@@ -1,6 +1,7 @@
+package application
+
 // Package application contains page controllers for the WASM frontend.
 // This file implements the unauthenticated guest landing page.
-package application
 
 import (
 	"context"
@@ -24,9 +25,9 @@ var AllowedChartPeriods = []int{7, 30, 90, 180, 360}
 
 // PublicSubscriptionsState is a read-only snapshot the UI layer consumes to
 // render the public (unauthenticated) sparkline list. No user-keyed data;
-// derived entirely from the /api/public/... endpoint family.
+// derived entirely from the /api/v1/public/... endpoint family.
 type PublicSubscriptionsState struct {
-	// Chart holds the paginated sparkline-list returned by /api/public/rates/chart.
+	// Chart holds the paginated sparkline-list returned by /api/v1/public/rates/chart.
 	// Nil means the chart has not been fetched yet or the last fetch returned no data.
 	Chart *dto.PublicChartResponse
 	// ChartLoading is true while the chart fetch is in flight.
@@ -78,7 +79,7 @@ func NewPublicSubscriptionsPage(client *apiclient.Client) *PublicSubscriptionsPa
 // not mutate the returned value.
 func (p *PublicSubscriptionsPage) State() PublicSubscriptionsState { return p.state }
 
-// LoadPage fetches the given page (1-based) from /api/public/rates/chart and
+// LoadPage fetches the given page (1-based) from /api/v1/public/rates/chart and
 // updates state. ChartLoading is set true before the fetch and reset to false
 // when it returns, regardless of outcome. ChartError is set on failure; Page,
 // Total, and Chart are updated on success.

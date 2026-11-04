@@ -6,14 +6,9 @@ import (
 	"time"
 )
 
-const (
-	// ProviderOpenMeteo is the literal provider token stored in WeatherObservation.Provider
-	// for Open-Meteo forecasts. It is a data token; do not translate it.
-	ProviderOpenMeteo = "open-meteo"
-	// ProviderGismeteo is the literal provider token for Gismeteo forecasts.
-	// It is a data token; do not translate it.
-	ProviderGismeteo = "gismeteo"
-)
+// ProviderOpenMeteo is the literal provider token stored in WeatherObservation.Provider
+// for Open-Meteo forecasts. It is a data token; do not translate it.
+const ProviderOpenMeteo = "open-meteo"
 
 // WeatherHourlyPoint holds one hourly forecast slot for a WeatherObservation.
 // Time is a UTC instant (parsed from the provider's local-timezone ISO-8601 string via
@@ -29,12 +24,11 @@ type WeatherHourlyPoint struct {
 // WeatherObservation is a weather forecast snapshot for a (location, provider, day) triple.
 // Nullable forecast fields use pointer types so that a provider that omits a field stores
 // NULL rather than a misleading zero — zero temperature is real data, not absence.
-// Hourly holds the per-hour forecast from the Open-Meteo hourly block (nil for Gismeteo
-// observations, which have no hourly data).
+// Hourly holds the per-hour forecast from the Open-Meteo hourly block.
 type WeatherObservation struct {
 	ID           string
 	LocationID   string
-	Provider     string // ProviderOpenMeteo | ProviderGismeteo — literal data tokens, never translated
+	Provider     string // ProviderOpenMeteo — a literal data token, never translated
 	Latitude     float64
 	Longitude    float64
 	CapturedAt   time.Time
@@ -58,18 +52,9 @@ type WeatherObservation struct {
 	Precip      *float64
 	CloudCover  *int
 
-	// Hourly is the per-hour forecast block, populated for Open-Meteo observations only.
-	// Gismeteo rows store nil (no hourly data). The slice is ordered by ascending time.
-	// Use MarshalHourlyJSON / UnmarshalHourlyJSON for the hourly_json column round-trip.
+	// Hourly is the per-hour forecast block, ordered by ascending time. Use
+	// MarshalHourlyJSON / UnmarshalHourlyJSON for the hourly_json column round-trip.
 	Hourly []WeatherHourlyPoint
-}
-
-// hourlyWire is the compact JSON representation for a single WeatherHourlyPoint stored
-// in the hourly_json column. Short field names keep the column small.
-type hourlyWire struct {
-	Time       string   `json:"t"`
-	PrecipProb *int     `json:"p,omitempty"`
-	Temp       *float64 `json:"c,omitempty"`
 }
 
 // MarshalHourlyJSON serialises the Hourly slice to a compact JSON byte slice for
@@ -118,12 +103,6 @@ func (o *WeatherObservation) UnmarshalHourlyJSON(data []byte) error {
 	return nil
 }
 
-// wmoEntry pairs a human-readable description with a display emoji.
-type wmoEntry struct {
-	text  string
-	emoji string
-}
-
 // wmoTable maps WMO Weather Interpretation Codes to descriptions and emojis.
 // Declared at package level so the map is allocated once, not on every WMOWeatherCode call.
 var wmoTable = map[int]wmoEntry{
@@ -157,11 +136,25 @@ var wmoTable = map[int]wmoEntry{
 	99: {"Thunderstorm with heavy hail", "⛈️"},
 }
 
+// hourlyWire is the compact JSON representation for a single WeatherHourlyPoint stored
+// in the hourly_json column. Short field names keep the column small.
+type hourlyWire struct {
+	Time       string   `json:"t"`
+	PrecipProb *int     `json:"p,omitempty"`
+	Temp       *float64 `json:"c,omitempty"`
+}
+
+// wmoEntry pairs a human-readable description with a display emoji.
+type wmoEntry struct {
+	text  string
+	emoji string
+}
+
 // WMOWeatherCode returns a human-readable description and display emoji for the
 // given WMO Weather Interpretation Code. For unrecognised codes it returns
 // ("Unknown", "❓") so callers can always render something safe rather than an
 // empty string.
-func WMOWeatherCode(code int) (text string, emoji string) {
+func WMOWeatherCode(code int) (text, emoji string) {
 	if e, ok := wmoTable[code]; ok {
 		return e.text, e.emoji
 	}

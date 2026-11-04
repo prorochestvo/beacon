@@ -2,7 +2,7 @@
 
 // Command wasm is the single-page WASM frontend for Beacon.
 // It runs inside the browser via the Go WASM runtime, drives the DOM through
-// window.fetch and innerHTML, and communicates with the server via /api/... routes.
+// window.fetch and innerHTML, and communicates with the server via /api/v1/... routes.
 package main
 
 import (
@@ -18,38 +18,6 @@ import (
 	"github.com/seilbekskindirov/beacon/cmd/wasm/ui"
 	"github.com/seilbekskindirov/beacon/internal/dto"
 )
-
-// screen holds the teardown closures for a single active screen. On navigation,
-// Unmount runs every release closure to detach event listeners and free the
-// underlying js.Func entries in the WASM function table.
-type screen struct {
-	releases []func()
-}
-
-func (s *screen) addRelease(fn func()) {
-	s.releases = append(s.releases, fn)
-}
-
-func (s *screen) unmount() {
-	for _, fn := range s.releases {
-		fn()
-	}
-	s.releases = nil
-}
-
-// currentScreen is the single active screen. Navigation replaces it after
-// calling Unmount on the outgoing one.
-var currentScreen *screen
-
-// mountScreen unmounts the previous screen (if any) and returns a fresh screen
-// that the caller populates with release closures during handler binding.
-func mountScreen() *screen {
-	if currentScreen != nil {
-		currentScreen.unmount()
-	}
-	currentScreen = &screen{}
-	return currentScreen
-}
 
 func main() {
 	client := apiclient.New(apiclient.NewDOMFetcher())
@@ -102,6 +70,54 @@ func main() {
 	js.Global().Set("_wasm", wasmObj)
 
 	select {} // keep the WASM runtime alive
+}
+
+// currentScreen is the single active screen. Navigation replaces it after
+// calling Unmount on the outgoing one.
+var currentScreen *screen
+
+// homeSectionRoutes and settingsSectionRoutes map a Mini App section to the _wasm
+// entry point of its screen in one mode. The section rail moves sideways within a
+// mode, so each screen binds the map matching its own mode; that is what leaves the
+// gear and the ← Back button as the only controls that change mode. See the matrix
+// in cmd/wasm/ui/section_rail.go.
+var (
+	homeSectionRoutes = map[ui.Section]string{
+		ui.SectionRates:   "renderMeSubscriptions",
+		ui.SectionWeather: "renderMeWeatherCurrent",
+	}
+	settingsSectionRoutes = map[ui.Section]string{
+		ui.SectionRates:   "renderMeSubscriptionsEdit",
+		ui.SectionWeather: "renderMeWeatherCities",
+	}
+)
+
+// screen holds the teardown closures for a single active screen. On navigation,
+// Unmount runs every release closure to detach event listeners and free the
+// underlying js.Func entries in the WASM function table.
+type screen struct {
+	releases []func()
+}
+
+func (s *screen) addRelease(fn func()) {
+	s.releases = append(s.releases, fn)
+}
+
+func (s *screen) unmount() {
+	for _, fn := range s.releases {
+		fn()
+	}
+	s.releases = nil
+}
+
+// mountScreen unmounts the previous screen (if any) and returns a fresh screen
+// that the caller populates with release closures during handler binding.
+func mountScreen() *screen {
+	if currentScreen != nil {
+		currentScreen.unmount()
+	}
+	currentScreen = &screen{}
+	return currentScreen
 }
 
 // runRenderSources fetches sources and stats in parallel, builds the page
@@ -453,7 +469,7 @@ func bindErrorsSections(doc js.Value, page *application.ErrorsPage, scr *screen)
 }
 
 // uploadUserProfile reads the browser's resolved IANA timezone and BCP-47 locale
-// from Intl.DateTimeFormat() and POSTs both to /api/me/profile. Fire-and-forget:
+// from Intl.DateTimeFormat() and POSTs both to /api/v1/me/profile. Fire-and-forget:
 // the caller wraps it in `go` and discards the result. The notifier falls back
 // to UTC when no profile is configured, so a failed upload is a soft regression.
 //
@@ -550,6 +566,46 @@ func callWebAppIfDefined() {
 	webApp.Call("expand")
 }
 
+// bindSectionRail wires the vertical section rail of one mounted screen.
+//
+// The listener is delegated from the stable #app container rather than bound to the
+// rail node: the weather and editor screens replace #app innerHTML on every redraw,
+// which would destroy a listener attached to the rail itself. Element.closest walks
+// up from the event target, so a click landing on a tab's glyph or label still
+// resolves to the button.
+//
+// A tap on the already-active tab is ignored: remounting the screen the user is
+// already on would cancel its in-flight fetches and reset its scroll position for
+// no visible change.
+func bindSectionRail(app js.Value, scr *screen, active ui.Section, routes map[ui.Section]string) {
+	if app.IsNull() || app.IsUndefined() {
+		return
+	}
+	scr.addRelease(dom.On(app, "click", func(ev js.Value) {
+		target := ev.Get("target")
+		if target.IsNull() || target.IsUndefined() {
+			return
+		}
+		item := target.Call("closest", ".section-rail-item")
+		if item.IsNull() || item.IsUndefined() {
+			return
+		}
+		sectionAttr := item.Get("dataset").Get("section")
+		if sectionAttr.IsUndefined() {
+			return
+		}
+		section := ui.Section(sectionAttr.String())
+		if section == active {
+			return
+		}
+		entry, ok := routes[section]
+		if !ok {
+			return
+		}
+		js.Global().Get("_wasm").Call(entry)
+	}))
+}
+
 // runRenderMeSubscriptions is the entry point for the Telegram Mini App screen.
 // It reads initData once at mount, calls WebApp.ready/expand, renders the
 // skeleton, loads the first page of subscriptions in this goroutine, then
@@ -604,6 +660,10 @@ func runRenderMeSubscriptions(client *apiclient.Client) {
 	// Render the skeleton immediately for a responsive UI.
 	app.Set("innerHTML", ui.RenderMeSubscriptions(page.State()))
 
+	// Bind the rail before the data loads: switching sections must work while the
+	// chart is still fetching.
+	bindSectionRail(app, scr, ui.SectionRates, homeSectionRoutes)
+
 	redrawChart := func() {
 		if !alive {
 			return
@@ -616,7 +676,7 @@ func runRenderMeSubscriptions(client *apiclient.Client) {
 		chartDiv.Set("innerHTML", ui.RenderSparklineSlot(page.State()))
 	}
 
-	// loadSparklineChart fetches /api/me/rates/chart in one goroutine. Its
+	// loadSparklineChart fetches /api/v1/me/rates/chart in one goroutine. Its
 	// timeout derives from screenCtx so navigation cancels the fetch instead of
 	// letting it run until the 15s deadline.
 	loadSparklineChart := func() {
@@ -712,20 +772,11 @@ func bindMeSubsHandlers(
 		chartDiv.Set("innerHTML", ui.RenderSparklineSlot(page.State()))
 	}
 
-	// Gear button: navigate to the subscription editor screen.
+	// Gear button: enter settings without leaving the rates section.
 	manageBtn := doc.Call("getElementById", "me-manage")
 	if !manageBtn.IsNull() && !manageBtn.IsUndefined() {
 		scr.addRelease(dom.On(manageBtn, "click", func(_ js.Value) {
 			js.Global().Get("_wasm").Call("renderMeSubscriptionsEdit")
-		}))
-	}
-
-	// Cloud button: navigate to the weather cities screen (its back button
-	// returns here via renderMeSubscriptions).
-	weatherBtn := doc.Call("getElementById", "me-weather")
-	if !weatherBtn.IsNull() && !weatherBtn.IsUndefined() {
-		scr.addRelease(dom.On(weatherBtn, "click", func(_ js.Value) {
-			js.Global().Get("_wasm").Call("renderMeWeatherCities")
 		}))
 	}
 
@@ -1259,6 +1310,10 @@ func runRenderMeSubscriptionsEdit(client *apiclient.Client) {
 	// Render skeleton immediately.
 	redraw()
 
+	// Bind the rail before the data loads: switching sections must work while the
+	// editor is still fetching.
+	bindSectionRail(app, scr, ui.SectionRates, settingsSectionRoutes)
+
 	// Load data in background so the skeleton shows right away.
 	go func() {
 		fetchCtx, fetchCancel := context.WithTimeout(screenCtx, 15*time.Second)
@@ -1533,6 +1588,10 @@ func runRenderMeWeatherCities(client *apiclient.Client) {
 	// Render skeleton immediately.
 	redraw()
 
+	// Bind the rail before the data loads: switching sections must work while the
+	// city list is still fetching.
+	bindSectionRail(app, scr, ui.SectionWeather, settingsSectionRoutes)
+
 	// Load saved cities in the background so the skeleton shows right away.
 	go func() {
 		fetchCtx, fetchCancel := context.WithTimeout(screenCtx, 15*time.Second)
@@ -1545,10 +1604,10 @@ func runRenderMeWeatherCities(client *apiclient.Client) {
 	}()
 }
 
-// runRenderMeWeatherCurrent is the entry point for the on-demand current-weather
-// screen. Reads initData once at mount, renders the skeleton, loads the latest
-// observations for the caller's cities in a background goroutine, then wires the
-// back button. Must run in a goroutine — never on the main goroutine.
+// runRenderMeWeatherCurrent is the entry point for the weather home tab. Reads
+// initData once at mount, wires the section rail and the gear, renders the
+// skeleton, then loads the latest observations for the caller's cities in a
+// background goroutine. Must run in a goroutine — never on the main goroutine.
 func runRenderMeWeatherCurrent(client *apiclient.Client) {
 	callWebAppIfDefined()
 
@@ -1576,6 +1635,12 @@ func runRenderMeWeatherCurrent(client *apiclient.Client) {
 	// Render skeleton immediately.
 	redraw()
 
+	// Both bindings are delegated from #app and must be live before the fetch
+	// finishes: navigating away from a slow-loading screen is exactly when a user
+	// reaches for them.
+	bindSectionRail(app, scr, ui.SectionWeather, homeSectionRoutes)
+	bindWeatherCurrentHandlers(app, scr, &alive)
+
 	// Load data in a background goroutine so the skeleton shows right away.
 	go func() {
 		fetchCtx, fetchCancel := context.WithTimeout(screenCtx, 15*time.Second)
@@ -1584,13 +1649,15 @@ func runRenderMeWeatherCurrent(client *apiclient.Client) {
 			js.Global().Get("console").Call("warn", "weather current Load:", err.Error())
 		}
 		redraw()
-		bindWeatherCurrentHandlers(app, scr, &alive)
 	}()
 }
 
-// bindWeatherCurrentHandlers wires the current-weather screen's event handlers.
-// Currently only the back button is interactive; the screen is read-only.
-// The back button navigates to the city-picker screen.
+// bindWeatherCurrentHandlers wires the weather home tab's event handlers. The
+// screen is read-only, so the gear is its only control: it enters the weather
+// settings screen, keeping the section (see the matrix in ui/section_rail.go).
+//
+// The listener is delegated from the stable #app container because redraw()
+// replaces its entire innerHTML when the observations arrive.
 func bindWeatherCurrentHandlers(app js.Value, scr *screen, alive *bool) {
 	scr.addRelease(dom.On(app, "click", func(ev js.Value) {
 		if !*alive {
@@ -1600,7 +1667,7 @@ func bindWeatherCurrentHandlers(app js.Value, scr *screen, alive *bool) {
 		if target.IsNull() || target.IsUndefined() {
 			return
 		}
-		if target.Get("id").String() == "weather-current-back" {
+		if target.Get("id").String() == "me-manage" {
 			js.Global().Get("_wasm").Call("renderMeWeatherCities")
 		}
 	}))
@@ -1612,8 +1679,8 @@ func bindWeatherCurrentHandlers(app js.Value, scr *screen, alive *bool) {
 // All interactions are delegated to the stable #app container so listeners
 // survive repeated innerHTML replacements performed by redraw().
 //
-// Back button (#weather-back): calls _wasm.renderMeSubscriptions() to return
-// to the main Mini App screen.
+// Back button (#weather-back): calls _wasm.renderMeWeatherCurrent() to leave
+// settings for the weather home tab, preserving the section.
 // Search input (#weather-search): fires a debounced geocoding request after
 // 400 ms of inactivity so the API is not called on every keystroke.
 // Search result clicks (.weather-search-item): read data-index and call
@@ -1623,6 +1690,16 @@ func bindWeatherCurrentHandlers(app js.Value, scr *screen, alive *bool) {
 // Clear button (#weather-clear-btn): calls ClearSearch and redraws.
 // Delete buttons (.weather-city-delete): read data-id; call DeleteCity in a
 // goroutine and redraw on completion.
+// "+ Add alert" buttons (.weather-add-alert-btn): read data-location-id; call
+// OpenAlertForm and redraw to show the form.
+// Alert kind select (#weather-alert-kind): fires "change", not "click"/"input";
+// calls SetAlertFormKind and redraws so the numeric input shows/hides and switches
+// meaning per kind (threshold for heat/frost/rain, 0–23 hour for morning_summary).
+// Alert value input (#weather-alert-value): calls SetAlertFormValue on every
+// keystroke without redrawing, so the input never loses focus mid-typing.
+// Alert save button (#weather-alert-save): calls SavePendingAlert in a goroutine;
+// redraw shows the result. Alert cancel button (#weather-alert-cancel): calls
+// CloseAlertForm and redraws.
 //
 // ctx is the screen-lifetime context used for fetch goroutines so they are
 // cancelled on unmount. alive is a pointer into runRenderMeWeatherCities's
@@ -1654,9 +1731,8 @@ func bindWeatherCitiesHandlers(
 		id := target.Get("id").String()
 		switch id {
 		case "weather-back":
-			js.Global().Get("_wasm").Call("renderMeSubscriptions")
-			return
-		case "weather-view-current":
+			// Leaving settings keeps the section: back lands on the weather home
+			// tab, not on the rates one.
 			js.Global().Get("_wasm").Call("renderMeWeatherCurrent")
 			return
 		case "weather-save-btn":
@@ -1671,6 +1747,20 @@ func bindWeatherCitiesHandlers(
 			return
 		case "weather-clear-btn":
 			page.ClearSearch()
+			redraw()
+			return
+		case "weather-alert-save":
+			go func() {
+				fetchCtx, fetchCancel := context.WithTimeout(ctx, 15*time.Second)
+				defer fetchCancel()
+				if err := page.SavePendingAlert(fetchCtx); err != nil {
+					js.Global().Get("console").Call("warn", "weather save alert:", err.Error())
+				}
+				redraw()
+			}()
+			return
+		case "weather-alert-cancel":
+			page.CloseAlertForm()
 			redraw()
 			return
 		}
@@ -1693,21 +1783,80 @@ func bindWeatherCitiesHandlers(
 
 		// Delete button: walk up so clicks on child nodes inside the button resolve.
 		delBtn := target.Call("closest", ".weather-city-delete")
-		if delBtn.IsNull() || delBtn.IsUndefined() {
-			return
-		}
-		cityID := delBtn.Get("dataset").Get("id").String()
-		if cityID == "" {
-			return
-		}
-		go func() {
-			fetchCtx, fetchCancel := context.WithTimeout(ctx, 15*time.Second)
-			defer fetchCancel()
-			if err := page.DeleteCity(fetchCtx, cityID); err != nil {
-				js.Global().Get("console").Call("warn", "weather delete city:", err.Error())
+		if !delBtn.IsNull() && !delBtn.IsUndefined() {
+			cityID := delBtn.Get("dataset").Get("id").String()
+			if cityID == "" {
+				return
 			}
+			go func() {
+				fetchCtx, fetchCancel := context.WithTimeout(ctx, 15*time.Second)
+				defer fetchCancel()
+				if err := page.DeleteCity(fetchCtx, cityID); err != nil {
+					js.Global().Get("console").Call("warn", "weather delete city:", err.Error())
+				}
+				redraw()
+			}()
+			return
+		}
+
+		// "+ Add alert" button: has no id, so it is matched via closest(...) like
+		// the delete button above. Reading target.id here would return "".
+		addAlertBtn := target.Call("closest", ".weather-add-alert-btn")
+		if !addAlertBtn.IsNull() && !addAlertBtn.IsUndefined() {
+			locationID := addAlertBtn.Get("dataset").Get("locationId").String()
+			if locationID == "" {
+				return
+			}
+			page.OpenAlertForm(locationID)
 			redraw()
-		}()
+			return
+		}
+
+		// "Remove city" button: destructive (removes every alert kind including the
+		// forced thaw row), so it is gated by showConfirm/confirm like the
+		// subscription delete flow above — unlike the per-kind ✕, which is not.
+		removeBtn := target.Call("closest", ".weather-city-remove")
+		if removeBtn.IsNull() || removeBtn.IsUndefined() {
+			return
+		}
+		locationID := removeBtn.Get("dataset").Get("locationId").String()
+		if locationID == "" {
+			return
+		}
+
+		confirmAndRemove := func(confirmed bool) {
+			if !confirmed {
+				return
+			}
+			go func() {
+				fetchCtx, fetchCancel := context.WithTimeout(ctx, 15*time.Second)
+				defer fetchCancel()
+				if err := page.RemoveCity(fetchCtx, locationID); err != nil {
+					js.Global().Get("console").Call("warn", "weather remove city:", err.Error())
+				}
+				redraw()
+			}()
+		}
+
+		webApp := js.Global().Get("Telegram").Get("WebApp")
+		if !webApp.IsUndefined() && !webApp.IsNull() {
+			showConfirm := webApp.Get("showConfirm")
+			if !showConfirm.IsUndefined() && !showConfirm.IsNull() {
+				// Release the js.Func inside the callback after it fires once, else it
+				// leaks a WASM function-table slot.
+				var cb js.Func
+				cb = js.FuncOf(func(_ js.Value, args []js.Value) any {
+					cb.Release()
+					confirmed := len(args) > 0 && args[0].Bool()
+					confirmAndRemove(confirmed)
+					return nil
+				})
+				webApp.Call("showConfirm", "Remove this city? Thaw alerts will stop too.", cb)
+				return
+			}
+		}
+		confirmed := js.Global().Call("confirm", "Remove this city? Thaw alerts will stop too.").Bool()
+		confirmAndRemove(confirmed)
 	}))
 
 	// Delegated input handler on the stable #app container: debounced geocoding
@@ -1723,7 +1872,14 @@ func bindWeatherCitiesHandlers(
 		if t.IsNull() || t.IsUndefined() {
 			return
 		}
-		if t.Get("id").String() != "weather-search" {
+		id := t.Get("id").String()
+		if id == "weather-alert-value" {
+			// #weather-alert-value is a real <input>; do NOT redraw here or the
+			// element is rebuilt and the caret/focus is lost mid-typing.
+			page.SetAlertFormValue(t.Get("value").String())
+			return
+		}
+		if id != "weather-search" {
 			return
 		}
 		q := t.Get("value").String()
@@ -1741,5 +1897,23 @@ func bindWeatherCitiesHandlers(
 			}
 			redraw()
 		})
+	}))
+
+	// Delegated change handler on the stable #app container: <select> elements
+	// fire "change", not "click" or "input" — this is the only listener in this
+	// function bound to that event type.
+	scr.addRelease(dom.On(app, "change", func(ev js.Value) {
+		if !*alive {
+			return
+		}
+		t := ev.Get("target")
+		if t.IsNull() || t.IsUndefined() {
+			return
+		}
+		if t.Get("id").String() != "weather-alert-kind" {
+			return
+		}
+		page.SetAlertFormKind(t.Get("value").String())
+		redraw()
 	}))
 }

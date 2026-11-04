@@ -69,7 +69,7 @@ func TestRateUserEventRepository_ObtainLastNRateUserEvents(t *testing.T) {
 		r, err := NewRateUserEventRepository(stubSQLiteDB(t))
 		require.NoError(t, err)
 
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			require.NoError(t, r.RetainRateUserEvent(t.Context(), &domain.RateUserEvent{
 				UserType: domain.UserTypeTelegram,
 				UserID:   uuid.NewV4().String(),
@@ -96,7 +96,7 @@ func TestRateUserEventRepository_ObtainLastNRateUserEvents(t *testing.T) {
 		require.NoError(t, err)
 
 		base := time.Now().UTC().Truncate(time.Second)
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			require.NoError(t, r.RetainRateUserEvent(t.Context(), &domain.RateUserEvent{
 				UserType:  domain.UserTypeTelegram,
 				UserID:    uuid.NewV4().String(),
@@ -122,7 +122,7 @@ func TestRateUserEventRepository_ObtainLastNRateUserEvents(t *testing.T) {
 		result, err := r.ObtainLastNRateUserEvents(t.Context(), 0, 10)
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		require.Len(t, result, 0)
+		require.Empty(t, result)
 	})
 
 	t.Run("rows are ordered oldest first", func(t *testing.T) {
@@ -132,7 +132,7 @@ func TestRateUserEventRepository_ObtainLastNRateUserEvents(t *testing.T) {
 		require.NoError(t, err)
 
 		base := time.Now().UTC().Truncate(time.Second)
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			require.NoError(t, r.RetainRateUserEvent(t.Context(), &domain.RateUserEvent{
 				UserType:  domain.UserTypeTelegram,
 				UserID:    uuid.NewV4().String(),
@@ -183,7 +183,7 @@ func TestRateUserEventRepository_ObtainUnprocessedRateUserEvents(t *testing.T) {
 		r, err := NewRateUserEventRepository(stubSQLiteDB(t))
 		require.NoError(t, err)
 
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			require.NoError(t, r.RetainRateUserEvent(t.Context(), &domain.RateUserEvent{
 				UserType: domain.UserTypeTelegram,
 				UserID:   uuid.NewV4().String(),
@@ -194,7 +194,7 @@ func TestRateUserEventRepository_ObtainUnprocessedRateUserEvents(t *testing.T) {
 
 		result, err := r.ObtainUnprocessedRateUserEvents(t.Context())
 		require.NoError(t, err)
-		require.Len(t, result, 0)
+		require.Empty(t, result)
 	})
 
 	t.Run("empty table", func(t *testing.T) {
@@ -206,7 +206,7 @@ func TestRateUserEventRepository_ObtainUnprocessedRateUserEvents(t *testing.T) {
 		result, err := r.ObtainUnprocessedRateUserEvents(t.Context())
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		require.Len(t, result, 0)
+		require.Empty(t, result)
 	})
 
 	t.Run("ordered oldest first", func(t *testing.T) {
@@ -350,14 +350,14 @@ func TestRateUserEventRepository_RetainRateUserEventRepository(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM"+" "+rateUserEventTableName+
 				" WHERE "+rateUserEventUserTypeFieldName+" = ?"+
 				" AND "+rateUserEventUserIdFieldName+" = ?",
 			rue.UserType, rue.UserID,
 		).Scan(&count))
 		require.Equal(t, 1, count)
-		require.NoError(t, tx.QueryRow("SELECT COUNT(*) FROM"+" "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?", rue.ID).Scan(&count))
+		require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM"+" "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?", rue.ID).Scan(&count))
 		require.Equal(t, 1, count)
 	})
 	t.Run("idempotent", func(t *testing.T) {
@@ -382,14 +382,14 @@ func TestRateUserEventRepository_RetainRateUserEventRepository(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM"+" "+rateUserEventTableName+
 				" WHERE "+rateUserEventUserTypeFieldName+" = ?"+
 				" AND "+rateUserEventUserIdFieldName+" = ?",
 			rue.UserType, rue.UserID,
 		).Scan(&count))
 		require.Equal(t, 1, count)
-		require.NoError(t, tx.QueryRow("SELECT COUNT(*) FROM"+" "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?", rue.ID).Scan(&count))
+		require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM"+" "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?", rue.ID).Scan(&count))
 		require.Equal(t, 1, count)
 	})
 	t.Run("send time round-trips", func(t *testing.T) {
@@ -449,14 +449,14 @@ func TestRateUserEventRepository_RemoveRateUserEventRepository(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM"+" "+rateUserEventTableName+
 				" WHERE "+rateUserEventUserTypeFieldName+" = ?"+
 				" AND "+rateUserEventUserIdFieldName+" = ?",
 			rue.UserType, rue.UserID,
 		).Scan(&count))
 		require.Equal(t, 0, count)
-		require.NoError(t, tx.QueryRow("SELECT COUNT(*) FROM"+" "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?", rue.ID).Scan(&count))
+		require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM"+" "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?", rue.ID).Scan(&count))
 		require.Equal(t, 0, count)
 	})
 }
@@ -504,7 +504,7 @@ func TestRateUserEventRepository_SourceNameRoundTrip(t *testing.T) {
 		result, err := r.ObtainRateUserEventById(t.Context(), event.ID)
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		require.Equal(t, "", result.SourceName)
+		require.Empty(t, result.SourceName)
 	})
 
 	// Plan 018 Task 6 acceptance criterion: a weather event with an empty SourceName
@@ -532,7 +532,7 @@ func TestRateUserEventRepository_SourceNameRoundTrip(t *testing.T) {
 		var found bool
 		for _, e := range unprocessed {
 			if e.ID == ev.ID {
-				assert.Equal(t, "", e.SourceName, "weather event must have empty SourceName after round-trip")
+				assert.Empty(t, e.SourceName, "weather event must have empty SourceName after round-trip")
 				assert.Equal(t, ev.Message, e.Message)
 				assert.Equal(t, domain.UserTypeTelegram, e.UserType)
 				found = true
@@ -628,7 +628,7 @@ func TestRateUserEventRepository_ObtainRateUserEventsBySourceName(t *testing.T) 
 		r, err := NewRateUserEventRepository(stubSQLiteDB(t, "src-Z"))
 		require.NoError(t, err)
 
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			require.NoError(t, r.RetainRateUserEvent(t.Context(), &domain.RateUserEvent{
 				SourceName: "src-Z",
 				UserType:   domain.UserTypeTelegram,
@@ -685,7 +685,7 @@ func TestRateUserEventRepository_RemoveRateUserEventOlderThan(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?",
 			event.ID,
 		).Scan(&count))
@@ -714,7 +714,7 @@ func TestRateUserEventRepository_RemoveRateUserEventOlderThan(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?",
 			event.ID,
 		).Scan(&count))
@@ -742,7 +742,7 @@ func TestRateUserEventRepository_RemoveRateUserEventOlderThan(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?",
 			event.ID,
 		).Scan(&count))
@@ -771,7 +771,7 @@ func TestRateUserEventRepository_RemoveRateUserEventOlderThan(t *testing.T) {
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM "+rateUserEventTableName+" WHERE "+rateUserEventIdFieldName+" = ?",
 			event.ID,
 		).Scan(&count))

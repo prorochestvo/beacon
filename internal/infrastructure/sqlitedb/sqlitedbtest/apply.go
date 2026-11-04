@@ -14,10 +14,10 @@ import (
 // Apply runs every migration in the canonical migrations.MigrationsFS against db.
 // It is intended for use in test setup before any repository operations are performed.
 // Accepts testing.TB so it works in both Test* and Benchmark* functions.
-func Apply(t testing.TB, db sqlitedb.Committer) {
-	t.Helper()
+func Apply(tb testing.TB, db sqlitedb.Committer) {
+	tb.Helper()
 
 	m, err := sqlitedb.NewMigrator(db, migrations.MigrationsFS)
-	require.NoError(t, err)
-	require.NoError(t, m.Run(context.Background()))
+	require.NoError(tb, err)
+	require.NoError(tb, m.Run(context.Background()))
 }

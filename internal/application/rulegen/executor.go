@@ -23,8 +23,6 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/tools/rateextractor"
 )
 
-var _ RuleExecutor = (*defaultRuleExecutor)(nil)
-
 // RuleExecutor applies a chain of RateSourceRules to a body and returns the
 // final numeric value. Implementations must be deterministic and must not
 // mutate the caller's body slice.
@@ -35,9 +33,6 @@ var _ RuleExecutor = (*defaultRuleExecutor)(nil)
 type RuleExecutor interface {
 	Execute(rules []domain.RateSourceRule, body []byte, base, quote string) (float64, error)
 }
-
-// NewRuleExecutor returns the default RuleExecutor implementation.
-func NewRuleExecutor() RuleExecutor { return &defaultRuleExecutor{} }
 
 type defaultRuleExecutor struct{}
 
@@ -90,7 +85,7 @@ func (e *defaultRuleExecutor) Execute(rules []domain.RateSourceRule, body []byte
 	}
 
 	if math.IsNaN(v) || math.IsInf(v, 0) {
-		return 0, fmt.Errorf("rulegen: NaN or Inf")
+		return 0, errors.New("rulegen: NaN or Inf")
 	}
 
 	if v <= rateextractor.MinPlausibleRateValue || v > rateextractor.MaxPlausibleRateValue {
@@ -109,3 +104,6 @@ func (e *defaultRuleExecutor) Execute(rules []domain.RateSourceRule, body []byte
 
 	return v, nil
 }
+
+// NewRuleExecutor returns the default RuleExecutor implementation.
+func NewRuleExecutor() RuleExecutor { return &defaultRuleExecutor{} }

@@ -8,13 +8,38 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	integration "github.com/seilbekskindirov/beacon/internal/infrastructure/telegrambot"
 )
+
+// defaultEventRetention is how long a settled notification event is kept before
+// Vacuum deletes it. Only sent, failed and canceled rows are eligible; a pending
+// event is never removed by age.
+//
+// This is a destructive delete, not a tiering boundary: rate_user_events has no
+// archive twin, so what this drops is gone. Six months is chosen to outlast any
+// plausible "why did I get this alert?" question while keeping an unbounded,
+// per-user table from growing forever.
+//
+// It equals collection.DefaultHotWindow and is deliberately not the same constant.
+// That one moves aged rate history into an archive that keeps it forever, and its
+// value follows from the dashboard's 360-day chart period. Nothing about a chart
+// range should decide how long a user's delivery log survives, and sharing the
+// declaration would let a change to one silently retune the other — with only this
+// side of the pair able to destroy data.
+const defaultEventRetention = 180 * 24 * time.Hour
+
+// RateDispatchAgent delivers pending and failed notification events and cancels
+// events past the 24-hour TTL. One-shot: runs to completion per invocation.
+type RateDispatchAgent struct {
+	telegramClient          telegramClient
+	rateUserEventRepository rateUserEventRepository
+	ttl                     time.Duration
+}
 
 // NewRateDispatchAgent constructs a RateDispatchAgent wired to the given transport and event repository.
 func NewRateDispatchAgent(
@@ -31,32 +56,12 @@ func NewRateDispatchAgent(
 	return a, nil
 }
 
-// RateDispatchAgent delivers pending and failed notification events and cancels
-// events past the 24-hour TTL. One-shot: runs to completion per invocation.
-type RateDispatchAgent struct {
-	telegramClient          telegramClient
-	rateUserEventRepository rateUserEventRepository
-	ttl                     time.Duration
-}
-
-// rateUserEventRepository is the narrow storage interface required by this service.
-type rateUserEventRepository interface {
-	ObtainUnprocessedRateUserEvents(context.Context) ([]domain.RateUserEvent, error)
-	RetainRateUserEvent(context.Context, *domain.RateUserEvent) error
-	RemoveRateUserEventOlderThan(ctx context.Context, duration time.Duration) error
-}
-
-// telegramClient is the narrow Telegram transport interface required by this service.
-type telegramClient interface {
-	SendHTMLMessage(context.Context, integration.TelegramChatID, string) error
-}
-
 // Run fetches all unprocessed events and attempts delivery, updating each
 // event's status. Returns a joined error containing all delivery failures.
 func (a *RateDispatchAgent) Run(ctx context.Context) error {
 	events, err := a.rateUserEventRepository.ObtainUnprocessedRateUserEvents(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(internal.ErrAgentAborted, err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -70,7 +75,7 @@ func (a *RateDispatchAgent) Run(ctx context.Context) error {
 
 		if event.CreatedAt.Before(ttl) {
 			event.Status = domain.RateUserEventStatusCanceled
-			event.LastError = strings.Join([]string{fmt.Sprintf("TTL (%s) exceeded", a.ttl.String()), event.LastError}, "\n")
+			event.LastError = fmt.Sprintf("TTL (%s) exceeded", a.ttl.String()) + "\n" + event.LastError
 		} else {
 			switch event.UserType {
 			case domain.UserTypeTelegram:
@@ -81,7 +86,7 @@ func (a *RateDispatchAgent) Run(ctx context.Context) error {
 			if err != nil {
 				event.LastError = err.Error()
 				event.Status = domain.RateUserEventStatusFailed
-				errs = append(errs, errors.Join(err, internal.NewTraceError()))
+				errs = append(errs, errors.Join(err, loginjector.NewTraceError()))
 			} else {
 				event.Status = domain.RateUserEventStatusSent
 				event.LastError = ""
@@ -90,7 +95,7 @@ func (a *RateDispatchAgent) Run(ctx context.Context) error {
 
 		err = a.rateUserEventRepository.RetainRateUserEvent(ctx, &event)
 		if err != nil {
-			errs = append(errs, errors.Join(err, internal.NewTraceError()))
+			errs = append(errs, errors.Join(err, loginjector.NewTraceError()))
 		}
 
 		// Delay to avoid Telegram rate limits. ctx-aware so SIGTERM mid-batch
@@ -105,15 +110,15 @@ func (a *RateDispatchAgent) Run(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// Vacuum removes all non-pending records older than 180 days.
+// Vacuum removes all non-pending records older than defaultEventRetention.
 func (a *RateDispatchAgent) Vacuum(ctx context.Context) error {
-	return a.rateUserEventRepository.RemoveRateUserEventOlderThan(ctx, 180*24*time.Hour)
+	return a.rateUserEventRepository.RemoveRateUserEventOlderThan(ctx, defaultEventRetention)
 }
 
 func (a *RateDispatchAgent) runUserTypeTelegram(ctx context.Context, event *domain.RateUserEvent) error {
 	if event == nil {
 		err := errors.New("notification record is nil")
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -123,15 +128,27 @@ func (a *RateDispatchAgent) runUserTypeTelegram(ctx context.Context, event *doma
 			err = fmt.Errorf("invalid user id: %s", event.UserID)
 		}
 		err = errors.Join(fmt.Errorf("invalid Telegram chat ID: %s", event.UserID), err)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	err = a.telegramClient.SendHTMLMessage(ctx, integration.TelegramChatID(chatID), event.Message)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	return nil
+}
+
+// rateUserEventRepository is the narrow storage interface required by this service.
+type rateUserEventRepository interface {
+	ObtainUnprocessedRateUserEvents(context.Context) ([]domain.RateUserEvent, error)
+	RetainRateUserEvent(context.Context, *domain.RateUserEvent) error
+	RemoveRateUserEventOlderThan(ctx context.Context, duration time.Duration) error
+}
+
+// telegramClient is the narrow Telegram transport interface required by this service.
+type telegramClient interface {
+	SendHTMLMessage(context.Context, integration.TelegramChatID, string) error
 }

@@ -14,13 +14,13 @@ func TestRenderPagination(t *testing.T) {
 	t.Run("no buttons when page 1 and count less than limit", func(t *testing.T) {
 		t.Parallel()
 		got := ui.RenderPagination(ui.PaginationState{Page: 1, Count: 10, Limit: 25, Section: "subs"})
-		assert.Equal(t, "", got)
+		assert.Empty(t, got)
 	})
 
 	t.Run("no buttons when page 1 and count equals zero", func(t *testing.T) {
 		t.Parallel()
 		got := ui.RenderPagination(ui.PaginationState{Page: 1, Count: 0, Limit: 25, Section: "subs"})
-		assert.Equal(t, "", got)
+		assert.Empty(t, got)
 	})
 
 	t.Run("next only on first page when count equals limit", func(t *testing.T) {
@@ -74,7 +74,7 @@ func TestRenderPagination(t *testing.T) {
 	t.Run("limit 50 parametricity - no buttons when count less than limit", func(t *testing.T) {
 		t.Parallel()
 		got := ui.RenderPagination(ui.PaginationState{Page: 1, Count: 49, Limit: 50, Section: "errors"})
-		assert.Equal(t, "", got)
+		assert.Empty(t, got)
 	})
 
 	t.Run("limit 50 parametricity - prev only on page 4", func(t *testing.T) {

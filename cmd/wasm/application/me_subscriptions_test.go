@@ -26,7 +26,7 @@ type meSubsFakeFetcher struct {
 	callCount    int
 	lastURL      string
 	lastHeaders  map[string]string
-	// urlResponses maps a URL prefix (e.g. "/api/me/rates/history") to the
+	// urlResponses maps a URL prefix (e.g. "/api/v1/me/rates/history") to the
 	// raw JSON body that should be returned for requests to that prefix.
 	urlResponses map[string][]byte
 	// urlErr maps a URL prefix to an error that should be returned instead
@@ -212,7 +212,7 @@ func TestMeSubscriptionsPage_ClosePairModal(t *testing.T) {
 		t.Parallel()
 		histBody := meHistoryResponse("USD/KZT", 1, 20, 1, nil)
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": histBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": histBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -229,7 +229,7 @@ func TestMeSubscriptionsPage_ClosePairModal(t *testing.T) {
 		assert.Nil(t, st.HistoryItems)
 		assert.Equal(t, 0, st.HistoryPage)
 		assert.Equal(t, int64(0), st.HistoryTotal)
-		assert.NoError(t, st.HistoryError)
+		require.NoError(t, st.HistoryError)
 		// HistoryLimit must survive the close so re-open reuses the same page size.
 		assert.Equal(t, application.MeHistoryDefaultLimit, st.HistoryLimit)
 	})
@@ -238,7 +238,7 @@ func TestMeSubscriptionsPage_ClosePairModal(t *testing.T) {
 		t.Parallel()
 		histBody := meHistoryResponse("USD/KZT", 1, 20, 1, sampleHistoryItems())
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": histBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": histBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -247,7 +247,7 @@ func TestMeSubscriptionsPage_ClosePairModal(t *testing.T) {
 
 		page.ClosePairModal()
 		st := page.State()
-		assert.Equal(t, "", st.SelectedSourceTitle, "SelectedSourceTitle must be empty after ClosePairModal")
+		assert.Empty(t, st.SelectedSourceTitle, "SelectedSourceTitle must be empty after ClosePairModal")
 		assert.Nil(t, st.KnownSources, "KnownSources must be nil after ClosePairModal")
 	})
 }
@@ -281,7 +281,7 @@ func TestMeSubscriptionsPage_LoadSparklineChart(t *testing.T) {
 		page := newMePage(f, "valid-init-data")
 
 		assert.False(t, page.State().ChartLoading)
-		assert.NoError(t, page.State().ChartError)
+		require.NoError(t, page.State().ChartError)
 
 		err := page.LoadSparklineChart(t.Context())
 		require.NoError(t, err)
@@ -303,7 +303,7 @@ func TestMeSubscriptionsPage_LoadSparklineChart(t *testing.T) {
 		st := page.State()
 		assert.False(t, st.ChartLoading, "ChartLoading must be false after failure")
 		require.Error(t, st.ChartError)
-		assert.ErrorContains(t, st.ChartError, "http 503")
+		require.ErrorContains(t, st.ChartError, "http 503")
 		assert.Nil(t, st.Chart, "Chart must remain nil on failure")
 	})
 
@@ -415,7 +415,7 @@ func TestMeSubscriptionsPage_OpenHistory(t *testing.T) {
 		items := sampleHistoryItems()
 		histBody := meHistoryResponse("USD/KZT", 1, 20, int64(len(items)), items)
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": histBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": histBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -426,14 +426,14 @@ func TestMeSubscriptionsPage_OpenHistory(t *testing.T) {
 		assert.Equal(t, 1, st.HistoryPage)
 		assert.Equal(t, int64(len(items)), st.HistoryTotal)
 		require.Len(t, st.HistoryItems, len(items))
-		assert.NoError(t, st.HistoryError)
+		require.NoError(t, st.HistoryError)
 		assert.False(t, st.HistoryLoading)
 	})
 
 	t.Run("fetch error sets HistoryError but modal stays open", func(t *testing.T) {
 		t.Parallel()
 		f := &meSubsFakeFetcher{
-			urlErr: map[string]error{"/api/me/rates/history": errors.New("http 500")},
+			urlErr: map[string]error{"/api/v1/me/rates/history": errors.New("http 500")},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -444,7 +444,7 @@ func TestMeSubscriptionsPage_OpenHistory(t *testing.T) {
 		assert.True(t, st.HistoryOpen, "HistoryOpen must stay true even on error")
 		require.NotNil(t, st.OpenPair, "modal must stay open on history fetch error")
 		require.Error(t, st.HistoryError)
-		assert.ErrorContains(t, st.HistoryError, "http 500")
+		require.ErrorContains(t, st.HistoryError, "http 500")
 		assert.False(t, st.HistoryLoading)
 	})
 
@@ -460,7 +460,7 @@ func TestMeSubscriptionsPage_OpenHistory(t *testing.T) {
 	t.Run("cancelled context propagates error", func(t *testing.T) {
 		t.Parallel()
 		f := &meSubsFakeFetcher{
-			urlErr: map[string]error{"/api/me/rates/history": context.Canceled},
+			urlErr: map[string]error{"/api/v1/me/rates/history": context.Canceled},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -484,7 +484,7 @@ func TestMeSubscriptionsPage_OpenHistory(t *testing.T) {
 		secondBody := meHistoryResponse("USD/KZT", 1, 20, 1, secondItems)
 
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": firstBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": firstBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -496,10 +496,10 @@ func TestMeSubscriptionsPage_OpenHistory(t *testing.T) {
 
 		// Re-open history: SelectedSourceTitle is cleared; KnownSources is reset and
 		// only contains titles seen in the second fetch (Kaspi only, no Halyk Bank).
-		f.urlResponses["/api/me/rates/history"] = secondBody
+		f.urlResponses["/api/v1/me/rates/history"] = secondBody
 		require.NoError(t, page.OpenHistory(t.Context()))
 		st := page.State()
-		assert.Equal(t, "", st.SelectedSourceTitle, "SelectedSourceTitle must be cleared on OpenHistory")
+		assert.Empty(t, st.SelectedSourceTitle, "SelectedSourceTitle must be cleared on OpenHistory")
 		assert.NotContains(t, st.KnownSources, "Halyk Bank", "Halyk Bank must not be in KnownSources after reset (was not in second fetch)")
 		assert.Contains(t, st.KnownSources, "Kaspi", "Kaspi must be present (it was in the second fetch)")
 	})
@@ -513,7 +513,7 @@ func TestMeSubscriptionsPage_CloseHistory(t *testing.T) {
 		items := sampleHistoryItems()
 		histBody := meHistoryResponse("USD/KZT", 1, 20, int64(len(items)), items)
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": histBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": histBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -543,7 +543,7 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 		items := sampleHistoryItems()
 		histBody := meHistoryResponse("USD/KZT", 2, 20, 42, items)
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": histBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": histBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -553,14 +553,14 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 		assert.Equal(t, 2, st.HistoryPage)
 		assert.Equal(t, int64(42), st.HistoryTotal)
 		require.Len(t, st.HistoryItems, len(items))
-		assert.NoError(t, st.HistoryError)
+		require.NoError(t, st.HistoryError)
 		assert.False(t, st.HistoryLoading)
 	})
 
 	t.Run("error path sets HistoryError and returns error", func(t *testing.T) {
 		t.Parallel()
 		f := &meSubsFakeFetcher{
-			urlErr: map[string]error{"/api/me/rates/history": errors.New("http 502")},
+			urlErr: map[string]error{"/api/v1/me/rates/history": errors.New("http 502")},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -569,20 +569,20 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 
 		st := page.State()
 		require.Error(t, st.HistoryError)
-		assert.ErrorContains(t, st.HistoryError, "http 502")
+		require.ErrorContains(t, st.HistoryError, "http 502")
 		assert.False(t, st.HistoryLoading, "HistoryLoading must be false after fetch")
 	})
 
 	t.Run("context-canceled propagates error", func(t *testing.T) {
 		t.Parallel()
 		f := &meSubsFakeFetcher{
-			urlErr: map[string]error{"/api/me/rates/history": context.Canceled},
+			urlErr: map[string]error{"/api/v1/me/rates/history": context.Canceled},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
 		err := page.LoadHistory(t.Context(), 1)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, context.Canceled)
+		require.ErrorIs(t, err, context.Canceled)
 		assert.False(t, page.State().HistoryLoading)
 	})
 
@@ -598,7 +598,7 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 		t.Parallel()
 		histBody := meHistoryResponse("USD/KZT", 1, application.MeHistoryDefaultLimit, 0, nil)
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": histBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": histBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -610,7 +610,7 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 		t.Parallel()
 		// First call errors, second succeeds.
 		f := &meSubsFakeFetcher{
-			urlErr: map[string]error{"/api/me/rates/history": errors.New("transient")},
+			urlErr: map[string]error{"/api/v1/me/rates/history": errors.New("transient")},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -618,9 +618,9 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 		require.Error(t, page.State().HistoryError)
 
 		// Repair the fake: now return a success body.
-		delete(f.urlErr, "/api/me/rates/history")
+		delete(f.urlErr, "/api/v1/me/rates/history")
 		f.urlResponses = map[string][]byte{
-			"/api/me/rates/history": meHistoryResponse("USD/KZT", 1, 20, 0, nil),
+			"/api/v1/me/rates/history": meHistoryResponse("USD/KZT", 1, 20, 0, nil),
 		}
 		require.NoError(t, page.LoadHistory(t.Context(), 1))
 		assert.NoError(t, page.State().HistoryError)
@@ -629,7 +629,7 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 	t.Run("401 sets AuthFailure and resets modal state", func(t *testing.T) {
 		t.Parallel()
 		f := &meSubsFakeFetcher{
-			urlErr: map[string]error{"/api/me/rates/history": errors.New("http 401 unauthorized")},
+			urlErr: map[string]error{"/api/v1/me/rates/history": errors.New("http 401 unauthorized")},
 		}
 		page := newMePage(f, "expired-token")
 		page.OpenPairModal("USD/KZT")
@@ -651,7 +651,7 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 		// First load succeeds and populates filter state.
 		successBody := meHistoryResponse("USD/KZT", 1, 20, 1, sampleHistoryItems())
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": successBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": successBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -661,13 +661,13 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 		require.NotEmpty(t, page.State().KnownSources)
 
 		// Subsequent load returns 401.
-		delete(f.urlResponses, "/api/me/rates/history")
-		f.urlErr = map[string]error{"/api/me/rates/history": errors.New("http 401 unauthorized")}
+		delete(f.urlResponses, "/api/v1/me/rates/history")
+		f.urlErr = map[string]error{"/api/v1/me/rates/history": errors.New("http 401 unauthorized")}
 		err := page.LoadHistory(t.Context(), 2)
 		require.Error(t, err)
 
 		st := page.State()
-		assert.Equal(t, "", st.SelectedSourceTitle, "SelectedSourceTitle must be cleared on 401")
+		assert.Empty(t, st.SelectedSourceTitle, "SelectedSourceTitle must be cleared on 401")
 		assert.Nil(t, st.KnownSources, "KnownSources must be nil on 401")
 	})
 
@@ -679,7 +679,7 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 		items := sampleHistoryItems()
 		histBody := meHistoryResponse("USD/KZT", 1, 20, int64(len(items)), items)
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": histBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": histBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -703,7 +703,7 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 		items := sampleHistoryItems()
 		histBody := meHistoryResponse("USD/KZT", 1, 20, int64(len(items)), items)
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": histBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": histBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -755,7 +755,7 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 		// The stale guard must have dropped the "Kaspi" response because
 		// SelectedSourceTitle changed to "" while the fetch was in flight.
 		st := page2.State()
-		assert.Equal(t, "", st.SelectedSourceTitle)
+		assert.Empty(t, st.SelectedSourceTitle)
 		assert.Empty(t, st.HistoryItems, "stale items from Kaspi must not overwrite the empty state from OpenHistory")
 	})
 
@@ -768,7 +768,7 @@ func TestMeSubscriptionsPage_LoadHistory(t *testing.T) {
 		}
 		histBody := meHistoryResponse("USD/KZT", 1, 20, int64(len(items)), items)
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": histBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": histBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -833,18 +833,18 @@ func TestMeSubscriptionsPage_SetHistorySourceTitle(t *testing.T) {
 		items := sampleHistoryItems()
 		histBody := meHistoryResponse("USD/KZT", 1, 20, int64(len(items)), items)
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": histBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": histBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
 		require.NoError(t, page.OpenHistory(t.Context()))
 		// Advance to page 2 so we can verify SetHistorySourceTitle resets to 1.
-		f.urlResponses["/api/me/rates/history"] = meHistoryResponse("USD/KZT", 2, 20, 50, items)
+		f.urlResponses["/api/v1/me/rates/history"] = meHistoryResponse("USD/KZT", 2, 20, 50, items)
 		require.NoError(t, page.LoadHistory(t.Context(), 2))
 		assert.Equal(t, 2, page.State().HistoryPage)
 
 		// SetHistorySourceTitle must reset to page 1.
-		f.urlResponses["/api/me/rates/history"] = meHistoryResponse("USD/KZT", 1, 20, int64(len(items)), items)
+		f.urlResponses["/api/v1/me/rates/history"] = meHistoryResponse("USD/KZT", 1, 20, int64(len(items)), items)
 		require.NoError(t, page.SetHistorySourceTitle(t.Context(), "Kaspi"))
 
 		st := page.State()
@@ -856,7 +856,7 @@ func TestMeSubscriptionsPage_SetHistorySourceTitle(t *testing.T) {
 		t.Parallel()
 		histBody := meHistoryResponse("USD/KZT", 1, 20, 0, nil)
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": histBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": histBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -870,7 +870,7 @@ func TestMeSubscriptionsPage_SetHistorySourceTitle(t *testing.T) {
 		t.Parallel()
 		histBody := meHistoryResponse("USD/KZT", 1, 20, 50, sampleHistoryItems())
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": histBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": histBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -898,7 +898,7 @@ func TestMeSubscriptionsPage_HistoryNextPage(t *testing.T) {
 		// Page 1 of 3 pages (20 rows, total 50).
 		histBody := meHistoryResponse("USD/KZT", 1, 20, 50, sampleHistoryItems())
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": histBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": histBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -906,7 +906,7 @@ func TestMeSubscriptionsPage_HistoryNextPage(t *testing.T) {
 		assert.Equal(t, 1, page.State().HistoryPage)
 
 		// Update fake to return page 2 data.
-		f.urlResponses["/api/me/rates/history"] = meHistoryResponse("USD/KZT", 2, 20, 50, sampleHistoryItems())
+		f.urlResponses["/api/v1/me/rates/history"] = meHistoryResponse("USD/KZT", 2, 20, 50, sampleHistoryItems())
 		require.NoError(t, page.HistoryNextPage(t.Context()))
 		assert.Equal(t, 2, page.State().HistoryPage)
 	})
@@ -916,7 +916,7 @@ func TestMeSubscriptionsPage_HistoryNextPage(t *testing.T) {
 		// 20 rows total on page 1 — cursor is at the end.
 		histBody := meHistoryResponse("USD/KZT", 1, 20, 20, sampleHistoryItems())
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": histBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": histBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -937,7 +937,7 @@ func TestMeSubscriptionsPage_HistoryPrevPage(t *testing.T) {
 		// Load page 2 first.
 		histBody := meHistoryResponse("USD/KZT", 2, 20, 50, sampleHistoryItems())
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": histBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": histBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -945,7 +945,7 @@ func TestMeSubscriptionsPage_HistoryPrevPage(t *testing.T) {
 		assert.Equal(t, 2, page.State().HistoryPage)
 
 		// Return page 1 data on next fetch.
-		f.urlResponses["/api/me/rates/history"] = meHistoryResponse("USD/KZT", 1, 20, 50, sampleHistoryItems())
+		f.urlResponses["/api/v1/me/rates/history"] = meHistoryResponse("USD/KZT", 1, 20, 50, sampleHistoryItems())
 		require.NoError(t, page.HistoryPrevPage(t.Context()))
 		assert.Equal(t, 1, page.State().HistoryPage)
 	})
@@ -954,7 +954,7 @@ func TestMeSubscriptionsPage_HistoryPrevPage(t *testing.T) {
 		t.Parallel()
 		histBody := meHistoryResponse("USD/KZT", 1, 20, 50, sampleHistoryItems())
 		f := &meSubsFakeFetcher{
-			urlResponses: map[string][]byte{"/api/me/rates/history": histBody},
+			urlResponses: map[string][]byte{"/api/v1/me/rates/history": histBody},
 		}
 		page := newMePage(f, "tok")
 		page.OpenPairModal("USD/KZT")
@@ -978,7 +978,7 @@ func TestMeSubscriptionsPage_SetPeriod(t *testing.T) {
 		}
 		f := &meSubsFakeFetcher{
 			urlResponses: map[string][]byte{
-				"/api/me/rates/chart": meChartResponse("30 days", pairs),
+				"/api/v1/me/rates/chart": meChartResponse("30 days", pairs),
 			},
 			jsonResponse: meSubsResponse(nil, 0, 1, 10),
 		}
@@ -1002,7 +1002,7 @@ func TestMeSubscriptionsPage_SetPeriod(t *testing.T) {
 		}
 		f := &meSubsFakeFetcher{
 			urlResponses: map[string][]byte{
-				"/api/me/rates/chart": meChartResponse("7 days", pairs),
+				"/api/v1/me/rates/chart": meChartResponse("7 days", pairs),
 			},
 			jsonResponse: meSubsResponse(nil, 0, 1, 10),
 		}
@@ -1016,7 +1016,7 @@ func TestMeSubscriptionsPage_SetPeriod(t *testing.T) {
 	t.Run("each AllowedChartPeriods value is accepted", func(t *testing.T) {
 		t.Parallel()
 		for _, period := range application.AllowedChartPeriods {
-			period := period
+
 			t.Run("", func(t *testing.T) {
 				t.Parallel()
 				pairs := []dto.MeChartPairRow{
@@ -1024,7 +1024,7 @@ func TestMeSubscriptionsPage_SetPeriod(t *testing.T) {
 				}
 				f := &meSubsFakeFetcher{
 					urlResponses: map[string][]byte{
-						"/api/me/rates/chart": meChartResponse("n days", pairs),
+						"/api/v1/me/rates/chart": meChartResponse("n days", pairs),
 					},
 					jsonResponse: meSubsResponse(nil, 0, 1, 10),
 				}
@@ -1039,7 +1039,7 @@ func TestMeSubscriptionsPage_SetPeriod(t *testing.T) {
 		t.Parallel()
 		f := &meSubsFakeFetcher{
 			urlErr: map[string]error{
-				"/api/me/rates/chart": errors.New("http 503"),
+				"/api/v1/me/rates/chart": errors.New("http 503"),
 			},
 			jsonResponse: meSubsResponse(nil, 0, 1, 10),
 		}

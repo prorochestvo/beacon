@@ -30,6 +30,10 @@ import (
 	"github.com/seilbekskindirov/beacon/internal"
 )
 
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
 var (
 	// BuildVersion is the application version string, injected at link time via -ldflags.
 	BuildVersion = "dev"
@@ -42,10 +46,6 @@ var (
 	// LogVerbosity is the minimum log level emitted by the logger.
 	LogVerbosity = internal.LogLevelWarning
 )
-
-func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
-}
 
 // run is the testable entry point. args is os.Args[1:]; out and errOut are the
 // stdout and stderr writers respectively.
@@ -60,7 +60,8 @@ func run(args []string, out, errOut io.Writer) int {
 	case "rulegen":
 		return runRulegen(args[1:], out, errOut)
 	case "audit":
-		return runAudit(args[1:], out, errOut)
+		// nil fetcher and nil seedFS select the real HTTP fetcher and os.DirFS(".").
+		return runAudit(args[1:], nil, nil, out, errOut)
 	case "--help", "-h", "help":
 		printUsage(out)
 		return 0

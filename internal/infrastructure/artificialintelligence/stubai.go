@@ -2,7 +2,7 @@ package artificialintelligence
 
 import (
 	"context"
-	"fmt"
+	"errors"
 )
 
 // stubAIDefaultResponse is a hard-coded JSON string conforming to
@@ -10,10 +10,6 @@ import (
 // service can run end-to-end without a real AI API key. schema_test.go asserts
 // this value stays aligned with the schema.
 const stubAIDefaultResponse = `{"rules":[{"method":"regex","pattern":"USD / KZT[\\s\\S]{1,500}?<div[^>]*>(\\d+\\.\\d+)</div>"}]}`
-
-func newStubAIClient(completeResponse string) (AIClient, error) {
-	return &stubClient{completeResponse: completeResponse}, nil
-}
 
 type stubClient struct {
 	completeResponse string
@@ -29,11 +25,15 @@ func (s *stubClient) Model() string {
 
 func (s *stubClient) CheckUP(_ context.Context) error {
 	if s.completeResponse == "" {
-		return fmt.Errorf("stubai: dummy response is empty")
+		return errors.New("stubai: dummy response is empty")
 	}
 	return nil
 }
 
 func (s *stubClient) Complete(_ context.Context, _, _ string) (string, error) {
 	return s.completeResponse, nil
+}
+
+func newStubAIClient(completeResponse string) (AIClient, error) {
+	return &stubClient{completeResponse: completeResponse}, nil
 }

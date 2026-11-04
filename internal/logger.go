@@ -1,8 +1,6 @@
 package internal
 
 import (
-	"bytes"
-	"fmt"
 	"log"
 	"os"
 	"path"
@@ -31,6 +29,7 @@ const (
 
 // NewLogger creates a new file-based logger that writes cyclic log files to logsDir.
 // name is used as the log file prefix (e.g. "collector", "web", "api").
+// The file records every entry at LogLevelInfo or above; LogLevelDebug is dropped.
 // Log entries at or above printerMinLevel are also printed to stdout.
 // If logsDir is empty, a default temp directory is used.
 // If name is empty, "app" is used as the prefix.
@@ -48,12 +47,30 @@ func NewLogger(logsDir, name string, printerMinLevel loginjector.LogLevel) (*log
 	}
 	defer log.Printf("logs folder: %s", folder)
 
-	fHNDL := loginjector.CyclicOverwritingFilesHandler(folder, name, defaultFileSize, 7)
+	// WithFileMode 0600: log lines carry chat_id (PII-adjacent per the data policy),
+	// so keep files owner-only. Applies to files the handler creates; an existing live
+	// file opened O_APPEND keeps its prior mode until the next rotation.
+	fHNDL := loginjector.RotatingFileHandler(folder, name, loginjector.WithMaxFileSize(defaultFileSize), loginjector.WithMaxFiles(7), loginjector.WithFileMode(0o600))
 
-	l, err := loginjector.NewLogger(LogLevelWarning, fHNDL)
-	if err != nil {
-		return nil, err
-	}
+	// The file is the sink that survives — it rotates, outlives the process, and is what
+	// gets read weeks later. Without a timestamp on it, an incident can only be located
+	// by line number, never dated or correlated with a deploy, a restart or a snapshot.
+	// Every issue investigated in this project so far cites line ranges for exactly that
+	// reason.
+	//
+	// RFC3339 rather than a bare clock time: it sorts lexicographically, matches how
+	// timestamps are stored everywhere else in this project, and carries its own UTC
+	// offset — so a host whose timezone changes says so in the log instead of quietly
+	// renumbering history.
+	//
+	// Info, not Warning: for a long-running unit the file is the only sink, since its
+	// stdout is the journal and the printer hook below filters that at printerMinLevel.
+	// A base level of Warning therefore discarded every WriterAs(LogLevelInfo) line a
+	// component was handed — cmd/web's HTTP access log was never written once and the
+	// collector's maintenance report never landed, both looking wired the whole time.
+	// Debug staying below the bar is what bounds the volume; stdout is unaffected,
+	// because the printer is a set of exact-level hooks and hooks ignore this level.
+	l := loginjector.NewLogger(LogLevelInfo, loginjector.TimestampedHandler(fHNDL, loginjector.WithTimeLayout(time.RFC3339)))
 
 	var printerLevels []loginjector.LogLevel
 	for _, lvl := range []loginjector.LogLevel{LogLevelDebug, LogLevelInfo, LogLevelWarning, LogLevelError, LogLevelSevere, LogLevelCritical} {
@@ -62,13 +79,17 @@ func NewLogger(logsDir, name string, printerMinLevel loginjector.LogLevel) (*log
 		}
 	}
 	if len(printerLevels) > 0 {
-		_ = l.Hook(&printer{}, printerLevels[0], printerLevels[1:]...)
+		_ = l.Hook(loginjector.TimestampedPrintHandler(loginjector.WithTimeLayout(time.RFC3339)), printerLevels[0], printerLevels[1:]...)
 	}
 
-	log.SetOutput(l.WriterAs(LogLevelWarning))
-	log.SetFlags(0) // timestamp is added by printer; avoid duplicating it
+	SetRuntimeDetailsProvider()
 
-	return l, err
+	log.SetOutput(l.WriterAs(LogLevelWarning))
+	// Both sinks now timestamp at the handler, so the standard logger must not add its
+	// own or every line carries two.
+	log.SetFlags(0)
+
+	return l, nil
 }
 
 // ParseLogLevel converts a string name to a LogLevel constant.
@@ -89,17 +110,4 @@ func ParseLogLevel(s string) loginjector.LogLevel {
 	default:
 		return LogLevelInfo
 	}
-}
-
-type printer struct{}
-
-func (p *printer) Write(msg []byte) (n int, err error) {
-	s := string(bytes.TrimSpace(msg))
-	if len(s) == 0 {
-		return 0, nil
-	}
-	items := strings.Split(s, "\n")
-	s = strings.Join(items, "\n                    ")
-	_, _ = fmt.Fprintf(os.Stdout, "%s %s\n", time.Now().Format("2006/01/02 15:04:05"), s)
-	return len(msg), nil
 }

@@ -28,14 +28,6 @@ var ErrSourceNotFound = errors.New("rulegen: source not found")
 // was made and none produced a rule that executed against the live body.
 var ErrAttemptsExhausted = errors.New("rulegen: all attempts exhausted")
 
-// Fetcher performs HTTP GETs and returns the raw response body. rulegen defines
-// its own narrow interface rather than importing sourceaudit.Fetcher to avoid a
-// cross-application dependency.
-// headers are per-source overrides forwarded from RateSourceOptions.Headers; nil is safe.
-type Fetcher interface {
-	Fetch(ctx context.Context, url string, headers map[string]string) ([]byte, error)
-}
-
 // Result holds the outcome of a successful Generate call.
 type Result struct {
 	// Source is the persisted rate source with its Rules and RuleMetadata updated.
@@ -64,12 +56,6 @@ type Generator struct {
 	maxPrimary         int
 	maxFallback        int
 	logger             io.Writer
-}
-
-// rateSourceRepository is the minimal persistence interface the generator needs.
-type rateSourceRepository interface {
-	ObtainRateSourceByName(ctx context.Context, name string) (*domain.RateSource, error)
-	RetainRateSource(ctx context.Context, record *domain.RateSource) error
 }
 
 // NewGenerator constructs a Generator. maxPrimaryAttempts and
@@ -163,13 +149,13 @@ func (g *Generator) Generate(ctx context.Context, sourceName string, forceFallba
 		)
 	}
 
-	if err := validateSourceURL(src.URL); err != nil {
-		return nil, fmt.Errorf("rulegen: source %q: %w", sourceName, err)
+	if urlErr := validateSourceURL(src.URL); urlErr != nil {
+		return nil, fmt.Errorf("rulegen: source %q: %w", sourceName, urlErr)
 	}
 
-	rawBody, err := activeFetcher.Fetch(ctx, src.URL, src.Options.Headers)
-	if err != nil {
-		return nil, fmt.Errorf("rulegen: fetch %s: %w", src.URL, err)
+	rawBody, fetchErr := activeFetcher.Fetch(ctx, src.URL, src.Options.Headers)
+	if fetchErr != nil {
+		return nil, fmt.Errorf("rulegen: fetch %s: %w", src.URL, fetchErr)
 	}
 
 	// Locate's co-location guard requires a currency anchor within
@@ -390,6 +376,20 @@ func (g *Generator) buildUserMessage(src *domain.RateSource, body []byte, origin
 	return b.String()
 }
 
+// Fetcher performs HTTP GETs and returns the raw response body. rulegen defines
+// its own narrow interface rather than importing sourceaudit.Fetcher to avoid a
+// cross-application dependency.
+// headers are per-source overrides forwarded from RateSourceOptions.Headers; nil is safe.
+type Fetcher interface {
+	Fetch(ctx context.Context, url string, headers map[string]string) ([]byte, error)
+}
+
+// rateSourceRepository is the minimal persistence interface the generator needs.
+type rateSourceRepository interface {
+	ObtainRateSourceByName(ctx context.Context, name string) (*domain.RateSource, error)
+	RetainRateSource(ctx context.Context, record *domain.RateSource) error
+}
+
 // transcriptEntry records one failed attempt for inclusion in the next prompt.
 type transcriptEntry struct {
 	Attempt int
@@ -486,7 +486,7 @@ func truncate(s string, maxLen int) string {
 // rejected too.
 func validateSourceURL(rawURL string) error {
 	if rawURL == "" {
-		return fmt.Errorf("source URL must not be empty")
+		return errors.New("source URL must not be empty")
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {

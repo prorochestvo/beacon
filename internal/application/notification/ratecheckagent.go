@@ -10,9 +10,26 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
+
+// RateCheckAgent reads all sources and subscriptions from the DB, evaluates which
+// notifications are due, builds alert messages, and queues them as RateUserEvents.
+// One-shot: runs to completion per invocation, decoupled from data collection.
+//
+// rateUserProfileRepository is nil-safe: when not injected, timestamps render in
+// UTC; when injected, each user's notifications use their stored IANA timezone,
+// with UTC fallback on lookup failure / unknown zone.
+type RateCheckAgent struct {
+	rateSourceRepository           rateSourceRepository
+	rateValueRepository            rateValueRepository
+	rateUserSubscriptionRepository rateUserSubscriptionRepository
+	rateUserEventRepository        rateCheckEventRepository
+	rateUserProfileRepository      rateUserProfileRepository
+	logger                         io.Writer
+}
 
 // NewRateCheckAgent constructs a RateCheckAgent. All repository arguments are required
 // except rRateUserProfile, which is optional — when nil, every notification renders in
@@ -41,48 +58,6 @@ func NewRateCheckAgent(
 	}, nil
 }
 
-// RateCheckAgent reads all sources and subscriptions from the DB, evaluates which
-// notifications are due, builds alert messages, and queues them as RateUserEvents.
-// One-shot: runs to completion per invocation, decoupled from data collection.
-//
-// rateUserProfileRepository is nil-safe: when not injected, timestamps render in
-// UTC; when injected, each user's notifications use their stored IANA timezone,
-// with UTC fallback on lookup failure / unknown zone.
-type RateCheckAgent struct {
-	rateSourceRepository           rateSourceRepository
-	rateValueRepository            rateValueRepository
-	rateUserSubscriptionRepository rateUserSubscriptionRepository
-	rateUserEventRepository        rateCheckEventRepository
-	rateUserProfileRepository      rateUserProfileRepository
-	logger                         io.Writer
-}
-
-type rateSourceRepository interface {
-	ObtainAllRateSources(context.Context) ([]domain.RateSource, error)
-}
-
-type rateValueRepository interface {
-	ObtainLastNRateValuesBySourceName(context.Context, string, int64) ([]domain.RateValue, error)
-}
-
-type rateUserSubscriptionRepository interface {
-	ObtainRateUserSubscriptionsBySource(context.Context, string) ([]domain.RateUserSubscription, error)
-	RetainRateUserSubscription(context.Context, *domain.RateUserSubscription) error
-}
-
-// rateCheckEventRepository is intentionally narrower than rateUserEventRepository
-// used by RateDispatchAgent — each type declares only what it needs.
-type rateCheckEventRepository interface {
-	RetainRateUserEvent(context.Context, *domain.RateUserEvent) error
-}
-
-// rateUserProfileRepository looks up the per-user timezone preference.
-// Implementations return (nil, internal.ErrNotFound) when no row exists — a
-// normal absence, not an error; the agent treats it as "use UTC".
-type rateUserProfileRepository interface {
-	ObtainRateUserProfileByUserID(context.Context, domain.UserType, string) (*domain.RateUserProfile, error)
-}
-
 // Run iterates every rate source, checks active subscriptions, and queues alert events
 // for any subscription whose notification condition is currently satisfied.
 //
@@ -96,7 +71,7 @@ type rateUserProfileRepository interface {
 func (a *RateCheckAgent) Run(ctx context.Context) error {
 	sources, err := a.rateSourceRepository.ObtainAllRateSources(ctx)
 	if err != nil {
-		return errors.Join(err, internal.NewTraceError())
+		return errors.Join(err, loginjector.NewTraceError())
 	}
 	if len(sources) == 0 {
 		return nil
@@ -114,7 +89,7 @@ func (a *RateCheckAgent) Run(ctx context.Context) error {
 	for _, source := range sources {
 		values, err := a.rateValueRepository.ObtainLastNRateValuesBySourceName(ctx, source.Name, 1)
 		if err != nil {
-			errs[source.Name] = errors.Join(errs[source.Name], errors.Join(err, internal.NewTraceError()))
+			errs[source.Name] = errors.Join(errs[source.Name], errors.Join(err, loginjector.NewTraceError()))
 			continue
 		}
 		if len(values) == 0 {
@@ -124,7 +99,7 @@ func (a *RateCheckAgent) Run(ctx context.Context) error {
 
 		subscriptions, err := a.rateUserSubscriptionRepository.ObtainRateUserSubscriptionsBySource(ctx, source.Name)
 		if err != nil {
-			errs[source.Name] = errors.Join(errs[source.Name], errors.Join(err, internal.NewTraceError()))
+			errs[source.Name] = errors.Join(errs[source.Name], errors.Join(err, loginjector.NewTraceError()))
 			continue
 		}
 
@@ -137,7 +112,7 @@ func (a *RateCheckAgent) Run(ctx context.Context) error {
 
 			ok, err := sub.IsDue(now, delta)
 			if err != nil {
-				errs[source.Name] = errors.Join(errs[source.Name], errors.Join(err, internal.NewTraceError()))
+				errs[source.Name] = errors.Join(errs[source.Name], errors.Join(err, loginjector.NewTraceError()))
 				continue
 			}
 			if !ok {
@@ -153,7 +128,7 @@ func (a *RateCheckAgent) Run(ctx context.Context) error {
 			// the bucket-fold below so a sub collapsing into an existing bucket still advances.
 			sub.LatestNotifiedRate = currentValue
 			if retainErr := a.rateUserSubscriptionRepository.RetainRateUserSubscription(ctx, &sub); retainErr != nil {
-				errs[source.Name] = errors.Join(errs[source.Name], errors.Join(retainErr, internal.NewTraceError()))
+				errs[source.Name] = errors.Join(errs[source.Name], errors.Join(retainErr, loginjector.NewTraceError()))
 			}
 
 			if sub.UserType != domain.UserTypeTelegram {
@@ -294,6 +269,36 @@ var triggerOrder = map[domain.SubscriptionConditionType]int{
 	domain.ConditionTypeInterval: 1,
 	domain.ConditionTypeDaily:    2,
 	domain.ConditionTypeCron:     3,
+}
+
+// house pattern: the agents happen to need the same method today and are free to
+// diverge without touching each other.
+//
+//nolint:iface // consumer-side interfaces declared at the point of use, which is the
+type rateSourceRepository interface {
+	ObtainAllRateSources(context.Context) ([]domain.RateSource, error)
+}
+
+type rateValueRepository interface {
+	ObtainLastNRateValuesBySourceName(context.Context, string, int64) ([]domain.RateValue, error)
+}
+
+type rateUserSubscriptionRepository interface {
+	ObtainRateUserSubscriptionsBySource(context.Context, string) ([]domain.RateUserSubscription, error)
+	RetainRateUserSubscription(context.Context, *domain.RateUserSubscription) error
+}
+
+// rateCheckEventRepository is intentionally narrower than rateUserEventRepository
+// used by RateDispatchAgent — each type declares only what it needs.
+type rateCheckEventRepository interface {
+	RetainRateUserEvent(context.Context, *domain.RateUserEvent) error
+}
+
+// rateUserProfileRepository looks up the per-user timezone preference.
+// Implementations return (nil, internal.ErrNotFound) when no row exists — a
+// normal absence, not an error; the agent treats it as "use UTC".
+type rateUserProfileRepository interface {
+	ObtainRateUserProfileByUserID(context.Context, domain.UserType, string) (*domain.RateUserProfile, error)
 }
 
 // dedupBucket holds one alert and the collapsed trigger values per condition type

@@ -9,33 +9,30 @@ import (
 	"time"
 )
 
-// inspectorTimeout is the whole-sweep budget for a single Agent.CheckUp call.
-// Any dependency that does not respond within this window is reported as failing.
-const inspectorTimeout = 3 * time.Second
-
-// Inspector is the contract every health-checked dependency must satisfy.
-// Name returns a stable, unique label shown in the /health/check report.
-// CheckUP performs a real, cheap, read-only probe and returns nil on success
-// or the failure reason as an error.
-type Inspector interface {
-	Name() string
-	CheckUP(ctx context.Context) error
-}
-
-// inspectorEntry pairs an Inspector with an advisory flag. An advisory inspector's
-// failure is reported in the /health/check component map but does not flip the
-// aggregate healthy flag, so a third-party outage cannot fail the deploy health-gate.
-type inspectorEntry struct {
-	inspector Inspector
-	advisory  bool
-}
-
 // Agent runs all registered inspectors under a single bounded context timeout.
 // Inspectors registered as critical (the default) flip the aggregate healthy flag
 // on failure; advisory inspectors are reported but do not affect the aggregate.
 type Agent struct {
 	entries []inspectorEntry
 	timeout time.Duration
+}
+
+// NewAgentWithAdvisory constructs an Agent with separate critical and advisory
+// inspector slices. Critical inspector failures set healthy=false; advisory
+// inspector failures appear in the report but leave healthy unaffected.
+// When timeout is zero or negative, inspectorTimeout (3 s) is used.
+func NewAgentWithAdvisory(timeout time.Duration, critical, advisory []Inspector) *Agent {
+	if timeout <= 0 {
+		timeout = inspectorTimeout
+	}
+	entries := make([]inspectorEntry, 0, len(critical)+len(advisory))
+	for _, insp := range critical {
+		entries = append(entries, inspectorEntry{inspector: insp, advisory: false})
+	}
+	for _, insp := range advisory {
+		entries = append(entries, inspectorEntry{inspector: insp, advisory: true})
+	}
+	return &Agent{entries: entries, timeout: timeout}
 }
 
 // NewAgent constructs an Agent where all inspectors are critical.
@@ -47,24 +44,6 @@ func NewAgent(timeout time.Duration, inspectors ...Inspector) *Agent {
 	entries := make([]inspectorEntry, len(inspectors))
 	for i, insp := range inspectors {
 		entries[i] = inspectorEntry{inspector: insp, advisory: false}
-	}
-	return &Agent{entries: entries, timeout: timeout}
-}
-
-// NewAgentWithAdvisory constructs an Agent with separate critical and advisory
-// inspector slices. Critical inspector failures set healthy=false; advisory
-// inspector failures appear in the report but leave healthy unaffected.
-// When timeout is zero or negative, inspectorTimeout (3 s) is used.
-func NewAgentWithAdvisory(timeout time.Duration, critical []Inspector, advisory []Inspector) *Agent {
-	if timeout <= 0 {
-		timeout = inspectorTimeout
-	}
-	entries := make([]inspectorEntry, 0, len(critical)+len(advisory))
-	for _, insp := range critical {
-		entries = append(entries, inspectorEntry{inspector: insp, advisory: false})
-	}
-	for _, insp := range advisory {
-		entries = append(entries, inspectorEntry{inspector: insp, advisory: true})
 	}
 	return &Agent{entries: entries, timeout: timeout}
 }
@@ -97,12 +76,6 @@ func (a *Agent) CheckUp(ctx context.Context) (healthy bool, report map[string]st
 	return healthy, report
 }
 
-// dbPinger is the subset of *sqlitedb.SQLiteClient used by DBInspector.
-// Defined here so tests can substitute a fake without importing the concrete type.
-type dbPinger interface {
-	Ping(ctx context.Context) error
-}
-
 // DBInspector wraps a SQLite client and adapts it to the Inspector interface.
 // It delegates to the client's Ping method, which performs a PingContext followed
 // by a SELECT 1 inside a rolled-back transaction.
@@ -121,12 +94,6 @@ func (d *DBInspector) Name() string { return "sqlite" }
 // CheckUP delegates to the underlying Ping.
 func (d *DBInspector) CheckUP(ctx context.Context) error {
 	return d.client.Ping(ctx)
-}
-
-// botPinger is the subset of *telegrambot.TelegramBotClient used by TelegramInspector.
-// Defined here so tests can substitute a fake without importing the concrete type.
-type botPinger interface {
-	Ping(ctx context.Context) error
 }
 
 // TelegramInspector wraps a Telegram bot client and adapts it to the Inspector interface.
@@ -148,4 +115,43 @@ func (t *TelegramInspector) Name() string { return "telegram" }
 // CheckUP delegates to the underlying Ping.
 func (t *TelegramInspector) CheckUP(ctx context.Context) error {
 	return t.client.Ping(ctx)
+}
+
+// Inspector is the contract every health-checked dependency must satisfy.
+// Name returns a stable, unique label shown in the /health/check report.
+// CheckUP performs a real, cheap, read-only probe and returns nil on success
+// or the failure reason as an error.
+type Inspector interface {
+	Name() string
+	CheckUP(ctx context.Context) error
+}
+
+// inspectorTimeout is the whole-sweep budget for a single Agent.CheckUp call.
+// Any dependency that does not respond within this window is reported as failing.
+const inspectorTimeout = 3 * time.Second
+
+// inspectorEntry pairs an Inspector with an advisory flag. An advisory inspector's
+// failure is reported in the /health/check component map but does not flip the
+// aggregate healthy flag, so a third-party outage cannot fail the deploy health-gate.
+type inspectorEntry struct {
+	inspector Inspector
+	advisory  bool
+}
+
+// dbPinger is the subset of *sqlitedb.SQLiteClient used by DBInspector.
+// Defined here so tests can substitute a fake without importing the concrete type.
+// must do and the other what a bot must, and merging them would make a change to
+// either one silently bind the other.
+//
+//nolint:iface // identical by coincidence, not by contract: one names what a database
+type dbPinger interface {
+	Ping(ctx context.Context) error
+}
+
+// botPinger is the subset of *telegrambot.TelegramBotClient used by TelegramInspector.
+// Defined here so tests can substitute a fake without importing the concrete type.
+//
+//nolint:iface // see dbPinger above
+type botPinger interface {
+	Ping(ctx context.Context) error
 }

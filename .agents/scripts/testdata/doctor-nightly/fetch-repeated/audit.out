@@ -1,0 +1,9 @@
+name          | url                      | side | value  | status
+--------------+--------------------------+------+--------+-----------
+KZ_OK_USD_KZT | https://ok.example/rates | BID  | 451.00 | OK
+KZ_A_USD_KZT  | https://a.example/rates  | BID  |        | FETCH_ERROR
+
+audited 2 sources across 2 URLs: 1 OK, 1 MISS
+
+MISS DETAILS:
+KZ_A_USD_KZT	FETCH_ERROR	do request: context deadline exceeded

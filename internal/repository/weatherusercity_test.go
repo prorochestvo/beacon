@@ -50,10 +50,10 @@ func TestWeatherUserCityRepository_RetainWeatherUserCity(t *testing.T) {
 		assert.Equal(t, "Asia/Almaty", got.Timezone)
 		assert.Equal(t, "Kazakhstan", got.Country)
 		assert.Equal(t, "Almaty", got.Admin1)
-		assert.Nil(t, got.GismeteoCityID)
 		assert.Equal(t, domain.WeatherNotifyMorningSummary, got.NotifyKind)
 		assert.Equal(t, 7, got.NotifyHour)
 		assert.True(t, got.LastNotifiedAt.IsZero())
+		assert.False(t, got.AlertLatched, "a fresh insert must default alert_latched to armed (false)")
 		assert.False(t, got.CreatedAt.IsZero())
 		assert.False(t, got.UpdatedAt.IsZero())
 	})
@@ -104,27 +104,98 @@ func TestWeatherUserCityRepository_RetainWeatherUserCity(t *testing.T) {
 		assert.Equal(t, 9, found.NotifyHour)
 	})
 
-	t.Run("stores and retrieves gismeteo_city_id", func(t *testing.T) {
+	t.Run("re-subscribe on conflict preserves an already-latched alert_latched", func(t *testing.T) {
 		t.Parallel()
 		db := stubSQLiteDB(t)
 		repo, err := NewWeatherUserCityRepository(db)
 		require.NoError(t, err)
 
-		gisID := 12345
 		city := &domain.WeatherUserCity{
 			UserType:       domain.UserTypeTelegram,
-			UserID:         "u3",
-			LocationID:     "loc3",
+			UserID:         "u-relatch",
+			LocationID:     "loc-relatch",
 			Timezone:       "UTC",
-			NotifyKind:     domain.WeatherNotifyMorningSummary,
-			GismeteoCityID: &gisID,
+			NotifyKind:     domain.WeatherNotifyAlertFrost,
+			ConditionValue: "0",
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
+		require.NoError(t, repo.SetWeatherAlertLatched(t.Context(), city.ID, true))
+
+		// Re-subscribe (ON CONFLICT update) with the same unique key.
+		resubscribe := &domain.WeatherUserCity{
+			UserType:       domain.UserTypeTelegram,
+			UserID:         "u-relatch",
+			LocationID:     "loc-relatch",
+			Timezone:       "UTC",
+			NotifyKind:     domain.WeatherNotifyAlertFrost,
+			ConditionValue: "-5",
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), resubscribe))
+		assert.Equal(t, city.ID, resubscribe.ID, "re-subscribe must update the original row")
+
+		got, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.True(t, got.AlertLatched, "alert_latched is absent from RetainWeatherUserCity's ON CONFLICT DO UPDATE SET clause, so a re-subscribe must not clobber it")
+	})
+
+	t.Run("alert_latched true is persisted on insert", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		city := &domain.WeatherUserCity{
+			UserType:     domain.UserTypeTelegram,
+			UserID:       "u-prelatch",
+			LocationID:   "loc-prelatch",
+			Timezone:     "UTC",
+			NotifyKind:   domain.WeatherNotifyAlertThaw,
+			AlertLatched: true,
 		}
 		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
 
 		got, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
 		require.NoError(t, err)
-		require.NotNil(t, got.GismeteoCityID)
-		assert.Equal(t, gisID, *got.GismeteoCityID)
+		assert.True(t, got.AlertLatched, "a fresh insert must persist AlertLatched=true when the caller sets it (e.g. the forced thaw row)")
+	})
+
+	t.Run("re-subscribe does not overwrite alert_latched even when the payload sets it true", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		city := &domain.WeatherUserCity{
+			UserType:   domain.UserTypeTelegram,
+			UserID:     "u-armed",
+			LocationID: "loc-armed",
+			Timezone:   "UTC",
+			NotifyKind: domain.WeatherNotifyAlertThaw,
+			// AlertLatched omitted (false): simulates a row that has re-armed since it
+			// was first created latched.
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
+
+		before, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		require.False(t, before.AlertLatched)
+
+		// A re-subscribe / ensure-thaw retain on the same unique key, requesting
+		// AlertLatched=true, must not stomp the row's real (re-armed) latch state —
+		// alert_latched is insert-only and absent from the ON CONFLICT SET clause.
+		resubscribe := &domain.WeatherUserCity{
+			UserType:     domain.UserTypeTelegram,
+			UserID:       "u-armed",
+			LocationID:   "loc-armed",
+			Timezone:     "UTC",
+			NotifyKind:   domain.WeatherNotifyAlertThaw,
+			AlertLatched: true,
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), resubscribe))
+
+		got, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.False(t, got.AlertLatched, "ON CONFLICT must never write alert_latched, regardless of what the incoming payload requests")
 	})
 
 	t.Run("condition_value round-trips for alert_heat", func(t *testing.T) {
@@ -190,7 +261,7 @@ func TestWeatherUserCityRepository_RetainWeatherUserCity(t *testing.T) {
 
 		got, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
 		require.NoError(t, err)
-		assert.Equal(t, "", got.ConditionValue)
+		assert.Empty(t, got.ConditionValue)
 		assert.Equal(t, domain.WeatherNotifyAlertThunderstorm, got.NotifyKind)
 	})
 
@@ -284,7 +355,7 @@ func TestWeatherUserCityRepository_ObtainWeatherUserCityByID(t *testing.T) {
 
 		got, err := repo.ObtainWeatherUserCityByID(t.Context(), "nonexistent")
 		require.Nil(t, got)
-		require.True(t, errors.Is(err, internal.ErrNotFound))
+		require.ErrorIs(t, err, internal.ErrNotFound)
 	})
 }
 
@@ -310,7 +381,7 @@ func TestWeatherUserCityRepository_RemoveWeatherUserCity(t *testing.T) {
 
 		got, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
 		require.Nil(t, got)
-		require.True(t, errors.Is(err, internal.ErrNotFound))
+		require.ErrorIs(t, err, internal.ErrNotFound)
 	})
 
 	t.Run("nil record returns error", func(t *testing.T) {
@@ -319,6 +390,70 @@ func TestWeatherUserCityRepository_RemoveWeatherUserCity(t *testing.T) {
 		repo, err := NewWeatherUserCityRepository(db)
 		require.NoError(t, err)
 		require.Error(t, repo.RemoveWeatherUserCity(t.Context(), nil))
+	})
+}
+
+func TestWeatherUserCityRepository_RemoveWeatherUserCitiesByLocation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("deletes every row for the target location, other location and other user survive", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		for _, kind := range []domain.WeatherNotifyKind{
+			domain.WeatherNotifyMorningSummary,
+			domain.WeatherNotifyAlertHeat,
+			domain.WeatherNotifyAlertThaw,
+		} {
+			require.NoError(t, repo.RetainWeatherUserCity(t.Context(), &domain.WeatherUserCity{
+				UserType:   domain.UserTypeTelegram,
+				UserID:     "target-user",
+				LocationID: "target-loc",
+				Timezone:   "UTC",
+				NotifyKind: kind,
+			}))
+		}
+
+		otherLocation := &domain.WeatherUserCity{
+			UserType:   domain.UserTypeTelegram,
+			UserID:     "target-user",
+			LocationID: "other-loc",
+			Timezone:   "UTC",
+			NotifyKind: domain.WeatherNotifyMorningSummary,
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), otherLocation))
+
+		otherUser := &domain.WeatherUserCity{
+			UserType:   domain.UserTypeTelegram,
+			UserID:     "other-user",
+			LocationID: "target-loc",
+			Timezone:   "UTC",
+			NotifyKind: domain.WeatherNotifyMorningSummary,
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), otherUser))
+
+		require.NoError(t, repo.RemoveWeatherUserCitiesByLocation(t.Context(), domain.UserTypeTelegram, "target-user", "target-loc"))
+
+		remaining, err := repo.ObtainWeatherUserCitiesByUserID(t.Context(), domain.UserTypeTelegram, "target-user")
+		require.NoError(t, err)
+		require.Len(t, remaining, 1, "only the other-location row for target-user must survive")
+		assert.Equal(t, "other-loc", remaining[0].LocationID)
+
+		otherUserRows, err := repo.ObtainWeatherUserCitiesByUserID(t.Context(), domain.UserTypeTelegram, "other-user")
+		require.NoError(t, err)
+		require.Len(t, otherUserRows, 1, "another user's row at the same location_id must survive")
+	})
+
+	t.Run("no matching rows returns ErrNotFound", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		err = repo.RemoveWeatherUserCitiesByLocation(t.Context(), domain.UserTypeTelegram, "nobody", "nowhere")
+		require.ErrorIs(t, err, internal.ErrNotFound)
 	})
 }
 
@@ -447,6 +582,80 @@ func TestWeatherUserCityRepository_AdvanceLastNotifiedAt(t *testing.T) {
 	})
 }
 
+func TestWeatherUserCityRepository_SetWeatherAlertLatched(t *testing.T) {
+	t.Parallel()
+
+	t.Run("sets and clears the latch without touching updated_at or last_notified_at", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		city := &domain.WeatherUserCity{
+			UserType:       domain.UserTypeTelegram,
+			UserID:         "u-latch",
+			LocationID:     "loc-latch",
+			Timezone:       "UTC",
+			NotifyKind:     domain.WeatherNotifyAlertFrost,
+			ConditionValue: "0",
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
+
+		before, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		require.False(t, before.AlertLatched)
+
+		require.NoError(t, repo.SetWeatherAlertLatched(t.Context(), city.ID, true))
+		afterSet, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.True(t, afterSet.AlertLatched)
+		assert.Equal(t, before.UpdatedAt.Format(time.RFC3339), afterSet.UpdatedAt.Format(time.RFC3339),
+			"the latch is system state, not a user edit: updated_at must not change")
+		assert.True(t, afterSet.LastNotifiedAt.IsZero(), "a latch-only write must not touch last_notified_at")
+
+		require.NoError(t, repo.SetWeatherAlertLatched(t.Context(), city.ID, false))
+		afterClear, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.False(t, afterClear.AlertLatched)
+		assert.Equal(t, before.UpdatedAt.Format(time.RFC3339), afterClear.UpdatedAt.Format(time.RFC3339))
+		assert.True(t, afterClear.LastNotifiedAt.IsZero())
+	})
+}
+
+func TestWeatherUserCityRepository_MarkWeatherAlertFired(t *testing.T) {
+	t.Parallel()
+
+	t.Run("latches and records the forecast_date fire cursor without touching updated_at", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		city := &domain.WeatherUserCity{
+			UserType:       domain.UserTypeTelegram,
+			UserID:         "u-fired",
+			LocationID:     "loc-fired",
+			Timezone:       "UTC",
+			NotifyKind:     domain.WeatherNotifyAlertFrost,
+			ConditionValue: "0",
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
+
+		before, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+
+		key, err := domain.ForecastDateKey("2026-01-15")
+		require.NoError(t, err)
+		require.NoError(t, repo.MarkWeatherAlertFired(t.Context(), city.ID, key))
+
+		got, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.True(t, got.AlertLatched)
+		assert.True(t, key.Equal(got.LastNotifiedAt), "last_notified_at must equal the stored forecast_date key")
+		assert.Equal(t, before.UpdatedAt.Format(time.RFC3339), got.UpdatedAt.Format(time.RFC3339))
+	})
+}
+
 func TestWeatherUserCityRepository_CheckUP(t *testing.T) {
 	t.Parallel()
 
@@ -462,5 +671,91 @@ func TestWeatherUserCityRepository_CheckUP(t *testing.T) {
 		t.Parallel()
 		repo := &WeatherUserCityRepository{db: &mockFailDB{err: errors.New("db unavailable")}}
 		require.Error(t, repo.CheckUP(t.Context()))
+	})
+}
+
+func TestWeatherUserCityRepository_SetWeatherNotifyState(t *testing.T) {
+	t.Parallel()
+
+	t.Run("stores and reads back the outlook signature", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		city := &domain.WeatherUserCity{
+			UserType:   domain.UserTypeTelegram,
+			UserID:     "u1",
+			LocationID: "loc1",
+			Timezone:   "UTC",
+			NotifyKind: domain.WeatherNotifyForecastOutlook,
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
+
+		stored, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.Empty(t, stored.NotifyState, "a new row has never been evaluated")
+
+		require.NoError(t, repo.SetWeatherNotifyState(t.Context(), city.ID, "o1:2026-08-23:R+"))
+
+		stored, err = repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "o1:2026-08-23:R+", stored.NotifyState)
+	})
+
+	t.Run("an evaluated-but-empty outlook is distinguishable from never evaluated", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		city := &domain.WeatherUserCity{
+			UserType:   domain.UserTypeTelegram,
+			UserID:     "u2",
+			LocationID: "loc2",
+			Timezone:   "UTC",
+			NotifyKind: domain.WeatherNotifyForecastOutlook,
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
+		require.NoError(t, repo.SetWeatherNotifyState(t.Context(), city.ID, "o1:"))
+
+		stored, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "o1:", stored.NotifyState)
+		assert.NotEmpty(t, stored.NotifyState)
+	})
+
+	t.Run("re-subscribing does not replay a digest the user has already read", func(t *testing.T) {
+		t.Parallel()
+		db := stubSQLiteDB(t)
+		repo, err := NewWeatherUserCityRepository(db)
+		require.NoError(t, err)
+
+		city := &domain.WeatherUserCity{
+			UserType:   domain.UserTypeTelegram,
+			UserID:     "u3",
+			LocationID: "loc3",
+			Timezone:   "UTC",
+			NotifyKind: domain.WeatherNotifyForecastOutlook,
+			NotifyHour: 7,
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), city))
+		require.NoError(t, repo.SetWeatherNotifyState(t.Context(), city.ID, "o1:2026-08-23:R+"))
+
+		// Same natural key, so this is the upsert path the "+ Add alert" form takes.
+		again := &domain.WeatherUserCity{
+			UserType:   domain.UserTypeTelegram,
+			UserID:     "u3",
+			LocationID: "loc3",
+			Timezone:   "UTC",
+			NotifyKind: domain.WeatherNotifyForecastOutlook,
+			NotifyHour: 9,
+		}
+		require.NoError(t, repo.RetainWeatherUserCity(t.Context(), again))
+
+		stored, err := repo.ObtainWeatherUserCityByID(t.Context(), city.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 9, stored.NotifyHour, "settings are rewritten")
+		assert.Equal(t, "o1:2026-08-23:R+", stored.NotifyState, "notification state is insert-only")
 	})
 }

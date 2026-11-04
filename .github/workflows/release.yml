@@ -6,6 +6,14 @@ name: release
 # VERSION_ID. NOTE: the PRIME environment also gates which tags may deploy; if its
 # policy is r_*, use r_X.Y.Z (widen it to r* to allow bare rX.Y.Z too).
 #
+# An s* tag runs the gate and nothing else: lint, the full suite, and a
+# production-shape build, then stop. No artifact is uploaded, no symlink moves,
+# no host is contacted. It exists because the full gate is not always runnable
+# locally — the dev machine is an 8 GB Pi with no swap and the kernel OOM-kills
+# golangci-lint under load — so `s_<anything>` is the way to run the real thing
+# on hardware that can. The deploy job guards on the leading r rather than
+# relying on the trigger, so the two can never be confused.
+#
 # Deploy model (see the release-layout convention): build the four binaries,
 # upload them into an immutable, never-reused artifacts/<VERSION_ID>/ dir, flip
 # the bin/release channel symlink, migrate + restart, and health-gate with an
@@ -15,6 +23,7 @@ on:
   push:
     tags:
       - 'r*'
+      - 's*'
 
 permissions:
   contents: read
@@ -28,10 +37,72 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: make lint
-      - run: make test
+      # Pinned to the version the Makefile names, so a release and a local run cannot
+      # disagree about what a finding is.
+      - run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+      # lint, not lint-new: a release is the whole tree shipping, so the whole tree is
+      # what gets linted. The diff-scoped run answered "what does this change add",
+      # which needed a base revision to diff against — and picking one for a tag was
+      # its own trap, because the default origin/dev lints history backwards the
+      # moment a tag is cut anywhere but dev's tip. Nothing needs a base now.
+      #
+      # On a tag cut from dev's tip this repeats ci.main.yml, which every commit
+      # already passed on its PR. It is here to catch a tag cut from somewhere
+      # unexpected, where that guarantee does not hold.
+      #
+      # Tee each step into a shared trace, matching ci.main.yml. Nothing in this job
+      # reads it today — the gate's failure notification was removed, see below —
+      # but keeping the two workflows' gate steps identical costs nothing and means
+      # the trace is already there if a reader is ever added.
+      - name: Lint
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
+          make lint
+      - name: Test
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
+          make test
+
+      # Production-shape build: CGO off, linux/amd64, the same artifacts a release
+      # ships. Catches "tests pass but the production build breaks" — build tags,
+      # race-only files, a missing wasm asset.
+      #
+      # s* only. An r* tag builds for real in the deploy job moments later, so
+      # running it here too would slow every release down to re-prove the same
+      # thing. This mirrors ci.main.yml's Sanity build, which an s* tag would
+      # otherwise be the only gate not to have.
+      - name: Sanity build
+        if: startsWith(github.ref_name, 's')
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/deploy_trace.log") 2>&1
+          mkdir -p ./cmd/web/static
+          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" ./cmd/web/static/wasm_exec.js
+          GOOS=js GOARCH=wasm go build -o ./cmd/web/static/app.wasm ./cmd/wasm
+          GOOS=linux GOARCH=amd64 go build -o ./build/webapp ./cmd/web
+          GOOS=linux GOARCH=amd64 go build -o ./build/collector ./cmd/collector
+          GOOS=linux GOARCH=amd64 go build -o ./build/notifier ./cmd/notifier
+          GOOS=linux GOARCH=amd64 go build -o ./build/migrator ./cmd/migrator
+
+      # No failure notification here, deliberately. One was added and then removed:
+      # the Telegram credentials live on the PRIME environment, which this job does
+      # not carry and must not — it runs `make test`, i.e. arbitrary project and
+      # dependency code, and PRIME holds SSH_PRIVATEKEY for the production host. The
+      # step therefore passed its own `[ -n "$TOKEN" ] || exit 0` guard and reported
+      # success while sending nothing, which is worse than an absent step: a reader
+      # scanning the job would conclude alerting was covered.
+      #
+      # A failed gate is not silent regardless. GitHub emails the actor who pushed
+      # the tag, and every release failure in this project's history has been a gate
+      # failure, so that is the channel that has always carried them. See #118.
 
   deploy:
+    # r* only. The trigger admits s* as well, and an s* tag must never reach a
+    # host: guarding here rather than on the trigger means the gate job is shared
+    # verbatim between the two, so what an s* tag proves is exactly what an r*
+    # tag will be held to.
+    if: startsWith(github.ref_name, 'r')
     environment: PRIME
     runs-on: ubuntu-latest
     needs: lint-and-test
@@ -74,8 +145,11 @@ jobs:
           APP_BUILD_OPTIONS: "-s -w -X 'main.BuildVersion=${{ github.ref_name }}' -X main.BuildTime=${{ steps.vid.outputs.build_time }} -X main.BuildHash=${{ steps.vid.outputs.commit_hash }}"
         run: |
           mkdir -p ./cmd/web/static ./build
-          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" ./cmd/web/static/wasm_exec.js
-          CGO_ENABLED=0 GOOS=js GOARCH=wasm go build -o ./cmd/web/static/app.wasm ./cmd/wasm
+          # make build-wasm, not the commands inline: this step used to restate them and
+          # left out the gzip, so app.wasm.gz was absent from the embedded FS and the
+          # server's precompressed path silently fell through to serving 4.59 MB raw.
+          # One definition means the omission cannot recur (#79).
+          make build-wasm
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${APP_BUILD_OPTIONS}" -o ./build/webapp    ./cmd/web
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${APP_BUILD_OPTIONS}" -o ./build/collector ./cmd/collector
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${APP_BUILD_OPTIONS}" -o ./build/notifier  ./cmd/notifier
@@ -142,6 +216,41 @@ jobs:
             fi
             $SSH "sudo journalctl -u beacon -n 50 --no-pager" || true
             exit 1
+          fi
+
+      # Nothing in this pipeline deploys configs/ — `make init` does, by hand, with root.
+      # A change to a systemd unit, an nginx snippet or the backup script therefore ships,
+      # passes CI, releases, and silently does not take effect. Snapshot compression lived
+      # in git for three weeks that way while the host kept writing uncompressed backups.
+      #
+      # Reporting is all this does. It never fails the deploy: shipping binaries is not
+      # made unsafe by a stale nginx snippet, and a blocking check here would create
+      # pressure to widen the CI user's privileges to fix it automatically — which is the
+      # boundary the whole release layout exists to hold.
+      - name: Report host config drift
+        if: always()
+        continue-on-error: true
+        run: |
+          # GitHub runs `run:` under `bash -e`, so a non-zero exit would abort the step
+          # before the status could be read. `|| status=$?` keeps the pipeline alive and
+          # lets drift be reported rather than swallowed.
+          status=0
+          SSH_CMD="ssh -p $SSH_HOSTPORT -i /tmp/deploy_key $SSH_USERNAME@$SSH_HOSTNAME" \
+            ./configs/config_drift.sh Makefile > "$RUNNER_TEMP/drift.txt" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/drift.txt"
+
+          {
+            echo "### Host configuration drift"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/drift.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$status" -eq 1 ]; then
+            echo "::warning title=Host config drift::The host is running configuration older than this repository. See the job summary; run 'make init' or copy the file across by hand."
+          elif [ "$status" -ne 0 ]; then
+            echo "::warning title=Config drift check failed::The drift check could not run. See the job summary."
           fi
 
       - name: Prune old artifacts

@@ -126,8 +126,7 @@ func RenderPublicPairModal(state application.PublicSubscriptionsState) string {
 	// Last-grab line: max timestamp across all series.
 	pt, hasGrab := latestPointAcrossSeries(row.Series)
 	if hasGrab {
-		var grabTime time.Time
-		grabTime = pt.Timestamp
+		grabTime := pt.Timestamp
 		fmt.Fprintf(&b,
 			`<div class="me-pair-modal-time">Last grab: %s</div>`,
 			dom.Escape(fmtDate(grabTime.Format(time.RFC3339))),

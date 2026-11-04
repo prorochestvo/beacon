@@ -68,7 +68,7 @@ func TestRateUserSubscriptionRepository_RetainRateUserSubscription(t *testing.T)
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM"+" "+rateUserSubscriptionTableName+
 				" WHERE "+rateUserSubscriptionUserTypeFieldName+" = ?"+
 				" AND "+rateUserSubscriptionUserIdFieldName+" = ?"+
@@ -94,7 +94,7 @@ func TestRateUserSubscriptionRepository_RetainRateUserSubscription(t *testing.T)
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM"+" "+rateUserSubscriptionTableName+
 				" WHERE "+rateUserSubscriptionUserTypeFieldName+" = ?"+
 				" AND "+rateUserSubscriptionUserIdFieldName+" = ?"+
@@ -121,7 +121,7 @@ func TestRateUserSubscriptionRepository_RetainRateUserSubscription(t *testing.T)
 
 		deltaThreshold, err := result[0].DeltaThreshold()
 		require.NoError(t, err)
-		require.Equal(t, 0.75, deltaThreshold)
+		require.InDelta(t, 0.75, deltaThreshold, 0.001)
 	})
 }
 
@@ -156,7 +156,7 @@ func TestRateUserSubscriptionRepository_RemoveRateUserSubscription(t *testing.T)
 		defer func(tx *sql.Tx) { require.NoError(t, tx.Rollback()) }(tx)
 
 		var count int
-		require.NoError(t, tx.QueryRow(
+		require.NoError(t, tx.QueryRowContext(t.Context(),
 			"SELECT COUNT(*) FROM"+" "+rateUserSubscriptionTableName+
 				" WHERE "+rateUserSubscriptionUserTypeFieldName+" = ?"+
 				" AND "+rateUserSubscriptionUserIdFieldName+" = ?"+
@@ -196,7 +196,7 @@ func TestRateUserSubscriptionRepository_ObtainRateUserSubscriptionByID(t *testin
 		require.Equal(t, sub.ConditionValue, got.ConditionValue)
 	})
 
-	t.Run("returns nil nil for unknown id", func(t *testing.T) {
+	t.Run("returns nil for unknown id", func(t *testing.T) {
 		t.Parallel()
 		got, err := r.ObtainRateUserSubscriptionByID(t.Context(), "no-such-id")
 		require.NoError(t, err)
@@ -237,7 +237,7 @@ func TestRateUserSubscriptionRepository_ObtainRateUserSubscriptionsByUserID(t *t
 			require.Equal(t, subs[i].SourceName, r.SourceName)
 			require.Equal(t, subs[i].ConditionType, r.ConditionType)
 			require.Equal(t, subs[i].ConditionValue, r.ConditionValue)
-			require.Equal(t, subs[i].LatestNotifiedRate, r.LatestNotifiedRate)
+			require.InDelta(t, subs[i].LatestNotifiedRate, r.LatestNotifiedRate, 0.001)
 			require.Equal(t, subs[i].CreatedAt.Format(time.RFC3339), r.CreatedAt.Format(time.RFC3339))
 		}
 	})
@@ -346,7 +346,7 @@ func TestRateUserSubscriptionRepository_ObtainSubscriptionSummaryBySource(t *tes
 		}
 
 		// Three sent events for that user.
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			require.NoError(t, eventRepo.RetainRateUserEvent(t.Context(), &domain.RateUserEvent{
 				UserType: domain.UserTypeTelegram, UserID: "u-multi", SourceName: "src-multi",
 				Message: "m", Status: domain.RateUserEventStatusSent,
@@ -374,7 +374,7 @@ func TestRateUserSubscriptionRepository_ObtainSubscriptionSummaryBySource(t *tes
 
 		// Each user has 3 'sent' events for src-join.
 		for _, uid := range []string{"u-join-1", "u-join-2"} {
-			for i := 0; i < 3; i++ {
+			for range 3 {
 				require.NoError(t, eventRepo.RetainRateUserEvent(t.Context(), &domain.RateUserEvent{
 					UserType: domain.UserTypeTelegram, UserID: uid, SourceName: "src-join",
 					Message: "m", Status: domain.RateUserEventStatusSent,
@@ -450,7 +450,7 @@ func TestRateUserSubscriptionRepository_ObtainBySourcePaged(t *testing.T) {
 	sourceName := "paged-source"
 	now := time.Now().UTC()
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		sub := &domain.RateUserSubscription{
 			UserType:       domain.UserTypeTelegram,
 			UserID:         fmt.Sprintf("user-%d", i),

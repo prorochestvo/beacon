@@ -5,23 +5,23 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/domain/identity"
 )
 
-// NewExecutionHistoryRepository returns a repository for the execution_history table.
-func NewExecutionHistoryRepository(db db) (*ExecutionHistoryRepository, error) {
-	return &ExecutionHistoryRepository{db: db}, nil
-}
-
 // ExecutionHistoryRepository persists and retrieves domain.ExecutionHistory records.
 type ExecutionHistoryRepository struct {
 	db db
+}
+
+// NewExecutionHistoryRepository returns a repository for the execution_history table.
+func NewExecutionHistoryRepository(db db) (*ExecutionHistoryRepository, error) {
+	return &ExecutionHistoryRepository{db: db}, nil
 }
 
 // Name returns the name of the underlying database table.
@@ -31,20 +31,20 @@ func (r *ExecutionHistoryRepository) Name() string { return executionHistoryTabl
 func (r *ExecutionHistoryRepository) CheckUP(ctx context.Context) error {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
 
-	count, err := executionHistoryCount(tx, ctx, ";")
+	count, err := executionHistoryCount(ctx, tx, ";")
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if count < 0 {
 		err = errors.New("unexpected result")
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -57,7 +57,7 @@ func (r *ExecutionHistoryRepository) CheckUP(ctx context.Context) error {
 func (r *ExecutionHistoryRepository) ObtainLastNExecutionHistoryBySourceName(ctx context.Context, sourceName string, limit int64, successOnly bool) ([]domain.ExecutionHistory, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	defer printRollbackError(tx)
@@ -67,9 +67,16 @@ func (r *ExecutionHistoryRepository) ObtainLastNExecutionHistoryBySourceName(ctx
 		whereClause += " AND " + executionHistorySuccessFieldName + " = 1"
 	}
 
-	rows, err := executionHistoryQueryContext(tx, ctx, "WHERE "+whereClause+" ORDER BY "+executionHistoryTimestampFieldName+" DESC LIMIT ?;", sourceName, limit)
+	// The id breaks ties on timestamp. One collector tick writes a row per source at the
+	// same second, and the union of two tiers is sorted rather than walked in index order,
+	// so a bare timestamp sort leaves rows in an order the planner is free to change
+	// between calls.
+	rows, err := executionHistoryQueryContext(ctx, tx, "WHERE "+whereClause+
+		" ORDER BY "+executionHistoryTimestampFieldName+" DESC, "+executionHistoryIdFieldName+" DESC"+
+		" LIMIT ?;",
+		sourceName, limit)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
@@ -88,7 +95,7 @@ func (r *ExecutionHistoryRepository) ObtainLatestExecutionHistoryBySources(ctx c
 
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
@@ -110,7 +117,7 @@ func (r *ExecutionHistoryRepository) ObtainLatestExecutionHistoryBySources(ctx c
 		executionHistoryTimestampFieldName + ",\n" +
 		"  ROW_NUMBER() OVER (PARTITION BY " + executionHistorySourceNameFieldName +
 		" ORDER BY " + executionHistoryTimestampFieldName + " DESC, " + executionHistoryIdFieldName + " DESC) AS rn\n" +
-		"  FROM " + executionHistoryTableName +
+		"  " + executionHistorySqlFrom(executionHistoryTableName) + "\n" +
 		"  WHERE " + executionHistorySourceNameFieldName + " IN (" + placeholders + ")\n" +
 		") AS ranked WHERE ranked.rn = 1;"
 
@@ -121,7 +128,7 @@ func (r *ExecutionHistoryRepository) ObtainLatestExecutionHistoryBySources(ctx c
 
 	dbRows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), internal.NewTraceError())
+		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
 	defer func() { err = errors.Join(err, dbRows.Close()) }()
 
@@ -132,13 +139,13 @@ func (r *ExecutionHistoryRepository) ObtainLatestExecutionHistoryBySources(ctx c
 		if scanErr := dbRows.Scan(
 			&item.ID, &item.SourceName, &item.Success, &item.Error, &timestamp,
 		); scanErr != nil {
-			return nil, errors.Join(scanErr, internal.NewTraceError())
+			return nil, errors.Join(scanErr, loginjector.NewTraceError())
 		}
 		item.Timestamp = time.Unix(timestamp, 0).UTC()
 		result[item.SourceName] = item
 	}
 	if err = dbRows.Err(); err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	return result, nil
 }
@@ -147,13 +154,13 @@ func (r *ExecutionHistoryRepository) ObtainLatestExecutionHistoryBySources(ctx c
 func (r *ExecutionHistoryRepository) ObtainExecutionHistoryErrorCount(ctx context.Context) (int64, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return 0, errors.Join(err, internal.NewStackTraceError())
+		return 0, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
-	count, err := executionHistoryCount(tx, ctx, "WHERE "+executionHistorySuccessFieldName+" = 0;")
+	count, err := executionHistoryCount(ctx, tx, "WHERE "+executionHistorySuccessFieldName+" = 0;")
 	if err != nil {
-		return 0, errors.Join(err, internal.NewTraceError())
+		return 0, errors.Join(err, loginjector.NewTraceError())
 	}
 
 	return count, nil
@@ -164,18 +171,21 @@ func (r *ExecutionHistoryRepository) ObtainExecutionHistoryErrorCount(ctx contex
 func (r *ExecutionHistoryRepository) ObtainLastNExecutionHistoryErrors(ctx context.Context, offset, limit int64) ([]domain.ExecutionHistory, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
+	// The id tie-break is what makes offset pagination stable here: one tick fails several
+	// sources at the same second, so ordering on the timestamp alone can repeat a row on one
+	// page and skip it on the next.
 	query := executionHistorySqlSelect +
 		"\nWHERE " + executionHistorySuccessFieldName + " = 0" +
-		" ORDER BY " + executionHistoryTimestampFieldName + " DESC" +
+		" ORDER BY " + executionHistoryTimestampFieldName + " DESC, " + executionHistoryIdFieldName + " DESC" +
 		" LIMIT ? OFFSET ?;"
 
 	dbRows, err := tx.QueryContext(ctx, query, limit, offset)
 	if err != nil {
-		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), internal.NewTraceError())
+		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
 	defer func() { err = errors.Join(err, dbRows.Close()) }()
 
@@ -186,10 +196,13 @@ func (r *ExecutionHistoryRepository) ObtainLastNExecutionHistoryErrors(ctx conte
 		if scanErr := dbRows.Scan(
 			&item.ID, &item.SourceName, &item.Success, &item.Error, &timestamp,
 		); scanErr != nil {
-			return nil, errors.Join(scanErr, internal.NewTraceError())
+			return nil, errors.Join(scanErr, loginjector.NewTraceError())
 		}
 		item.Timestamp = time.Unix(timestamp, 0).UTC()
 		items = append(items, item)
+	}
+	if iterErr := dbRows.Err(); iterErr != nil {
+		return nil, errors.Join(iterErr, loginjector.NewTraceError())
 	}
 
 	if items == nil {
@@ -198,11 +211,86 @@ func (r *ExecutionHistoryRepository) ObtainLastNExecutionHistoryErrors(ctx conte
 	return items, nil
 }
 
+// ObtainSourceCollectionHealth summarises every source that has ever run: when it last
+// succeeded, when it last ran at all, how many attempts have failed since that success,
+// and the most recent error message.
+//
+// Sources with no history at all are absent from the result rather than present with zero
+// values — a source that has never been attempted has not failed, and the caller must be
+// able to tell the two apart.
+//
+// This one reads the hot tier alone, unlike every other query here. Collection health is a
+// question about the last few hours against a tier bounded at 180 days; a source whose
+// last success predates that has a problem no alert threshold addresses, and unioning the
+// archive would make the correlated sub-selects below scan history that cannot change the
+// answer.
+func (r *ExecutionHistoryRepository) ObtainSourceCollectionHealth(ctx context.Context) ([]domain.SourceCollectionHealth, error) {
+	tx, err := r.db.ReadOnlyTransaction(ctx)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+	defer printRollbackError(tx)
+
+	// The aggregate establishes each source's last success and last run; the correlated
+	// sub-selects then answer "since that success" questions that an aggregate alone
+	// cannot, because they depend on the aggregate's own result.
+	//
+	// COALESCE on last_success makes the never-succeeded case fall out naturally: with no
+	// success to be after, every failure counts and the newest error is the newest error.
+	query := "SELECT s." + executionHistorySourceNameFieldName + ", s.last_success, s.last_run,\n" +
+		"  (SELECT COUNT(*) FROM " + executionHistoryTableName + " f\n" +
+		"    WHERE f." + executionHistorySourceNameFieldName + " = s." + executionHistorySourceNameFieldName + "\n" +
+		"      AND f." + executionHistorySuccessFieldName + " = 0\n" +
+		"      AND f." + executionHistoryTimestampFieldName + " > COALESCE(s.last_success, 0)) AS consecutive_failures,\n" +
+		"  COALESCE((SELECT e." + executionHistoryErrorFieldName + " FROM " + executionHistoryTableName + " e\n" +
+		"    WHERE e." + executionHistorySourceNameFieldName + " = s." + executionHistorySourceNameFieldName + "\n" +
+		"      AND e." + executionHistorySuccessFieldName + " = 0\n" +
+		"      AND e." + executionHistoryTimestampFieldName + " > COALESCE(s.last_success, 0)\n" +
+		"    ORDER BY e." + executionHistoryTimestampFieldName + " DESC, e." + executionHistoryIdFieldName + " DESC\n" +
+		"    LIMIT 1), '') AS last_error\n" +
+		"FROM (\n" +
+		"  SELECT " + executionHistorySourceNameFieldName + ",\n" +
+		"    MAX(CASE WHEN " + executionHistorySuccessFieldName + " = 1 THEN " + executionHistoryTimestampFieldName + " END) AS last_success,\n" +
+		"    MAX(" + executionHistoryTimestampFieldName + ") AS last_run\n" +
+		"  FROM " + executionHistoryTableName + "\n" +
+		"  GROUP BY " + executionHistorySourceNameFieldName + "\n" +
+		") AS s;"
+
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+
+	result := make([]domain.SourceCollectionHealth, 0, 64)
+	for rows.Next() {
+		var (
+			item        domain.SourceCollectionHealth
+			lastSuccess *int64
+			lastRun     *int64
+		)
+		if scanErr := rows.Scan(&item.SourceName, &lastSuccess, &lastRun, &item.ConsecutiveFailures, &item.LastError); scanErr != nil {
+			return nil, errors.Join(scanErr, loginjector.NewTraceError())
+		}
+		if lastSuccess != nil {
+			item.LastSuccessAt = time.Unix(*lastSuccess, 0).UTC()
+		}
+		if lastRun != nil {
+			item.LastRunAt = time.Unix(*lastRun, 0).UTC()
+		}
+		result = append(result, item)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+	return result, nil
+}
+
 // RetainExecutionHistory inserts or updates the given execution history record.
 func (r *ExecutionHistoryRepository) RetainExecutionHistory(ctx context.Context, record *domain.ExecutionHistory) error {
 	if record == nil {
 		err := errors.New("execution history is nil")
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -215,14 +303,17 @@ func (r *ExecutionHistoryRepository) RetainExecutionHistory(ctx context.Context,
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
 
-	count, err := executionHistoryCount(tx, ctx, "WHERE "+executionHistoryIdFieldName+" = ?;", record.ID)
+	// Hot-only on purpose: this decides INSERT versus UPDATE against the hot table, and the
+	// UPDATE below writes only there. Counting the union would send an id that lives solely
+	// in the archive down the UPDATE path, which would match nothing and lose the write.
+	count, err := executionHistoryCountHot(ctx, tx, "WHERE "+executionHistoryIdFieldName+" = ?;", record.ID)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -262,24 +353,24 @@ func (r *ExecutionHistoryRepository) RetainExecutionHistory(ctx context.Context,
 		)
 	}
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	rows, err := res.RowsAffected()
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	if rows <= 0 {
 		err = errors.New("unexpected result: no rows affected")
 		err = errors.Join(err, internal.ErrNotFound)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if err = tx.Commit(); err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -290,13 +381,13 @@ func (r *ExecutionHistoryRepository) RetainExecutionHistory(ctx context.Context,
 func (r *ExecutionHistoryRepository) RemoveSourceExecutionHistory(ctx context.Context, record *domain.ExecutionHistory) error {
 	if record == nil {
 		err := errors.New("execution history is nil")
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
@@ -305,12 +396,12 @@ func (r *ExecutionHistoryRepository) RemoveSourceExecutionHistory(ctx context.Co
 	_, err = tx.ExecContext(ctx, cmd, record.ID)
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", cmd))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if err = tx.Commit(); err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -318,26 +409,51 @@ func (r *ExecutionHistoryRepository) RemoveSourceExecutionHistory(ctx context.Co
 }
 
 const (
-	executionHistoryTableName           = "execution_history"
+	executionHistoryTableName = "execution_history"
+	// executionHistoryArchiveTableName is the archive twin: same columns, same file. Rows
+	// arrive here only by the roll-over move and are never written directly.
+	executionHistoryArchiveTableName    = "execution_history_archive"
 	executionHistoryIdFieldName         = "id"
 	executionHistorySourceNameFieldName = "source_name"
 	executionHistorySuccessFieldName    = "success"
 	executionHistoryErrorFieldName      = "error"
 	executionHistoryTimestampFieldName  = "timestamp"
 
-	executionHistorySqlSelect = "SELECT" + "\n" +
-		executionHistoryIdFieldName + ", " +
+	executionHistoryColumnList = executionHistoryIdFieldName + ", " +
 		executionHistorySourceNameFieldName + ", " +
 		executionHistorySuccessFieldName + ", " +
 		executionHistoryErrorFieldName + ", " +
-		executionHistoryTimestampFieldName +
-		"\nFROM " + executionHistoryTableName
+		executionHistoryTimestampFieldName
 )
 
-func executionHistoryCount(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
+// executionHistorySqlSelect reads both tiers — see rateValueSqlSelect for why every read
+// unions unconditionally instead of picking a tier by how far back the caller asked.
+var executionHistorySqlSelect = "SELECT\n" + executionHistoryColumnList + "\n" +
+	executionHistorySqlFrom(executionHistoryTableName)
+
+// executionHistorySqlFrom returns the both-tiers FROM clause under the given alias.
+func executionHistorySqlFrom(alias string) string {
+	return "FROM (\n" +
+		"SELECT " + executionHistoryColumnList + " FROM " + executionHistoryTableName + "\n" +
+		"UNION ALL\n" +
+		"SELECT " + executionHistoryColumnList + " FROM " + executionHistoryArchiveTableName + "\n" +
+		") AS " + alias
+}
+
+// executionHistoryCountHot counts the hot table alone. Write paths use it: they decide what
+// to do to execution_history, so they must ask about execution_history.
+func executionHistoryCountHot(ctx context.Context, tx *sql.Tx, condition string, args ...any) (int64, error) {
+	return executionHistoryCountIn(ctx, tx, "FROM "+executionHistoryTableName, condition, args...)
+}
+
+func executionHistoryCount(ctx context.Context, tx *sql.Tx, condition string, args ...any) (int64, error) {
+	return executionHistoryCountIn(ctx, tx, executionHistorySqlFrom(executionHistoryTableName), condition, args...)
+}
+
+func executionHistoryCountIn(ctx context.Context, tx *sql.Tx, from, condition string, args ...any) (int64, error) {
 	query := "SELECT\n" +
 		" COUNT(*)\n" +
-		"FROM " + executionHistoryTableName + "\n" + condition
+		from + "\n" + condition
 
 	var count int64
 	err := tx.QueryRowContext(ctx, query, args...).Scan(&count)
@@ -345,22 +461,22 @@ func executionHistoryCount(tx *sql.Tx, ctx context.Context, condition string, ar
 		return 0, nil
 	} else if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return 0, err
 	}
 
 	return count, nil
 }
 
-func executionHistoryQueryContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (items []domain.ExecutionHistory, err error) {
-	count, err := executionHistoryCount(tx, ctx, condition, args...)
+func executionHistoryQueryContext(ctx context.Context, tx *sql.Tx, condition string, args ...any) (items []domain.ExecutionHistory, err error) {
+	count, err := executionHistoryCount(ctx, tx, condition, args...)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
-		return
+		err = errors.Join(err, loginjector.NewTraceError())
+		return items, err
 	}
 	if count == 0 {
 		items = []domain.ExecutionHistory{}
-		return
+		return items, err
 	}
 
 	query := executionHistorySqlSelect + "\n" + condition
@@ -368,10 +484,10 @@ func executionHistoryQueryContext(tx *sql.Tx, ctx context.Context, condition str
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
-		return
+		err = errors.Join(err, loginjector.NewTraceError())
+		return items, err
 	}
-	defer func(rows io.Closer) { err = errors.Join(err, rows.Close()) }(rows)
+	defer func() { err = errors.Join(err, rows.Close()) }()
 
 	items = make([]domain.ExecutionHistory, 0, count)
 
@@ -387,8 +503,8 @@ func executionHistoryQueryContext(tx *sql.Tx, ctx context.Context, condition str
 			&timestamp,
 		)
 		if err != nil {
-			err = errors.Join(err, internal.NewTraceError())
-			return
+			err = errors.Join(err, loginjector.NewTraceError())
+			return items, err
 		}
 
 		item.Timestamp = time.Unix(timestamp, 0).UTC()
@@ -396,5 +512,10 @@ func executionHistoryQueryContext(tx *sql.Tx, ctx context.Context, condition str
 		items = append(items, item)
 	}
 
-	return
+	if err = rows.Err(); err != nil {
+		err = errors.Join(err, loginjector.NewTraceError())
+		return nil, err
+	}
+
+	return items, err
 }

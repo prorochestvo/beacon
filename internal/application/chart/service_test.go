@@ -8,15 +8,30 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/application/chart"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/domain/ratepair"
+	"github.com/seilbekskindirov/beacon/internal/repository"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// testChartWindow is the seven-day span the default-period wrappers cover.
+// Spelled out here rather than read from ratepair.ChartWindow, whose own doc
+// marks it superseded: the period is a service argument now, and a fixture should
+// say which period it is building data for rather than inherit one.
+const testChartWindow = 7 * 24 * time.Hour
 
 var _ chart.SubscriptionsLoader = (*fakeSubs)(nil)
 var _ chart.SourcesLoader = (*fakeSources)(nil)
 var _ chart.ValuesLoader = (*fakeValues)(nil)
 var _ chart.HistoryValuesLoader = (*fakeHistoryValues)(nil)
 var _ chart.PublicSourcesLoader = (*fakePublicSources)(nil)
+
+// The production satisfiers, wired in cmd/web. Asserting only the fakes leaves the
+// real contract unpinned — the pattern ratecheckagent_test.go already follows.
+var _ chart.SubscriptionsLoader = (*repository.RateUserSubscriptionRepository)(nil)
+var _ chart.SourcesLoader = (*repository.RateSourceRepository)(nil)
+var _ chart.PublicSourcesLoader = (*repository.RateSourceRepository)(nil)
+var _ chart.ValuesLoader = (*repository.RateValueRepository)(nil)
+var _ chart.HistoryValuesLoader = (*repository.RateValueRepository)(nil)
 
 type fakeSubs struct {
 	subs []domain.RateUserSubscription
@@ -185,8 +200,8 @@ func TestService_ObtainMeChart(t *testing.T) {
 
 	t.Run("single BID pair with dense data produces correct delta and role color", func(t *testing.T) {
 		t.Parallel()
-		since := fixedNow.Add(-ratepair.ChartWindow)
-		step := ratepair.ChartWindow / 12
+		since := fixedNow.Add(-testChartWindow)
+		step := testChartWindow / 12
 		ts0 := since.Add(step / 2)
 		ts11 := since.Add(11*step + step/2)
 
@@ -216,7 +231,7 @@ func TestService_ObtainMeChart(t *testing.T) {
 		assert.Equal(t, ratepair.ColorBid, sr.Color)
 		assert.False(t, sr.Sparse)
 		assert.InDelta(t, 25.0, sr.DeltaPct, 0.001, "delta should be (500-400)/400*100=25%%")
-		assert.Equal(t, 500.0, sr.Latest)
+		assert.InDelta(t, 500.0, sr.Latest, 0.001)
 		assert.NotEmpty(t, sr.Points)
 	})
 
@@ -242,8 +257,8 @@ func TestService_ObtainMeChart(t *testing.T) {
 
 	t.Run("BID and ASK for same pair collapse into one row with two series", func(t *testing.T) {
 		t.Parallel()
-		since := fixedNow.Add(-ratepair.ChartWindow)
-		step := ratepair.ChartWindow / 12
+		since := fixedNow.Add(-testChartWindow)
+		step := testChartWindow / 12
 		ts0 := since.Add(step / 2)
 		ts11 := since.Add(11*step + step/2)
 
@@ -318,8 +333,8 @@ func TestService_ObtainMeChart(t *testing.T) {
 
 	t.Run("single pair with sparse data marks series as sparse", func(t *testing.T) {
 		t.Parallel()
-		since := fixedNow.Add(-ratepair.ChartWindow)
-		step := ratepair.ChartWindow / 12
+		since := fixedNow.Add(-testChartWindow)
+		step := testChartWindow / 12
 		ts := since.Add(step / 2)
 
 		svc := chart.NewService(
@@ -340,8 +355,8 @@ func TestService_ObtainMeChart(t *testing.T) {
 		require.Len(t, result.Pairs[0].Series, 1)
 		sr := result.Pairs[0].Series[0]
 		assert.True(t, sr.Sparse)
-		assert.Equal(t, 0.0, sr.DeltaPct)
-		assert.Equal(t, 450.0, sr.Latest)
+		assert.InDelta(t, 0.0, sr.DeltaPct, 0.001)
+		assert.InDelta(t, 450.0, sr.Latest, 0.001)
 	})
 
 	t.Run("single pair with zero data in window is no-data series", func(t *testing.T) {
@@ -359,7 +374,7 @@ func TestService_ObtainMeChart(t *testing.T) {
 		require.Len(t, result.Pairs[0].Series, 1)
 		sr := result.Pairs[0].Series[0]
 		assert.True(t, sr.Sparse)
-		assert.Equal(t, 0.0, sr.Latest)
+		assert.InDelta(t, 0.0, sr.Latest, 0.001)
 		assert.Nil(t, sr.Points)
 	})
 
@@ -382,8 +397,8 @@ func TestService_ObtainMeChart(t *testing.T) {
 
 	t.Run("delta sign math: declining series produces negative delta", func(t *testing.T) {
 		t.Parallel()
-		since := fixedNow.Add(-ratepair.ChartWindow)
-		step := ratepair.ChartWindow / 12
+		since := fixedNow.Add(-testChartWindow)
+		step := testChartWindow / 12
 		ts0 := since.Add(step / 2)
 		ts11 := since.Add(11*step + step/2)
 
@@ -436,8 +451,8 @@ func TestService_ObtainMeChart(t *testing.T) {
 
 	t.Run("bucket downsampling: last value in each bucket wins", func(t *testing.T) {
 		t.Parallel()
-		since := fixedNow.Add(-ratepair.ChartWindow)
-		step := ratepair.ChartWindow / 12
+		since := fixedNow.Add(-testChartWindow)
+		step := testChartWindow / 12
 		ts0a := since.Add(step / 4)
 		ts0b := since.Add(step * 3 / 4)
 
@@ -459,9 +474,9 @@ func TestService_ObtainMeChart(t *testing.T) {
 		assert.False(t, sr.Sparse)
 		assert.Len(t, sr.Points, 12)
 		require.NotEmpty(t, sr.Points)
-		assert.Equal(t, 200.0, sr.Points[0].Value)
+		assert.InDelta(t, 200.0, sr.Points[0].Value, 0.001)
 		for i, pt := range sr.Points {
-			assert.Equal(t, 200.0, pt.Value, "bucket %d must be forward-filled to 200", i)
+			assert.InDelta(t, 200.0, pt.Value, 0.001, "bucket %d must be forward-filled to 200", i)
 		}
 	})
 
@@ -469,8 +484,8 @@ func TestService_ObtainMeChart(t *testing.T) {
 		t.Parallel()
 		// effectiveSince caps to ts3 (first sample), so bucket 0 is always populated
 		// and later buckets forward-fill from the two samples. len(Points) == bucketCount.
-		since := fixedNow.Add(-ratepair.ChartWindow)
-		step := ratepair.ChartWindow / 12
+		since := fixedNow.Add(-testChartWindow)
+		step := testChartWindow / 12
 		ts3 := since.Add(3*step + step/2)
 		ts4 := since.Add(4*step + step/2)
 
@@ -493,9 +508,9 @@ func TestService_ObtainMeChart(t *testing.T) {
 		// Bucket 0 always populated, so all 12 emitted. effectiveSince == ts3;
 		// ts3 lands in bucket 0, ts4 in bucket 1.
 		assert.Len(t, sr.Points, 12, "post-capping invariant: bucket 0 is always populated")
-		assert.Equal(t, 300.0, sr.Points[0].Value, "first bucket must carry the first sample value")
+		assert.InDelta(t, 300.0, sr.Points[0].Value, 0.001, "first bucket must carry the first sample value")
 		lastVal := sr.Points[len(sr.Points)-1].Value
-		assert.Equal(t, 350.0, lastVal, "last bucket must be forward-filled to the second sample value")
+		assert.InDelta(t, 350.0, lastVal, 0.001, "last bucket must be forward-filled to the second sample value")
 	})
 
 	t.Run("multiple pairs are sorted fiat before metal", func(t *testing.T) {
@@ -830,13 +845,13 @@ func TestService_ObtainMeChartForPeriod(t *testing.T) {
 
 	t.Run("since equals now minus period*24h for period=7", func(t *testing.T) {
 		t.Parallel()
-		cap := &captureValues{}
+		capture := &captureValues{}
 		svc := chart.NewService(
 			&fakeSubs{subs: []domain.RateUserSubscription{{SourceName: "src"}}},
 			&fakeSources{sources: map[string]domain.RateSource{
 				"src": {BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: "BID"},
 			}},
-			cap,
+			capture,
 			&fakeHistoryValues{},
 			&fakePublicSources{},
 			func() time.Time { return fixedNow },
@@ -844,18 +859,18 @@ func TestService_ObtainMeChartForPeriod(t *testing.T) {
 		_, err := svc.ObtainMeChartForPeriod(t.Context(), "u", 7)
 		require.NoError(t, err)
 		expected := fixedNow.Add(-7 * 24 * time.Hour)
-		assert.Equal(t, expected, cap.capturedSince, "since must be now - 7*24h")
+		assert.Equal(t, expected, capture.capturedSince, "since must be now - 7*24h")
 	})
 
 	t.Run("since equals now minus period*24h for period=90", func(t *testing.T) {
 		t.Parallel()
-		cap := &captureValues{}
+		capture := &captureValues{}
 		svc := chart.NewService(
 			&fakeSubs{subs: []domain.RateUserSubscription{{SourceName: "src"}}},
 			&fakeSources{sources: map[string]domain.RateSource{
 				"src": {BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: "BID"},
 			}},
-			cap,
+			capture,
 			&fakeHistoryValues{},
 			&fakePublicSources{},
 			func() time.Time { return fixedNow },
@@ -863,18 +878,18 @@ func TestService_ObtainMeChartForPeriod(t *testing.T) {
 		_, err := svc.ObtainMeChartForPeriod(t.Context(), "u", 90)
 		require.NoError(t, err)
 		expected := fixedNow.Add(-90 * 24 * time.Hour)
-		assert.Equal(t, expected, cap.capturedSince, "since must be now - 90*24h")
+		assert.Equal(t, expected, capture.capturedSince, "since must be now - 90*24h")
 	})
 
 	t.Run("ObtainMeChart wrapper delegates with period=7", func(t *testing.T) {
 		t.Parallel()
-		cap := &captureValues{}
+		capture := &captureValues{}
 		svc := chart.NewService(
 			&fakeSubs{subs: []domain.RateUserSubscription{{SourceName: "src"}}},
 			&fakeSources{sources: map[string]domain.RateSource{
 				"src": {BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: "BID"},
 			}},
-			cap,
+			capture,
 			&fakeHistoryValues{},
 			&fakePublicSources{},
 			func() time.Time { return fixedNow },
@@ -882,7 +897,7 @@ func TestService_ObtainMeChartForPeriod(t *testing.T) {
 		_, err := svc.ObtainMeChart(t.Context(), "u")
 		require.NoError(t, err)
 		expected := fixedNow.Add(-7 * 24 * time.Hour)
-		assert.Equal(t, expected, cap.capturedSince, "ObtainMeChart must pass since = now - 7*24h")
+		assert.Equal(t, expected, capture.capturedSince, "ObtainMeChart must pass since = now - 7*24h")
 	})
 }
 
@@ -891,14 +906,14 @@ func TestService_ObtainPublicChartForPeriod(t *testing.T) {
 
 	t.Run("since equals now minus period*24h for period=30", func(t *testing.T) {
 		t.Parallel()
-		cap := &captureValues{}
+		capture := &captureValues{}
 		keys := []domain.SourcePairKey{
 			{SourceName: "src", BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: domain.RateSourceKindBID},
 		}
 		svc := chart.NewService(
 			&fakeSubs{},
 			&fakeSources{},
-			cap,
+			capture,
 			&fakeHistoryValues{},
 			&fakePublicSources{keys: keys},
 			func() time.Time { return fixedNow },
@@ -906,19 +921,19 @@ func TestService_ObtainPublicChartForPeriod(t *testing.T) {
 		_, _, err := svc.ObtainPublicChartForPeriod(t.Context(), 1, 20, 30)
 		require.NoError(t, err)
 		expected := fixedNow.Add(-30 * 24 * time.Hour)
-		assert.Equal(t, expected, cap.capturedSince, "since must be now - 30*24h")
+		assert.Equal(t, expected, capture.capturedSince, "since must be now - 30*24h")
 	})
 
 	t.Run("since equals now minus period*24h for period=7", func(t *testing.T) {
 		t.Parallel()
-		cap := &captureValues{}
+		capture := &captureValues{}
 		keys := []domain.SourcePairKey{
 			{SourceName: "src", BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: domain.RateSourceKindBID},
 		}
 		svc := chart.NewService(
 			&fakeSubs{},
 			&fakeSources{},
-			cap,
+			capture,
 			&fakeHistoryValues{},
 			&fakePublicSources{keys: keys},
 			func() time.Time { return fixedNow },
@@ -926,19 +941,19 @@ func TestService_ObtainPublicChartForPeriod(t *testing.T) {
 		_, _, err := svc.ObtainPublicChartForPeriod(t.Context(), 1, 20, 7)
 		require.NoError(t, err)
 		expected := fixedNow.Add(-7 * 24 * time.Hour)
-		assert.Equal(t, expected, cap.capturedSince, "since must be now - 7*24h")
+		assert.Equal(t, expected, capture.capturedSince, "since must be now - 7*24h")
 	})
 
 	t.Run("ObtainPublicChart wrapper delegates with period=7", func(t *testing.T) {
 		t.Parallel()
-		cap := &captureValues{}
+		capture := &captureValues{}
 		keys := []domain.SourcePairKey{
 			{SourceName: "src", BaseCurrency: "USD", QuoteCurrency: "KZT", Kind: domain.RateSourceKindBID},
 		}
 		svc := chart.NewService(
 			&fakeSubs{},
 			&fakeSources{},
-			cap,
+			capture,
 			&fakeHistoryValues{},
 			&fakePublicSources{keys: keys},
 			func() time.Time { return fixedNow },
@@ -946,7 +961,7 @@ func TestService_ObtainPublicChartForPeriod(t *testing.T) {
 		_, _, err := svc.ObtainPublicChart(t.Context(), 1, 20)
 		require.NoError(t, err)
 		expected := fixedNow.Add(-7 * 24 * time.Hour)
-		assert.Equal(t, expected, cap.capturedSince, "ObtainPublicChart must pass since = now - 7*24h")
+		assert.Equal(t, expected, capture.capturedSince, "ObtainPublicChart must pass since = now - 7*24h")
 	})
 }
 

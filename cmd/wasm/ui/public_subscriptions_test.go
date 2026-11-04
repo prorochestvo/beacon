@@ -152,14 +152,14 @@ func TestRenderPublicPairModal(t *testing.T) {
 	t.Run("returns empty string when OpenPair is nil", func(t *testing.T) {
 		t.Parallel()
 		state := application.PublicSubscriptionsState{}
-		assert.Equal(t, "", ui.RenderPublicPairModal(state))
+		assert.Empty(t, ui.RenderPublicPairModal(state))
 	})
 
 	t.Run("returns empty string when Chart is nil", func(t *testing.T) {
 		t.Parallel()
 		p := "USD/KZT"
 		state := application.PublicSubscriptionsState{OpenPair: &p}
-		assert.Equal(t, "", ui.RenderPublicPairModal(state))
+		assert.Empty(t, ui.RenderPublicPairModal(state))
 	})
 
 	t.Run("returns empty string when OpenPair not found in chart", func(t *testing.T) {
@@ -174,7 +174,7 @@ func TestRenderPublicPairModal(t *testing.T) {
 			OpenPair: &p,
 			Chart:    publicChartWith(pairs),
 		}
-		assert.Equal(t, "", ui.RenderPublicPairModal(state))
+		assert.Empty(t, ui.RenderPublicPairModal(state))
 	})
 
 	t.Run("valid pair renders role=dialog aria-modal and aria-labelledby", func(t *testing.T) {
@@ -333,7 +333,7 @@ func TestRenderPublicPagination(t *testing.T) {
 	t.Run("returns empty string when Chart is nil", func(t *testing.T) {
 		t.Parallel()
 		state := application.PublicSubscriptionsState{}
-		assert.Equal(t, "", ui.RenderPublicPagination(state))
+		assert.Empty(t, ui.RenderPublicPagination(state))
 	})
 
 	t.Run("returns empty string when single page fits all pairs", func(t *testing.T) {
@@ -346,7 +346,7 @@ func TestRenderPublicPagination(t *testing.T) {
 		}
 		// 3 pairs with limit 20 — all fit on one page, no pagination needed.
 		html := ui.RenderPublicPagination(state)
-		assert.Equal(t, "", html)
+		assert.Empty(t, html)
 	})
 
 	t.Run("renders pagination buttons when pairs exceed limit", func(t *testing.T) {

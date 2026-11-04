@@ -1,0 +1,9 @@
+name          | url                      | side | value  | status
+--------------+--------------------------+------+--------+--------------
+KZ_OK_USD_KZT | https://ok.example/rates | BID  | 451.00 | OK
+KZ_X_USD_KZT  | https://x.example/rates  | BID  |        | REGEX_NO_MATCH
+
+audited 2 sources across 2 URLs: 1 OK, 1 MISS
+
+MISS DETAILS:
+KZ_X_USD_KZT	REGEX_NO_MATCH	no match for pattern

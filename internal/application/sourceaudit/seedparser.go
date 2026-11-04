@@ -3,6 +3,7 @@ package sourceaudit
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -34,6 +35,41 @@ type SeededSource struct {
 	Origin  string
 }
 
+const (
+	noMatch    insertForm = iota
+	positional            // INSERT OR IGNORE INTO rate_sources VALUES(...)
+	columnList            // INSERT OR IGNORE INTO rate_sources (cols) VALUES(...)
+)
+
+// legacyPositionalColumns defines the column order for positional INSERT rows.
+// Rows with 10 tokens use the first 10; rows with 12 tokens use all 12.
+var legacyPositionalColumns = []string{
+	"name", "title", "base_currency", "quote_currency",
+	"url", "interval", "kind", "active", "options", "rules",
+	"rule_metadata", "fetcher_kind",
+}
+
+var (
+	// reInsertColumnList matches: INSERT OR IGNORE INTO rate_sources (cols) VALUES (vals);
+	// Column-list is tried first (longer match) to avoid false positives on the positional form.
+	reInsertColumnList = regexp.MustCompile(
+		`^INSERT\s+OR\s+IGNORE\s+INTO\s+rate_sources\s*\(([^)]*)\)\s+VALUES\s*\((.*)\)\s*;\s*$`)
+	// reInsertPositional matches: INSERT OR IGNORE INTO rate_sources VALUES(vals);.
+	reInsertPositional = regexp.MustCompile(
+		`^INSERT\s+OR\s+IGNORE\s+INTO\s+rate_sources\s+VALUES\s*\((.*)\)\s*;\s*$`)
+	// reLooksLikeInsert detects a line with the insert prefix that matches neither
+	// valid form — the loud-fail guard against the original silent-skip bug.
+	reLooksLikeInsert = regexp.MustCompile(
+		`^INSERT\s+OR\s+IGNORE\s+INTO\s+rate_sources\b`)
+)
+
+// stderrLogger writes to stderr because cmd/doctor audit prints its report to
+// stdout; mixing channels would corrupt machine-readable output.
+var stderrLogger = log.New(os.Stderr, "", 0)
+
+// insertForm classifies a SQL line as one of three recognized shapes.
+type insertForm int
+
 // ParseSeedFiles reads all files in fsys matching glob (lexicographic order) and
 // returns the parsed SeededSource records in the order they appear.
 func ParseSeedFiles(fsys fs.FS, glob string) ([]SeededSource, error) {
@@ -54,41 +90,6 @@ func ParseSeedFiles(fsys fs.FS, glob string) ([]SeededSource, error) {
 	}
 	return out, nil
 }
-
-// insertForm classifies a SQL line as one of three recognized shapes.
-type insertForm int
-
-const (
-	noMatch    insertForm = iota
-	positional            // INSERT OR IGNORE INTO rate_sources VALUES(...)
-	columnList            // INSERT OR IGNORE INTO rate_sources (cols) VALUES(...)
-)
-
-// legacyPositionalColumns defines the column order for positional INSERT rows.
-// Rows with 10 tokens use the first 10; rows with 12 tokens use all 12.
-var legacyPositionalColumns = []string{
-	"name", "title", "base_currency", "quote_currency",
-	"url", "interval", "kind", "active", "options", "rules",
-	"rule_metadata", "fetcher_kind",
-}
-
-var (
-	// reInsertColumnList matches: INSERT OR IGNORE INTO rate_sources (cols) VALUES (vals);
-	// Column-list is tried first (longer match) to avoid false positives on the positional form.
-	reInsertColumnList = regexp.MustCompile(
-		`^INSERT\s+OR\s+IGNORE\s+INTO\s+rate_sources\s*\(([^)]*)\)\s+VALUES\s*\((.*)\)\s*;\s*$`)
-	// reInsertPositional matches: INSERT OR IGNORE INTO rate_sources VALUES(vals);
-	reInsertPositional = regexp.MustCompile(
-		`^INSERT\s+OR\s+IGNORE\s+INTO\s+rate_sources\s+VALUES\s*\((.*)\)\s*;\s*$`)
-	// reLooksLikeInsert detects a line with the insert prefix that matches neither
-	// valid form — the loud-fail guard against the original silent-skip bug.
-	reLooksLikeInsert = regexp.MustCompile(
-		`^INSERT\s+OR\s+IGNORE\s+INTO\s+rate_sources\b`)
-)
-
-// stderrLogger writes to stderr because cmd/doctor audit prints its report to
-// stdout; mixing channels would corrupt machine-readable output.
-var stderrLogger = log.New(os.Stderr, "", 0)
 
 // recogniseInsert classifies line and returns the relevant parenthesised
 // payloads. For columnList, columnsPayload holds the column-name list and
@@ -361,7 +362,7 @@ func tokenizeSQLValues(s string) ([]string, error) {
 		}
 	}
 	if inString {
-		return nil, fmt.Errorf("unterminated string literal")
+		return nil, errors.New("unterminated string literal")
 	}
 	if buf.Len() > 0 {
 		out = append(out, buf.String())

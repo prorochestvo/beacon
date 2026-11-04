@@ -7,7 +7,7 @@ import (
 	"errors"
 	"log"
 
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 )
 
 // printRollbackError rolls back tx and logs any failure that is not
@@ -15,7 +15,7 @@ import (
 // or rolled back — the expected outcome on the success path).
 func printRollbackError(r interface{ Rollback() error }) {
 	if err := r.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		log.Print(err)
 	}
 }

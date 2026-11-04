@@ -395,7 +395,7 @@ func TestClient_MeRatesChart(t *testing.T) {
 		require.Len(t, got.Pairs[0].Series, 2)
 		assert.Equal(t, "BID", got.Pairs[0].Series[0].Kind)
 		assert.Equal(t, "#1D9E75", got.Pairs[0].Series[0].Color)
-		assert.Equal(t, 449.5, got.Pairs[0].Series[0].Latest)
+		assert.InDelta(t, 449.5, got.Pairs[0].Series[0].Latest, 0.001)
 		require.Len(t, got.Pairs[0].Series[0].Points, 1)
 		assert.Equal(t, "ASK", got.Pairs[0].Series[1].Kind)
 	})
@@ -514,7 +514,7 @@ func TestClient_MeRatesHistory(t *testing.T) {
 		assert.EqualValues(t, 1, resp.Total)
 		require.Len(t, resp.Items, 1)
 		require.NotNil(t, resp.Items[0].Bid)
-		assert.Equal(t, 490.0, *resp.Items[0].Bid)
+		assert.InDelta(t, 490.0, *resp.Items[0].Bid, 0.001)
 	})
 
 	t.Run("X-Telegram-Init-Data header is forwarded", func(t *testing.T) {
@@ -578,7 +578,7 @@ func TestClient_MeSubscriptionsRaw(t *testing.T) {
 		assert.Equal(t, "sub-1", got.Items[0].ID)
 		assert.Equal(t, "src_a", got.Items[0].SourceName)
 		assert.Equal(t, "initdata-token", f.lastHeaders["X-Telegram-Init-Data"])
-		assert.Equal(t, "/api/me/subscriptions/raw", f.lastURL)
+		assert.Equal(t, "/api/v1/me/subscriptions/raw", f.lastURL)
 	})
 
 	t.Run("401 propagates as error", func(t *testing.T) {
@@ -619,7 +619,7 @@ func TestClient_MeSubscriptionCreate(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "generated-123", got.ID)
 		assert.Equal(t, "tok", f.lastHeaders["X-Telegram-Init-Data"])
-		assert.Equal(t, "/api/me/subscriptions", f.lastURL)
+		assert.Equal(t, "/api/v1/me/subscriptions", f.lastURL)
 		assert.Equal(t, "POST", f.lastMethod)
 	})
 
@@ -775,6 +775,39 @@ func TestClient_MeWeatherCityDelete(t *testing.T) {
 		f := &fakeFetcher{noContentErr: errors.New("http 404")}
 		c := apiclient.New(f)
 		err := c.MeWeatherCityDelete(t.Context(), "tok", "nonexistent")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "http 404")
+	})
+}
+
+func TestClient_MeWeatherLocationDelete(t *testing.T) {
+	t.Parallel()
+
+	t.Run("happy path returns nil on 204", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{}
+		c := apiclient.New(f)
+		err := c.MeWeatherLocationDelete(t.Context(), "tok", "loc-abc")
+		require.NoError(t, err)
+		assert.Equal(t, "tok", f.lastHeaders["X-Telegram-Init-Data"])
+		assert.Equal(t, "/api/v1/me/weather/locations/loc-abc", f.lastURL)
+		assert.Equal(t, "DELETE", f.lastMethod)
+	})
+
+	t.Run("location_id is percent-escaped", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{}
+		c := apiclient.New(f)
+		err := c.MeWeatherLocationDelete(t.Context(), "tok", "loc/with slash")
+		require.NoError(t, err)
+		assert.Equal(t, "/api/v1/me/weather/locations/loc%2Fwith%20slash", f.lastURL)
+	})
+
+	t.Run("fetcher error propagates", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{noContentErr: errors.New("http 404")}
+		c := apiclient.New(f)
+		err := c.MeWeatherLocationDelete(t.Context(), "tok", "nonexistent")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "http 404")
 	})

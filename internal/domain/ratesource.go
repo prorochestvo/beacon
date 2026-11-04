@@ -48,6 +48,14 @@ type RateSourceOptions struct {
 	// inject credentials at runtime via BEACON_* env vars / dsninjector and substitute
 	// them in the collection layer.
 	Headers map[string]string `json:"headers,omitempty"`
+	// UseProxy routes this source's fetch through BEACON_PROXY_URL. Both must agree:
+	// the variable says whether a proxy exists, this says whether the source wants it,
+	// and only their conjunction proxies anything. Absent means direct, so configuring
+	// the variable alone re-routes nothing — opting a source in is a deliberate per-row
+	// act, which is what keeps the measured default from issue #16 in place.
+	// Ignored by the chromedp fetcher: proxy settings there are browser-launch arguments
+	// on a subprocess shared by the whole tick, so they cannot vary per source.
+	UseProxy bool `json:"use_proxy,omitempty"`
 }
 
 // Method identifies the extraction algorithm applied to raw page content.

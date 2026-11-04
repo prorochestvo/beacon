@@ -9,7 +9,7 @@ import (
 )
 
 // MeSubscriptionsBatchSize is the number of subscription rows fetched per call
-// to /api/me/subscriptions. The full batch is held in memory so the modal can
+// to /api/v1/me/subscriptions. The full batch is held in memory so the modal can
 // join all the user's pairs against it; the list itself is no longer rendered.
 const MeSubscriptionsBatchSize = 200
 
@@ -38,7 +38,7 @@ type MeSubscriptionsState struct {
 	// open, or nil when no modal is visible.
 	OpenPair *string
 
-	// Chart holds the sparkline-list chart data returned by /api/me/rates/chart.
+	// Chart holds the sparkline-list chart data returned by /api/v1/me/rates/chart.
 	// Nil means the chart has not been fetched yet or returned no data.
 	Chart *dto.MeChartResponse
 	// ChartLoading is true while the chart fetch is in flight.
@@ -276,7 +276,7 @@ func (p *MeSubscriptionsPage) SetHistorySourceTitle(ctx context.Context, sourceT
 	return p.LoadHistory(ctx, 1)
 }
 
-// LoadSparklineChart fetches the sparkline-list chart from /api/me/rates/chart
+// LoadSparklineChart fetches the sparkline-list chart from /api/v1/me/rates/chart
 // and stores it in state. ChartLoading is set true before the fetch and false
 // after it completes (success or error); ChartError is set on failure. On
 // success, if OpenPair is set but the new chart no longer contains a matching
@@ -334,20 +334,6 @@ func (p *MeSubscriptionsPage) SetPeriod(ctx context.Context, period int) error {
 	return p.LoadSparklineChart(ctx)
 }
 
-// FindPairInChart reports whether chart contains a row whose Pair field equals pair.
-// Returns false when chart is nil.
-func FindPairInChart(chart *dto.MeChartResponse, pair string) bool {
-	if chart == nil {
-		return false
-	}
-	for _, row := range chart.Pairs {
-		if row.Pair == pair {
-			return true
-		}
-	}
-	return false
-}
-
 // fetchAndStore calls the API client and stores the result in state. It
 // returns the error (also stored in state for UI inspection). A 401 error sets
 // AuthFailure=true so the UI can show the "open from bot" message.
@@ -363,4 +349,18 @@ func (p *MeSubscriptionsPage) fetchAndStore(ctx context.Context) error {
 	p.state.AuthFailure = false
 	p.state.LastError = nil
 	return nil
+}
+
+// FindPairInChart reports whether chart contains a row whose Pair field equals pair.
+// Returns false when chart is nil.
+func FindPairInChart(chart *dto.MeChartResponse, pair string) bool {
+	if chart == nil {
+		return false
+	}
+	for _, row := range chart.Pairs {
+		if row.Pair == pair {
+			return true
+		}
+	}
+	return false
 }

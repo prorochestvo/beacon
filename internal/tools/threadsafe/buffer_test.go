@@ -46,7 +46,7 @@ func TestConcurrentBuffer_Write(t *testing.T) {
 	}
 	wg.Wait()
 
-	assert.Equal(t, goroutines, len(b.Bytes()))
+	assert.Len(t, b.Bytes(), goroutines)
 }
 
 func TestConcurrentBuffer_Read(t *testing.T) {
