@@ -66,12 +66,39 @@ func ApplyJSONPath(pattern string, payload []byte) ([]byte, error) {
 			// of a series whose length is not fixed. Yahoo's batched quote response grows
 			// its close array as the session goes on; a literal index would name a
 			// different moment on every request, and eventually a missing one.
+			//
+			// Nulls are skipped while counting back: the daily spark window lists the next
+			// session's bar with a null close before it trades, and until then the
+			// previous close is the current price. Positive indices stay literal.
 			idx := seg.Index
 			if idx < 0 {
-				idx += len(arr)
+				idx = -1
+				want := -seg.Index
+				for i := len(arr) - 1; i >= 0; i-- {
+					if arr[i] == nil {
+						continue
+					}
+					want--
+					if want == 0 {
+						idx = i
+						break
+					}
+				}
 			}
 			if idx < 0 || idx >= len(arr) {
-				return nil, fmt.Errorf("json_path: index %d out of range for key %q (len %d)", seg.Index, seg.Key, len(arr))
+				nonNull := 0
+				for _, item := range arr {
+					if item != nil {
+						nonNull++
+					}
+				}
+				return nil, fmt.Errorf(
+					"json_path: index %d out of range for key %q (len %d, %d non-null)",
+					seg.Index,
+					seg.Key,
+					len(arr),
+					nonNull,
+				)
 			}
 			current = arr[idx]
 		} else {

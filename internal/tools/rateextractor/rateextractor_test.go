@@ -230,6 +230,48 @@ func TestRateExtractor_Run(t *testing.T) {
 
 	logger := threadsafe.NewBuffer(nil)
 
+	t.Run("batched Yahoo symbols skip trailing null closes", func(t *testing.T) {
+		t.Parallel()
+
+		const payload = `{"AAPL":{"close":[343.83,348.91,344.63,338.32,null]},"BTC-USD":{"close":[60000,61000]}}`
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = fmt.Fprint(w, payload)
+		}))
+		defer srv.Close()
+
+		rateRepo := &mockRateValueRepository{}
+		ext, err := NewRateExtractorWithHTTPClient(
+			rateRepo,
+			srv.Client(),
+			logger,
+			testUserAgent,
+		)
+		require.NoError(t, err)
+
+		aapl := &domain.RateSource{Name: "AAPL", URL: srv.URL, Kind: domain.RateSourceKindLAST, Rules: []domain.RateSourceRule{{Method: domain.MethodJSONPath, Pattern: "AAPL.close[-1]"}}}
+		btc := &domain.RateSource{Name: "BTC-USD", URL: srv.URL, Kind: domain.RateSourceKindLAST, Rules: []domain.RateSourceRule{{Method: domain.MethodJSONPath, Pattern: "BTC-USD.close[-1]"}}}
+		err = ext.Run(t.Context(), aapl)
+		require.NoError(t, err)
+		err = ext.Run(t.Context(), btc)
+		require.NoError(t, err)
+
+		require.Len(t, rateRepo.retained, 2)
+		require.Equal(t, "AAPL", rateRepo.retained[0].SourceName)
+		require.InDelta(
+			t,
+			338.32,
+			rateRepo.retained[0].Price,
+			0.001,
+		)
+		require.Equal(t, "BTC-USD", rateRepo.retained[1].SourceName)
+		require.InDelta(
+			t,
+			61000,
+			rateRepo.retained[1].Price,
+			0.001,
+		)
+	})
+
 	t.Run("happy path", func(t *testing.T) {
 		t.Parallel()
 
