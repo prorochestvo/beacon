@@ -140,138 +140,138 @@ func TestApplyJSONPath(t *testing.T) {
 		assert.Nil(t, result)
 		assert.Contains(t, err.Error(), "out of range")
 	})
-}
 
-// TestApplyJSONPath_NegativeIndex covers addressing a series by its end, which is what
-// batching the upstream quote endpoint needs: one request returns every symbol, each with
-// a close array whose length grows through the session, so only "the last one" names a
-// stable thing. Trailing nulls, a listed session that has not traded yet, are skipped.
-func TestApplyJSONPath_NegativeIndex(t *testing.T) {
-	t.Parallel()
-
-	// The shape of a real batched response: keyed by ticker, each carrying a series.
-	payload := []byte(`{
-		"AAPL":    {"symbol":"AAPL","close":[308.63,307.76,308.16,307.92],"previousClose":309.38},
-		"BTC-USD": {"symbol":"BTC-USD","close":[64100.5,64143.86],"previousClose":63900.0},
-		"THIN":    {"symbol":"THIN","close":[12.5]},
-		"EMPTY":   {"symbol":"EMPTY","close":[]},
-		"GAPPY":   {"symbol":"GAPPY","close":[1.0,null]},
-		"MID":     {"symbol":"MID","close":[1.0,null,3.0]},
-		"NULLS":   {"symbol":"NULLS","close":[null,null]}
-	}`)
-
-	t.Run("minus one is the newest point", func(t *testing.T) {
+	// Negative indices cover addressing a series by its end, which is what
+	// batching the upstream quote endpoint needs: one request returns every symbol, each with
+	// a close array whose length grows through the session, so only "the last one" names a
+	// stable thing. Trailing nulls, a listed session that has not traded yet, are skipped.
+	t.Run("negative index", func(t *testing.T) {
 		t.Parallel()
-		got, err := ApplyJSONPath("AAPL.close[-1]", payload)
-		require.NoError(t, err)
-		assert.Equal(t, "307.92", string(got))
-	})
 
-	t.Run("a hyphenated ticker is a key, not a subtraction", func(t *testing.T) {
-		t.Parallel()
-		got, err := ApplyJSONPath("BTC-USD.close[-1]", payload)
-		require.NoError(t, err)
-		assert.Equal(t, "64143.86", string(got))
-	})
+		// The shape of a real batched response: keyed by ticker, each carrying a series.
+		payload := []byte(`{
+			"AAPL":    {"symbol":"AAPL","close":[308.63,307.76,308.16,307.92],"previousClose":309.38},
+			"BTC-USD": {"symbol":"BTC-USD","close":[64100.5,64143.86],"previousClose":63900.0},
+			"THIN":    {"symbol":"THIN","close":[12.5]},
+			"EMPTY":   {"symbol":"EMPTY","close":[]},
+			"GAPPY":   {"symbol":"GAPPY","close":[1.0,null]},
+			"MID":     {"symbol":"MID","close":[1.0,null,3.0]},
+			"NULLS":   {"symbol":"NULLS","close":[null,null]}
+		}`)
 
-	t.Run("counting further back works", func(t *testing.T) {
-		t.Parallel()
-		got, err := ApplyJSONPath("AAPL.close[-2]", payload)
-		require.NoError(t, err)
-		assert.Equal(t, "308.16", string(got))
-	})
+		t.Run("minus one is the newest point", func(t *testing.T) {
+			t.Parallel()
+			got, err := ApplyJSONPath("AAPL.close[-1]", payload)
+			require.NoError(t, err)
+			assert.Equal(t, "307.92", string(got))
+		})
 
-	t.Run("positive indices are unchanged", func(t *testing.T) {
-		t.Parallel()
-		got, err := ApplyJSONPath("AAPL.close[0]", payload)
-		require.NoError(t, err)
-		assert.Equal(t, "308.63", string(got))
-	})
+		t.Run("a hyphenated ticker is a key, not a subtraction", func(t *testing.T) {
+			t.Parallel()
+			got, err := ApplyJSONPath("BTC-USD.close[-1]", payload)
+			require.NoError(t, err)
+			assert.Equal(t, "64143.86", string(got))
+		})
 
-	t.Run("a single-element series resolves", func(t *testing.T) {
-		t.Parallel()
-		// The degenerate case where -1 and 0 are the same element.
-		got, err := ApplyJSONPath("THIN.close[-1]", payload)
-		require.NoError(t, err)
-		assert.Equal(t, "12.5", string(got))
-	})
+		t.Run("counting further back works", func(t *testing.T) {
+			t.Parallel()
+			got, err := ApplyJSONPath("AAPL.close[-2]", payload)
+			require.NoError(t, err)
+			assert.Equal(t, "308.16", string(got))
+		})
 
-	t.Run("an empty series is out of range, not element zero", func(t *testing.T) {
-		t.Parallel()
-		// -1 on an empty array resolves to -1, which must be rejected rather than
-		// wrapping around into a panic or a neighbouring value.
-		_, err := ApplyJSONPath("EMPTY.close[-1]", payload)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "out of range")
-	})
+		t.Run("positive indices are unchanged", func(t *testing.T) {
+			t.Parallel()
+			got, err := ApplyJSONPath("AAPL.close[0]", payload)
+			require.NoError(t, err)
+			assert.Equal(t, "308.63", string(got))
+		})
 
-	t.Run("reaching past the start is out of range", func(t *testing.T) {
-		t.Parallel()
-		_, err := ApplyJSONPath("BTC-USD.close[-5]", payload)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "out of range")
-	})
+		t.Run("a single-element series resolves", func(t *testing.T) {
+			t.Parallel()
+			// The degenerate case where -1 and 0 are the same element.
+			got, err := ApplyJSONPath("THIN.close[-1]", payload)
+			require.NoError(t, err)
+			assert.Equal(t, "12.5", string(got))
+		})
 
-	t.Run("the error names the index the rule asked for", func(t *testing.T) {
-		t.Parallel()
-		// Reporting the resolved index would send whoever reads the log looking for a
-		// number that appears nowhere in the rule.
-		_, err := ApplyJSONPath("EMPTY.close[-1]", payload)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "-1")
-	})
+		t.Run("an empty series is out of range, not element zero", func(t *testing.T) {
+			t.Parallel()
+			// -1 on an empty array resolves to -1, which must be rejected rather than
+			// wrapping around into a panic or a neighbouring value.
+			_, err := ApplyJSONPath("EMPTY.close[-1]", payload)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "out of range")
+		})
 
-	t.Run("a null series is reported as not an array", func(t *testing.T) {
-		t.Parallel()
-		// Production incident: at 00:00 UTC the upstream returns "close": null for
-		// round-the-clock symbols, because the new day has no bars yet. The message has to
-		// name the shape rather than the value, since that is what sends whoever reads it
-		// at the payload instead of at the rule.
-		nulled := []byte(`{"BTC-USD":{"symbol":"BTC-USD","close":null}}`)
-		_, err := ApplyJSONPath("BTC-USD.close[-1]", nulled)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "is not an array")
-	})
+		t.Run("reaching past the start is out of range", func(t *testing.T) {
+			t.Parallel()
+			_, err := ApplyJSONPath("BTC-USD.close[-5]", payload)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "out of range")
+		})
 
-	t.Run("a null at the end is skipped", func(t *testing.T) {
-		t.Parallel()
-		// Since 202608.032 the window is daily bars, so a trailing null is a session that
-		// has not traded yet rather than a no-trade gap, and the previous close is current.
-		got, err := ApplyJSONPath("GAPPY.close[-1]", payload)
-		require.NoError(t, err)
-		assert.Equal(t, "1.0", string(got))
-	})
+		t.Run("the error names the index the rule asked for", func(t *testing.T) {
+			t.Parallel()
+			// Reporting the resolved index would send whoever reads the log looking for a
+			// number that appears nowhere in the rule.
+			_, err := ApplyJSONPath("EMPTY.close[-1]", payload)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "-1")
+		})
 
-	t.Run("negative indices count non-null values through a middle null", func(t *testing.T) {
-		t.Parallel()
-		got, err := ApplyJSONPath("MID.close[-1]", payload)
-		require.NoError(t, err)
-		assert.Equal(t, "3.0", string(got))
+		t.Run("a null series is reported as not an array", func(t *testing.T) {
+			t.Parallel()
+			// Production incident: at 00:00 UTC the upstream returns "close": null for
+			// round-the-clock symbols, because the new day has no bars yet. The message has to
+			// name the shape rather than the value, since that is what sends whoever reads it
+			// at the payload instead of at the rule.
+			nulled := []byte(`{"BTC-USD":{"symbol":"BTC-USD","close":null}}`)
+			_, err := ApplyJSONPath("BTC-USD.close[-1]", nulled)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "is not an array")
+		})
 
-		got, err = ApplyJSONPath("MID.close[-2]", payload)
-		require.NoError(t, err)
-		assert.Equal(t, "1.0", string(got))
-	})
+		t.Run("a null at the end is skipped", func(t *testing.T) {
+			t.Parallel()
+			// Since 202608.032 the window is daily bars, so a trailing null is a session that
+			// has not traded yet rather than a no-trade gap, and the previous close is current.
+			got, err := ApplyJSONPath("GAPPY.close[-1]", payload)
+			require.NoError(t, err)
+			assert.Equal(t, "1.0", string(got))
+		})
 
-	t.Run("an all-null array is out of range and reports non-null count", func(t *testing.T) {
-		t.Parallel()
-		_, err := ApplyJSONPath("NULLS.close[-1]", payload)
-		require.Error(t, err)
-		assert.Contains(
-			t,
-			err.Error(),
-			`index -1 out of range for key "close" (len 2, 0 non-null)`,
-		)
-	})
+		t.Run("negative indices count non-null values through a middle null", func(t *testing.T) {
+			t.Parallel()
+			got, err := ApplyJSONPath("MID.close[-1]", payload)
+			require.NoError(t, err)
+			assert.Equal(t, "3.0", string(got))
 
-	t.Run("positive index on null still fails", func(t *testing.T) {
-		t.Parallel()
-		_, err := ApplyJSONPath("GAPPY.close[1]", payload)
-		require.Error(t, err)
-		assert.Contains(
-			t,
-			err.Error(),
-			"unsupported type <nil>",
-		)
+			got, err = ApplyJSONPath("MID.close[-2]", payload)
+			require.NoError(t, err)
+			assert.Equal(t, "1.0", string(got))
+		})
+
+		t.Run("an all-null array is out of range and reports non-null count", func(t *testing.T) {
+			t.Parallel()
+			_, err := ApplyJSONPath("NULLS.close[-1]", payload)
+			require.Error(t, err)
+			assert.Contains(
+				t,
+				err.Error(),
+				`index -1 out of range for key "close" (len 2, 0 non-null)`,
+			)
+		})
+
+		t.Run("positive index on null still fails", func(t *testing.T) {
+			t.Parallel()
+			_, err := ApplyJSONPath("GAPPY.close[1]", payload)
+			require.Error(t, err)
+			assert.Contains(
+				t,
+				err.Error(),
+				"unsupported type <nil>",
+			)
+		})
 	})
 }
