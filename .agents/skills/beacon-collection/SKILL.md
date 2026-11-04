@@ -1,6 +1,6 @@
 ---
 name: beacon-collection
-description: Beacon's collection pipeline — source kinds (BID/ASK/LAST) and the options JSON column, per-source proxy opt-in (direct by default; the Telegram bot always bypasses), batched sources sharing one fetch, the Open-Meteo client and its retry policy, the 16-day forecast and its daily gate, the content-gated outlook digest, weather alert latches, source-health alerting, and the cmd/doctor operator umbrella. Load before touching cmd/collector, cmd/doctor, internal/tools/rateextractor or proxyutil, internal/application/collection, internal/infrastructure/weather or telegrambot, any rate_sources row or seed migration, domain.RateSourceOptions, WeatherForecastAgent, BEACON_PROXY_URL or options.use_proxy (HTTPS_PROXY/HTTP_PROXY/NO_PROXY do nothing here), BEACON_CHROMIUM_PATH or fetcher_kind='chromedp' sources, the rain/thaw/heat/frost alert kinds, or the forecast_outlook notify kind.
+description: Beacon's collection pipeline — source kinds (BID/ASK/LAST) and the options JSON column, per-source proxy opt-in (direct by default; the Telegram bot always bypasses), batched sources sharing one fetch, the Open-Meteo client and its retry policy, the 16-day forecast and its daily gate, the content-gated outlook digest, weather alert latches, source-health alerting, and the cmd/doctor operator umbrella. Load before touching cmd/collector, cmd/doctor (including audit --dsn and .agents/scripts/doctor-nightly.sh), internal/tools/rateextractor or proxyutil, internal/application/collection, internal/infrastructure/weather or telegrambot, any rate_sources row or seed migration, domain.RateSourceOptions, WeatherForecastAgent, BEACON_PROXY_URL or options.use_proxy (HTTPS_PROXY/HTTP_PROXY/NO_PROXY do nothing here), BEACON_CHROMIUM_PATH or fetcher_kind='chromedp' sources, the rain/thaw/heat/frost alert kinds, or the forecast_outlook notify kind.
 ---
 
 # Beacon collection
@@ -77,17 +77,17 @@ turning 20 requests a tick into one — 80 a day into four, matching every other
 is the current day, which at 00:00 UTC has no bars yet: round-the-clock symbols come back
 with `"close": null` and the rule fails. That cost the five crypto sources one collection
 in four, every day, until it was found in production. A multi-day window is never empty at
-a boundary — the newest element is simply the previous day's close — and the price is
-unchanged either way.
+a boundary — the newest non-null element is simply the previous day's close — and the price
+is unchanged either way.
 
 Two consequences before touching those rows. The symbol list lives in the URL and the URLs
 must be **identical** to share a fetch, so adding a Yahoo source means rewriting all of
 them, not adding a row — getting it wrong degrades rather than breaks (the odd one out
 simply fetches separately) but silently gives the saving back. And the rule addresses the
-series by its end (`close[-1]`, negative indices count backwards) because the array grows
-through the session; a literal index would name a different moment on every request.
-`ApplyJSONPath` accepts hyphens in keys for the same reason — `BTC-USD` is a key, not a
-subtraction.
+series by its end (`close[-1]`; negative indices count backwards over non-null elements, so
+the null close of a listed but untraded session is skipped) because the array grows through
+the session; a literal index would name a different moment on every request. `ApplyJSONPath`
+accepts hyphens in keys for the same reason — `BTC-USD` is a key, not a subtraction.
 
 The 24 `KZ_BCC_FX_*` sources share a URL the same way, and since migration
 `202609.035` they read an HTML-entity-escaped JSON document out of the page's Alpine.js
@@ -303,6 +303,13 @@ service binary calls it — it runs by hand or from cron, which is why it may ta
 Usage, exit codes, the AI DSN formats and the chromedp/Chromium setup live in
 `cmd/doctor/README.md` and the package godoc; `make audit`, `make doctor-help` and
 `make audit-help` wrap the common invocations.
+
+`audit` without `--dsn` parses only the seed INSERTs, so a rule fixed by a later UPDATE or a
+source removed by a DELETE is still audited in its seeded form. `audit --dsn` audits the
+effective rows of a migrated database and opens it read-write: point it at a throwaway
+copy, never a live service database. `.agents/scripts/doctor-nightly.sh` runs that mode
+nightly on hive-warden-01 against a database migrated from `origin/dev`; pause, reinstall
+and removal steps are in `cmd/doctor/README.md` ("Nightly audit on warden").
 
 One cross-cutting consequence: `rulegen` persists through `RetainRateSource`, which rewrites
 source rows **wholesale**. Anything runtime-valued that has been added to `rate_sources` is
