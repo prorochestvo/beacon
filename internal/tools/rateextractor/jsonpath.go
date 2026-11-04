@@ -14,9 +14,9 @@ var (
 	// subtraction. The charset stays otherwise narrow so a typo in a rule is still
 	// rejected by name rather than silently treated as a missing key.
 	//
-	// The index accepts a leading minus: negative indices count from the end, which is
-	// the only way to address "the newest point" in a series whose length changes
-	// between requests.
+	// The index accepts a leading minus: negative indices count back from the end over
+	// non-null elements (a null is not a point), which is the only way to address "the
+	// newest point" in a series whose length changes between requests.
 	reArraySegment = regexp.MustCompile(`^([\w-]+)\[(-?\d+)\]$`)
 	rePlainSegment = regexp.MustCompile(`^[\w-]+$`)
 )
@@ -24,9 +24,9 @@ var (
 type pathSegment struct {
 	Key      string
 	HasIndex bool
-	// Index may be negative, counting back from the end of the array: -1 is the last
-	// element. Resolution against the actual length happens at evaluation time, in
-	// ApplyJSONPath, because the length is not known until the payload is parsed.
+	// Index may be negative, counting back from the end over non-null array elements:
+	// -1 is the last non-null value. Negative indices are not positionally aligned across
+	// sibling arrays. Resolution happens in ApplyJSONPath after parsing the payload.
 	Index int
 }
 
