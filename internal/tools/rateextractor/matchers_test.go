@@ -145,7 +145,7 @@ func TestApplyJSONPath(t *testing.T) {
 // TestApplyJSONPath_NegativeIndex covers addressing a series by its end, which is what
 // batching the upstream quote endpoint needs: one request returns every symbol, each with
 // a close array whose length grows through the session, so only "the last one" names a
-// stable thing.
+// stable thing. Trailing nulls, a listed session that has not traded yet, are skipped.
 func TestApplyJSONPath_NegativeIndex(t *testing.T) {
 	t.Parallel()
 
@@ -155,7 +155,9 @@ func TestApplyJSONPath_NegativeIndex(t *testing.T) {
 		"BTC-USD": {"symbol":"BTC-USD","close":[64100.5,64143.86],"previousClose":63900.0},
 		"THIN":    {"symbol":"THIN","close":[12.5]},
 		"EMPTY":   {"symbol":"EMPTY","close":[]},
-		"GAPPY":   {"symbol":"GAPPY","close":[1.0,null]}
+		"GAPPY":   {"symbol":"GAPPY","close":[1.0,null]},
+		"MID":     {"symbol":"MID","close":[1.0,null,3.0]},
+		"NULLS":   {"symbol":"NULLS","close":[null,null]}
 	}`)
 
 	t.Run("minus one is the newest point", func(t *testing.T) {
@@ -231,14 +233,45 @@ func TestApplyJSONPath_NegativeIndex(t *testing.T) {
 		assert.Contains(t, err.Error(), "is not an array")
 	})
 
-	t.Run("a null at the end surfaces rather than being skipped", func(t *testing.T) {
+	t.Run("a null at the end is skipped", func(t *testing.T) {
 		t.Parallel()
-		// Upstream can leave a gap where a period had no trade. Silently walking back to
-		// the previous point would report a stale price as current; failing lets the
-		// source retry on the next tick and, if it persists, be reported.
+		// Since 202608.032 the window is daily bars, so a trailing null is a session that
+		// has not traded yet rather than a no-trade gap, and the previous close is current.
 		got, err := ApplyJSONPath("GAPPY.close[-1]", payload)
-		if err == nil {
-			assert.NotEqual(t, "1", string(got), "a gap must not be answered with the previous point")
-		}
+		require.NoError(t, err)
+		assert.Equal(t, "1.0", string(got))
+	})
+
+	t.Run("negative indices count non-null values through a middle null", func(t *testing.T) {
+		t.Parallel()
+		got, err := ApplyJSONPath("MID.close[-1]", payload)
+		require.NoError(t, err)
+		assert.Equal(t, "3.0", string(got))
+
+		got, err = ApplyJSONPath("MID.close[-2]", payload)
+		require.NoError(t, err)
+		assert.Equal(t, "1.0", string(got))
+	})
+
+	t.Run("an all-null array is out of range and reports non-null count", func(t *testing.T) {
+		t.Parallel()
+		_, err := ApplyJSONPath("NULLS.close[-1]", payload)
+		require.Error(t, err)
+		assert.Contains(
+			t,
+			err.Error(),
+			`index -1 out of range for key "close" (len 2, 0 non-null)`,
+		)
+	})
+
+	t.Run("positive index on null still fails", func(t *testing.T) {
+		t.Parallel()
+		_, err := ApplyJSONPath("GAPPY.close[1]", payload)
+		require.Error(t, err)
+		assert.Contains(
+			t,
+			err.Error(),
+			"unsupported type <nil>",
+		)
 	})
 }
