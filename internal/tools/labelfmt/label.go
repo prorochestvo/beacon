@@ -18,7 +18,7 @@ func SubscriptionConditionLabel(s domain.RateUserSubscription) string {
 	case domain.ConditionTypeDelta:
 		return fmt.Sprintf("Δ ≥ %s%%", s.ConditionValue)
 	case domain.ConditionTypeInterval:
-		return fmt.Sprintf("every %s", IntervalLabel(s.ConditionValue))
+		return "every " + IntervalLabel(s.ConditionValue)
 	case domain.ConditionTypeDaily:
 		if len(s.ConditionValue) >= 5 {
 			return fmt.Sprintf("daily at %s UTC", s.ConditionValue[:5])

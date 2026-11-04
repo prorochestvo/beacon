@@ -9,12 +9,18 @@ import (
 
 	"github.com/seilbekskindirov/beacon/internal/application/rulegen"
 	"github.com/seilbekskindirov/beacon/internal/domain"
+	"github.com/seilbekskindirov/beacon/internal/repository"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 var _ rateSourceLister = (*fakeLister)(nil)
 var _ ruleGenerator = (*fakeGenerator)(nil)
+var _ rulegen.Fetcher = (*sourceAuditFetcherAdapter)(nil)
+
+// The production satisfiers passed to runAll.
+var _ rateSourceLister = (*repository.RateSourceRepository)(nil)
+var _ ruleGenerator = (*rulegen.Generator)(nil)
 
 type fakeLister struct {
 	sources []domain.RateSource

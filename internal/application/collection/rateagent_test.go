@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/repository"
 	"github.com/stretchr/testify/require"
@@ -17,6 +18,14 @@ var _ rateSourceRepository = &repository.RateSourceRepository{}
 var _ rateValueRepository = &repository.RateValueRepository{}
 var _ rateExtractor = &mockRateExtractor{}
 var _ chromedpBatchExtractor = &mockRateExtractor{}
+
+// The mocks were asserted only through the production types above, so a change to one of
+// these interfaces broke the real implementation loudly and the mock silently — it simply
+// stopped satisfying an interface nothing checked. Pre-existing; surfaced because this file
+// changed and the incremental gate then holds it to R1.
+var _ rateSourceRepository = (*mockRateSourceRepository)(nil)
+var _ executionHistoryRepository = (*mockExecutionHistoryRepository)(nil)
+var _ rateValueRepository = (*mockRateValueRepository)(nil)
 
 func TestNewRateAgent(t *testing.T) {
 	t.Parallel()
@@ -31,6 +40,7 @@ func TestNewRateAgent(t *testing.T) {
 			&mockExecutionHistoryRepository{},
 			&mockRateValueRepository{},
 			io.Discard,
+			"TestAgent/1.0 (+https://example.invalid/test)",
 		)
 		require.NoError(t, err)
 		require.NotNil(t, agent)
@@ -81,7 +91,7 @@ func TestRateAgent_execution(t *testing.T) {
 		}
 
 		errs := a.execution(t.Context(), []domain.RateSource{{Name: "src1"}})
-		require.NotNil(t, errs["src1"])
+		require.Error(t, errs["src1"])
 	})
 	t.Run("multiple sources each get their own history record", func(t *testing.T) {
 		t.Parallel()
@@ -95,6 +105,53 @@ func TestRateAgent_execution(t *testing.T) {
 		errs := a.execution(t.Context(), []domain.RateSource{{Name: "src1"}, {Name: "src2"}})
 		require.Empty(t, errs)
 		require.Len(t, histRepo.retained, 2)
+	})
+}
+
+// TestRateAgent_AbortIsDistinguishableFromSourceFailures guards the distinction #74 turns
+// on. Marking every error would make the signal fire most ticks — a source of thirty
+// failing to fetch is routine on scraped pages — and a signal that fires every tick is
+// read by nobody within a week.
+func TestRateAgent_AbortIsDistinguishableFromSourceFailures(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a failed source read aborts and is marked", func(t *testing.T) {
+		t.Parallel()
+
+		readErr := errors.New("rate_sources read interrupted")
+		a := &RateAgent{
+			rateSourceRepository:       &mockRateSourceRepository{err: readErr},
+			executionHistoryRepository: &mockExecutionHistoryRepository{},
+			rateValueRepository:        &mockRateValueRepository{},
+			plainExtractor:             &mockRateExtractor{},
+			logger:                     io.Discard,
+		}
+
+		err := a.Run(t.Context())
+		require.Error(t, err)
+		require.ErrorIs(t, err, internal.ErrAgentAborted,
+			"nothing was collected, and that is the failure worth waking someone for")
+		require.ErrorIs(t, err, readErr, "the cause must survive the marking")
+	})
+
+	t.Run("a failing source is not an abort", func(t *testing.T) {
+		t.Parallel()
+
+		extractor := &mockRateExtractor{err: errors.New("fetch error")}
+		a := &RateAgent{
+			rateSourceRepository: &mockRateSourceRepository{sources: []domain.RateSource{
+				{Name: "src1", Interval: "1s", Active: true},
+			}},
+			executionHistoryRepository: &mockExecutionHistoryRepository{},
+			rateValueRepository:        &mockRateValueRepository{},
+			plainExtractor:             extractor,
+			logger:                     io.Discard,
+		}
+
+		err := a.Run(t.Context())
+		require.Error(t, err, "the source failure is still reported")
+		require.NotErrorIs(t, err, internal.ErrAgentAborted,
+			"the sweep ran; one source failing is what SourceHealthAgent exists to judge, not an alert")
 	})
 }
 
@@ -165,7 +222,7 @@ func TestRateAgent_execution_dispatchesByFetcherKind(t *testing.T) {
 
 		errs := a.execution(t.Context(), []domain.RateSource{{Name: "badsrc", FetcherKind: "bogus"}})
 
-		require.NotNil(t, errs["badsrc"], "unsupported fetcher_kind must produce an error entry")
+		require.Error(t, errs["badsrc"], "unsupported fetcher_kind must produce an error entry")
 		require.ErrorContains(t, errs["badsrc"], "unsupported fetcher_kind")
 		require.ErrorContains(t, errs["badsrc"], "bogus")
 		require.Equal(t, 0, plain.calls, "plain extractor must not be called for unsupported kind")

@@ -60,20 +60,8 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/infrastructure/sqlitedb"
 	"github.com/seilbekskindirov/beacon/internal/repository"
 	"github.com/seilbekskindirov/beacon/internal/tools/proxyutil"
+	"github.com/seilbekskindirov/beacon/migrations"
 	_ "modernc.org/sqlite"
-)
-
-const (
-	envDsnSqliteDB   = "BEACON_SQLITEDB_DSN"
-	envDsnAIPrimary  = "BEACON_AI_PRIMARY_DSN"
-	envDsnAIFallback = "BEACON_AI_FALLBACK_DSN"
-	// envChromiumPath is the optional absolute path to the Chromium/Chrome binary;
-	// when unset, chromedp searches PATH (chromium, chromium-browser, google-chrome,
-	// chrome).
-	envChromiumPath = "BEACON_CHROMIUM_PATH"
-	// envProxyURL is the optional outbound proxy URL parsed via dsninjector;
-	// when unset or empty, outbound traffic goes direct.
-	envProxyURL = "BEACON_PROXY_URL"
 )
 
 // rateSourceLister is the narrow read-side interface runAll needs, defined locally
@@ -86,6 +74,21 @@ type rateSourceLister interface {
 // tests can fake it without rebuilding the full dependency graph.
 type ruleGenerator interface {
 	Generate(ctx context.Context, sourceName string, forceFallback bool) (*rulegen.Result, error)
+}
+
+// sourceAuditFetcherAdapter adapts sourceaudit.Fetcher to rulegen.Fetcher, which
+// returns only the body bytes. Headers are forwarded to the inner Fetcher so
+// per-source header-dependent sources (e.g. Yahoo Finance) work correctly in rulegen.
+type sourceAuditFetcherAdapter struct {
+	inner sourceaudit.Fetcher
+}
+
+func (a *sourceAuditFetcherAdapter) Fetch(ctx context.Context, url string, headers map[string]string) ([]byte, error) {
+	result, err := a.inner.Fetch(ctx, url, headers)
+	if err != nil {
+		return nil, err
+	}
+	return result.Body, nil
 }
 
 // runAll invokes gen.Generate for every active rate source. It fetches all sources
@@ -114,6 +117,10 @@ func runAll(ctx context.Context, gen ruleGenerator, srcs rateSourceLister, force
 		processed++
 		func() {
 			defer func() {
+				// Bare %v, not a full stack: this is a per-source batch failure
+				// line the operator (and cron) greps, not a process-level panic.
+				// A full stack here is noise; the process recover (cmd/collector)
+				// is where the expensive full-stack trace belongs.
 				if r := recover(); r != nil {
 					failed++
 					fmt.Fprintf(out, "FAIL source=%s reason=panic: %v\n", src.Name, r)
@@ -214,21 +221,21 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 		return 3
 	}
 
-	proxyURL := proxyutil.ResolveURL(envProxyURL)
+	proxyURL := proxyutil.ResolveURL(internal.EnvProxyURL)
 
-	dsnSQLiteDB, err := dsninjector.Unmarshal(envDsnSqliteDB)
+	dsnSQLiteDB, err := dsninjector.Unmarshal(internal.EnvSQLiteDSN)
 	if err != nil {
-		infraFail("settings %s: %v", envDsnSqliteDB, err)
+		infraFail("settings %s: unparseable value (contents not logged)", internal.EnvSQLiteDSN)
 		return 3
 	}
 
-	dsnAIPrimary, err := dsninjector.Unmarshal(envDsnAIPrimary)
+	dsnAIPrimary, err := dsninjector.Unmarshal(internal.EnvAIPrimaryDSN)
 	if err != nil {
-		infraFail("settings %s: %v", envDsnAIPrimary, err)
+		infraFail("settings %s: unparseable value (contents not logged)", internal.EnvAIPrimaryDSN)
 		return 3
 	}
 
-	db, err := sqlitedb.NewSQLiteClient(dsnSQLiteDB, l.WriterAs(internal.LogLevelInfo))
+	db, err := sqlitedb.NewSQLiteClient(dsnSQLiteDB)
 	if err != nil {
 		infraFail("sqlite connection: %v", err)
 		return 3
@@ -239,7 +246,7 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 		}
 	}()
 
-	if err = sqlitedb.RequireMigratedSchema(context.Background(), db); err != nil {
+	if err = sqlitedb.RequireMigratedSchema(context.Background(), db, migrations.MigrationsFS); err != nil {
 		infraFail("schema check: %v", err)
 		return 3
 	}
@@ -251,10 +258,10 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 	}
 
 	var aiFallback artificialintelligence.AIClient
-	if _, ok := os.LookupEnv(envDsnAIFallback); ok {
-		dsnAIFallback, dsnErr := dsninjector.Unmarshal(envDsnAIFallback)
+	if _, ok := os.LookupEnv(internal.EnvAIFallbackDSN); ok {
+		dsnAIFallback, dsnErr := dsninjector.Unmarshal(internal.EnvAIFallbackDSN)
 		if dsnErr != nil {
-			infraFail("settings %s: %v", envDsnAIFallback, dsnErr)
+			infraFail("settings %s: unparseable value (contents not logged)", internal.EnvAIFallbackDSN)
 			return 3
 		}
 		aiFallback, err = artificialintelligence.NewClient(dsnAIFallback, l.WriterAs(internal.LogLevelInfo), proxyURL)
@@ -276,7 +283,7 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 		return 3
 	}
 
-	plainHTTPFetcher, err := sourceaudit.NewHTTPFetcher(time.Minute, proxyURL)
+	plainHTTPFetcher, err := sourceaudit.NewHTTPFetcher(time.Minute, proxyURL, internal.UserAgent)
 	if err != nil {
 		infraFail("plain fetcher build: %v", err)
 		return 3
@@ -285,7 +292,7 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 
 	chromedpFor := func(waitSelector string) rulegen.Fetcher {
 		return rulegen.NewChromedpFetcher(rulegen.ChromedpFetcherOptions{
-			ChromiumPath: os.Getenv(envChromiumPath),
+			ChromiumPath: os.Getenv(internal.EnvChromiumPath),
 			ProxyURL:     proxyURL,
 			Logger:       l.WriterAs(internal.LogLevelInfo),
 			WaitSelector: waitSelector,
@@ -332,23 +339,6 @@ func runRulegen(args []string, out, errOut io.Writer) int {
 		res.Metadata.Model,
 	)
 	return 0
-}
-
-var _ rulegen.Fetcher = (*sourceAuditFetcherAdapter)(nil)
-
-// sourceAuditFetcherAdapter adapts sourceaudit.Fetcher to rulegen.Fetcher, which
-// returns only the body bytes. Headers are forwarded to the inner Fetcher so
-// per-source header-dependent sources (e.g. Yahoo Finance) work correctly in rulegen.
-type sourceAuditFetcherAdapter struct {
-	inner sourceaudit.Fetcher
-}
-
-func (a *sourceAuditFetcherAdapter) Fetch(ctx context.Context, url string, headers map[string]string) ([]byte, error) {
-	result, err := a.inner.Fetch(ctx, url, headers)
-	if err != nil {
-		return nil, err
-	}
-	return result.Body, nil
 }
 
 func printRulegenUsage(w io.Writer) {

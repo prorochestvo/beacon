@@ -1,8 +1,9 @@
-// Package ui provides HTML renderers for the WASM frontend. This file renders
-// the city weather subscription screen: a text input for geocoding search, a
-// list of matches to pick from, and the caller's saved city list with per-row
-// delete controls. All user-supplied and server-returned text is HTML-escaped.
 package ui
+
+// This file renders the city weather subscription screen: a text input for
+// geocoding search, a list of matches to pick from, and the caller's saved
+// city list with per-row delete controls. All user-supplied and server-
+// returned text is HTML-escaped.
 
 import (
 	"fmt"
@@ -12,6 +13,17 @@ import (
 	"github.com/seilbekskindirov/beacon/cmd/wasm/dom"
 	"github.com/seilbekskindirov/beacon/internal/dto"
 )
+
+// WeatherCityGroup holds all subscription rows for a single physical city,
+// grouped by location_id for display.
+type WeatherCityGroup struct {
+	LocationID  string
+	DisplayName string
+	Country     string
+	Admin1      string
+	Timezone    string
+	Rows        []dto.WeatherCityRow
+}
 
 // RenderMeWeatherCities returns the full HTML for the city weather subscription
 // screen. Auth-failure and load-error states short-circuit the content.
@@ -27,23 +39,24 @@ func RenderMeWeatherCities(state application.WeatherCitiesState) string {
 
 	b.WriteString(renderWeatherTopbar())
 
-	if state.Loading {
+	switch {
+	case state.Loading:
 		b.WriteString(`<p class="weather-loading">Loading…</p>`)
-		return b.String()
-	}
-	if state.LoadError != nil {
+	case state.LoadError != nil:
 		b.WriteString(`<p class="error-msg">`)
 		b.WriteString(dom.Escape(state.LoadError.Error()))
 		b.WriteString(`</p>`)
-		return b.String()
+	default:
+		b.WriteString(renderWeatherSearchSection(state))
+		b.WriteString(renderWeatherCityList(state))
 	}
 
-	b.WriteString(renderWeatherSearchSection(state))
-	b.WriteString(renderWeatherCityList(state))
-	return b.String()
+	return RenderSectionShell(SectionWeather, b.String())
 }
 
-// renderWeatherTopbar emits the screen header with a back button.
+// renderWeatherTopbar emits the screen header. The back button leaves settings for
+// the weather home tab — it changes the mode, never the section, which is the
+// section rail's job (see section_rail.go).
 func renderWeatherTopbar() string {
 	return `<div class="weather-topbar">` +
 		`<button class="weather-back" id="weather-back" type="button">← Back</button>` +
@@ -59,21 +72,20 @@ func renderWeatherSearchSection(state application.WeatherCitiesState) string {
 	b.WriteString(`<section class="weather-search-section">`)
 	b.WriteString(`<h2 class="weather-section-title">Add a city</h2>`)
 
-	b.WriteString(fmt.Sprintf(
-		`<input class="weather-search-input" id="weather-search" type="text" `+
-			`placeholder="Search city…" value="%s" autocomplete="off">`,
-		dom.Escape(state.SearchQuery),
-	))
+	fmt.Fprintf(&b, `<input class="weather-search-input" id="weather-search" type="text" `+
+		`placeholder="Search city…" value="%s" autocomplete="off">`,
+		dom.Escape(state.SearchQuery))
 
-	if state.SearchLoading {
+	switch {
+	case state.SearchLoading:
 		b.WriteString(`<p class="weather-search-loading">Searching…</p>`)
-	} else if state.SearchError != nil {
+	case state.SearchError != nil:
 		b.WriteString(`<p class="weather-search-error">`)
 		b.WriteString(dom.Escape(state.SearchError.Error()))
 		b.WriteString(`</p>`)
-	} else if len(state.SearchResults) > 0 {
+	case len(state.SearchResults) > 0:
 		b.WriteString(renderWeatherSearchResults(state))
-	} else if strings.TrimSpace(state.SearchQuery) != "" {
+	case strings.TrimSpace(state.SearchQuery) != "":
 		b.WriteString(`<p class="weather-search-empty">No cities found.</p>`)
 	}
 
@@ -117,10 +129,8 @@ func renderWeatherSearchResults(state application.WeatherCitiesState) string {
 			continue
 		}
 		seen[label] = struct{}{}
-		b.WriteString(fmt.Sprintf(
-			`<li class="%s" data-index="%d" role="option" tabindex="0">%s</li>`,
-			cls, i, dom.Escape(label),
-		))
+		fmt.Fprintf(&b, `<li class="%s" data-index="%d" role="option" tabindex="0">%s</li>`,
+			cls, i, dom.Escape(label))
 	}
 	b.WriteString(`</ul>`)
 
@@ -131,17 +141,6 @@ func renderWeatherSearchResults(state application.WeatherCitiesState) string {
 		b.WriteString(`</div>`)
 	}
 	return b.String()
-}
-
-// WeatherCityGroup holds all subscription rows for a single physical city,
-// grouped by location_id for display.
-type WeatherCityGroup struct {
-	LocationID  string
-	DisplayName string
-	Country     string
-	Admin1      string
-	Timezone    string
-	Rows        []dto.WeatherCityRow
 }
 
 // GroupWeatherCities groups a flat city list by location_id, preserving the
@@ -170,7 +169,6 @@ func GroupWeatherCities(cities []dto.WeatherCityRow) []WeatherCityGroup {
 
 // renderWeatherCityList emits the caller's saved city subscription list grouped by
 // location_id, with per-kind delete controls and an "Add alert" form per city.
-// A "View current weather" button appears when at least one city is saved.
 func renderWeatherCityList(state application.WeatherCitiesState) string {
 	var b strings.Builder
 	b.WriteString(`<section class="weather-cities-section">`)
@@ -181,12 +179,16 @@ func renderWeatherCityList(state application.WeatherCitiesState) string {
 	if len(groups) == 0 {
 		b.WriteString(`<p class="weather-cities-empty">No cities yet. Use the search above to add one.</p>`)
 	} else {
+		// Thaw and rain alerts are forced always-on for every tracked city (see
+		// CreateMeWeatherCity). Surface that once here instead of repeating an
+		// "always on" row under each city. The rain row itself is still listed per city,
+		// because its threshold is user-tunable and therefore worth showing.
+		b.WriteString(`<p class="weather-thaw-note">🫠 Thaw and 🌧️ rain alerts are always on for every city.</p>`)
 		b.WriteString(`<ul class="weather-cities-list" id="weather-cities-list">`)
 		for _, g := range groups {
 			b.WriteString(renderWeatherCityGroupItem(g, state))
 		}
 		b.WriteString(`</ul>`)
-		b.WriteString(`<button class="weather-current-btn" id="weather-view-current" type="button">View current weather</button>`)
 	}
 
 	b.WriteString(`</section>`)
@@ -206,10 +208,21 @@ func renderWeatherCityGroupItem(g WeatherCityGroup, state application.WeatherCit
 
 	var b strings.Builder
 	b.WriteString(`<li class="weather-city-group">`)
+	b.WriteString(`<div class="weather-city-group-header">`)
 	fmt.Fprintf(&b, `<span class="weather-city-name">%s</span>`, dom.Escape(label))
+	fmt.Fprintf(&b,
+		`<button class="weather-city-remove" type="button" data-location-id="%s" aria-label="Remove city">Remove city</button>`,
+		dom.Escape(g.LocationID),
+	)
+	b.WriteString(`</div>`)
 	b.WriteString(`<ul class="weather-city-kinds">`)
 
 	for _, row := range g.Rows {
+		// alert_thaw is forced and system-managed: it is surfaced once globally in
+		// renderWeatherCityList, never as a per-city row.
+		if row.NotifyKind == "alert_thaw" {
+			continue
+		}
 		b.WriteString(renderWeatherKindRow(row))
 	}
 
@@ -230,9 +243,23 @@ func renderWeatherCityGroupItem(g WeatherCityGroup, state application.WeatherCit
 	return b.String()
 }
 
-// renderWeatherKindRow emits one subscription kind row with a delete button.
+// renderWeatherKindRow emits one deletable subscription kind row (morning_summary
+// or a user-added alert). alert_thaw is never passed here: it is forced,
+// system-managed, and surfaced once globally by renderWeatherCityList.
 func renderWeatherKindRow(row dto.WeatherCityRow) string {
 	label := alertKindLabel(row.NotifyKind, row.ConditionValue, row.NotifyHour)
+
+	// rain_alert is forced and system-managed: DELETE on a single rain row answers 409, so
+	// no delete control is rendered — a button whose only possible outcome is an error is
+	// not a control. The row itself stays visible because its threshold is user-tunable:
+	// re-adding a rain alert with a new value upserts condition_value in place.
+	if row.NotifyKind == "rain_alert" {
+		return fmt.Sprintf(
+			`<li class="weather-kind-row"><span class="weather-kind-label">%s</span></li>`,
+			dom.Escape(label),
+		)
+	}
+
 	return fmt.Sprintf(
 		`<li class="weather-kind-row">`+
 			`<span class="weather-kind-label">%s</span>`+
@@ -252,8 +279,12 @@ func alertKindLabel(kind, conditionValue string, notifyHour int) string {
 		return fmt.Sprintf("Frost alert ≤ %s°C", conditionValue)
 	case "alert_thunderstorm":
 		return "Thunderstorm alert"
+	case "alert_thaw":
+		return "Thaw alert"
 	case "rain_alert":
 		return fmt.Sprintf("Rain alert ≥ %s%% within 6h", conditionValue)
+	case "forecast_outlook":
+		return fmt.Sprintf("Outlook digest · %02d:00", notifyHour)
 	default: // morning_summary or empty
 		return fmt.Sprintf("Morning summary · %02d:00", notifyHour)
 	}
@@ -266,11 +297,21 @@ func renderWeatherAlertForm(state application.WeatherCitiesState) string {
 
 	// Kind selector.
 	b.WriteString(`<select class="weather-alert-kind" id="weather-alert-kind">`)
+	// alert_thaw is intentionally absent: it is forced onto every tracked city
+	// automatically (see CreateMeWeatherCity) and cannot be added manually.
+	// morning_summary IS listed so a user who deleted the auto-created daily
+	// summary can re-add it (and pick its hour); re-adding upserts the hour
+	// without resetting the fire cursor (see RetainWeatherUserCity).
+	// rain_alert is forced too, but IS listed: re-adding it with a different percentage is
+	// how its threshold is retuned. alert_latched is insert-only in the upsert, so changing
+	// the threshold never resets the latch into a spurious notification.
 	kinds := []struct{ value, label string }{
+		{"morning_summary", "Morning summary (daily)"},
 		{"alert_heat", "Heat alert (°C)"},
 		{"alert_frost", "Frost alert (°C)"},
 		{"alert_thunderstorm", "Thunderstorm alert"},
 		{"rain_alert", "Rain alert (%)"},
+		{"forecast_outlook", "Outlook digest (daily)"},
 	}
 	for _, k := range kinds {
 		selected := ""
@@ -281,8 +322,21 @@ func renderWeatherAlertForm(state application.WeatherCitiesState) string {
 	}
 	b.WriteString(`</select>`)
 
-	// Value input (hidden for thunderstorm).
-	if state.AlertFormKind != "alert_thunderstorm" {
+	// Numeric input; its meaning depends on the selected kind:
+	//   - morning_summary and forecast_outlook: a local hour 0–23 (blank → server
+	//     default 07:00), since both are timed rather than thresholded;
+	//   - heat/frost/rain: the numeric threshold;
+	//   - thunderstorm/thaw: no numeric input at all.
+	switch state.AlertFormKind {
+	case "alert_thunderstorm", "alert_thaw":
+		// No numeric input.
+	case "morning_summary", "forecast_outlook":
+		fmt.Fprintf(&b,
+			`<input class="weather-alert-value" id="weather-alert-value" type="number" min="0" max="23" step="1" `+
+				`placeholder="hour 0–23 (default 7)" value="%s">`,
+			dom.Escape(state.AlertFormValue),
+		)
+	default:
 		fmt.Fprintf(&b,
 			`<input class="weather-alert-value" id="weather-alert-value" type="number" step="0.1" `+
 				`placeholder="threshold" value="%s">`,
@@ -301,28 +355,4 @@ func renderWeatherAlertForm(state application.WeatherCitiesState) string {
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
 	return b.String()
-}
-
-// renderWeatherCityRow emits one saved-city row with a delete button.
-// Retained for backward compatibility; new code calls renderWeatherKindRow.
-// All displayed strings are escaped; id is stored in data-id on the delete button.
-func renderWeatherCityRow(id, displayName, country, admin1, timezone string, notifyHour int) string {
-	label := displayName
-	if admin1 != "" {
-		label += ", " + admin1
-	}
-	if country != "" {
-		label += ", " + country
-	}
-	return fmt.Sprintf(
-		`<li class="weather-city-row">`+
-			`<span class="weather-city-name">%s</span>`+
-			`<span class="weather-city-detail">%s · %02d:00</span>`+
-			`<button class="weather-city-delete" type="button" data-id="%s" aria-label="Remove city">✕</button>`+
-			`</li>`,
-		dom.Escape(label),
-		dom.Escape(timezone),
-		notifyHour,
-		dom.Escape(id),
-	)
 }

@@ -31,7 +31,7 @@ func TestRenderPairModal(t *testing.T) {
 	t.Run("returns empty string when OpenPair is nil", func(t *testing.T) {
 		t.Parallel()
 		state := application.MeSubscriptionsState{}
-		assert.Equal(t, "", ui.RenderPairModal(state))
+		assert.Empty(t, ui.RenderPairModal(state))
 	})
 
 	t.Run("returns empty string when OpenPair does not match any chart pair", func(t *testing.T) {
@@ -41,14 +41,14 @@ func TestRenderPairModal(t *testing.T) {
 		})
 		row := mkRow("USD/KZT", "fiat", nil, []dto.MeChartSeries{bid})
 		state := pairModalState("EUR/KZT", []dto.MeChartPairRow{row}, nil)
-		assert.Equal(t, "", ui.RenderPairModal(state))
+		assert.Empty(t, ui.RenderPairModal(state))
 	})
 
 	t.Run("returns empty string when chart is nil", func(t *testing.T) {
 		t.Parallel()
 		p := "USD/KZT"
 		state := application.MeSubscriptionsState{OpenPair: &p, Chart: nil}
-		assert.Equal(t, "", ui.RenderPairModal(state))
+		assert.Empty(t, ui.RenderPairModal(state))
 	})
 
 	t.Run("renders role=dialog aria-modal and aria-labelledby", func(t *testing.T) {

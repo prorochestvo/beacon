@@ -13,11 +13,11 @@ import (
 func TestParseSeedFiles_EmbeddedMigrations(t *testing.T) {
 	t.Parallel()
 
-	t.Run("embedded migrations enumerate 56 sources", func(t *testing.T) {
+	t.Run("embedded migrations enumerate 57 sources", func(t *testing.T) {
 		t.Parallel()
 		sources, err := sourceaudit.ParseSeedFiles(migrations.MigrationsFS, "*.seed*.sql")
 		require.NoError(t, err)
-		assert.Len(t, sources, 56)
+		assert.Len(t, sources, 57)
 
 		// A duplicated seed name is silently dropped by INSERT OR IGNORE at
 		// migrate time, so the DB ends up one row short while this count stays

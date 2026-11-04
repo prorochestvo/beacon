@@ -19,7 +19,7 @@ Swagger output and is unrelated to this journal.
 
 ## File naming
 
-Same convention as `.agents/plans/completed/` from `CLAUDE.md`:
+Same convention as `.agents/plans/completed/` from `AGENTS.md`:
 
 ```
 YYMMDD.NNNN.slug.md
@@ -44,7 +44,7 @@ problem, the options considered, the chosen option, and the consequences.
 
 - `docs/reviews/` answers "what's wrong in the project and why".
 - `docs/decisions/` answers "what did we decide to do about it".
-- `.agents/plans/NNN-slug.md` answers "how exactly are we doing it" — the technical
+- `plans/NNN-slug.md` answers "how exactly are we doing it" — the technical
   implementation plan for a specific decision.
 
 So the normal flow is: a review surfaces a problem → an ADR records the

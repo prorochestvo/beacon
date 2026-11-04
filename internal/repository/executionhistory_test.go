@@ -133,7 +133,7 @@ func TestExecutionHistoryRepository_ObtainLastN(t *testing.T) {
 		src := "limit-source"
 		now := time.Now().UTC()
 
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			h := &domain.ExecutionHistory{
 				SourceName: src,
 				Success:    true,
@@ -146,7 +146,7 @@ func TestExecutionHistoryRepository_ObtainLastN(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result, 2)
 		// newest-first: result[0].Timestamp >= result[1].Timestamp
-		require.True(t, !result[0].Timestamp.Before(result[1].Timestamp))
+		require.False(t, result[0].Timestamp.Before(result[1].Timestamp))
 	})
 }
 
@@ -210,9 +210,9 @@ func TestExecutionHistoryRepository_RemoveSourceExecutionHistory(t *testing.T) {
 	t.Run("nil record returns error", func(t *testing.T) {
 		t.Parallel()
 
-		err := r.RemoveSourceExecutionHistory(t.Context(), nil)
-		require.Error(t, err)
-		require.ErrorContains(t, err, "nil")
+		removeErr := r.RemoveSourceExecutionHistory(t.Context(), nil)
+		require.Error(t, removeErr)
+		require.ErrorContains(t, removeErr, "nil")
 	})
 
 	h := &domain.ExecutionHistory{
@@ -227,10 +227,10 @@ func TestExecutionHistoryRepository_RemoveSourceExecutionHistory(t *testing.T) {
 
 	tx, err := r.db.Transaction(t.Context())
 	require.NoError(t, err)
-	defer func() { _ = tx.Rollback() }()
+	t.Cleanup(func() { _ = tx.Rollback() })
 
 	var count int
-	require.NoError(t, tx.QueryRow("SELECT COUNT(*) FROM"+" "+executionHistoryTableName+" WHERE "+executionHistoryIdFieldName+" = ?", h.ID).Scan(&count))
+	require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM"+" "+executionHistoryTableName+" WHERE "+executionHistoryIdFieldName+" = ?", h.ID).Scan(&count))
 	require.Equal(t, 0, count)
 }
 
@@ -345,7 +345,7 @@ func TestExecutionHistoryRepository_ObtainErrors(t *testing.T) {
 			require.False(t, item.Success)
 		}
 		// newest-first ordering
-		require.True(t, !items[0].Timestamp.Before(items[len(items)-1].Timestamp))
+		require.False(t, items[0].Timestamp.Before(items[len(items)-1].Timestamp))
 	})
 	t.Run("pagination with offset respects limit", func(t *testing.T) {
 		t.Parallel()
@@ -355,7 +355,7 @@ func TestExecutionHistoryRepository_ObtainErrors(t *testing.T) {
 
 		src := "err-page-source"
 		now := time.Now().UTC()
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			h := &domain.ExecutionHistory{
 				SourceName: src,
 				Success:    false,
@@ -387,7 +387,7 @@ func BenchmarkExecutionHistoryRepository_ObtainLastN(b *testing.B) {
 	src := "bench-source"
 	now := time.Now().UTC()
 
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		h := &domain.ExecutionHistory{
 			SourceName: src,
 			Success:    i%2 == 0,

@@ -1,3 +1,5 @@
+package artificialintelligence
+
 // OpenRouter client.
 //
 // DSN format:
@@ -16,7 +18,6 @@
 // (e.g. anthropic/claude-..., google/gemini-...) and the caller must supply a
 // model string the selected plan supports. Not all OpenRouter models support
 // response_format:json_schema — an unsupported one returns HTTP 400 at runtime.
-package artificialintelligence
 
 import (
 	"context"
@@ -27,56 +28,13 @@ import (
 	"net/url"
 
 	"github.com/prorochestvo/dsninjector"
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 )
 
 // openRouterCheckUPModel is the cheapest paid variant on OpenRouter, used for
 // liveness probes. The paid 1B model has its own quota and avoids the heavy
 // rate-limiting on :free tier models.
 const openRouterCheckUPModel = "meta-llama/llama-3.2-1b-instruct"
-
-// newOpenRouterClient parses the DSN and returns a ready-to-use openRouterClient.
-//
-// DSN: openrouterai://_:<base64url(KEY)>@<host>/<base-path>?model=<model>&timeout=<duration>
-//
-// proxyURL is an optional HTTP proxy URL (e.g. "http://127.0.0.1:7788"); pass "" for none.
-func newOpenRouterClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (*openRouterClient, error) {
-	apiKey, err := parseDSNKey(dns)
-	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
-	}
-
-	baseURL, err := url.JoinPath(fmt.Sprintf("https://%s", dns.Addr()), dns.Database())
-	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
-	}
-
-	model := "openai/gpt-4o"
-	if v := dns.Option("model"); v != "" {
-		model = v
-	}
-
-	timeout, err := parseDSNTimeout(dns)
-	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
-	}
-
-	httpClient, err := buildHTTPClient(timeout, proxyURL)
-	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
-	}
-
-	return &openRouterClient{
-		inner: openAICompatibleClient{
-			baseURL:      baseURL,
-			model:        model,
-			apiKey:       apiKey,
-			httpClient:   httpClient,
-			logger:       log.New(logger, "openrouter ", log.LstdFlags),
-			providerName: "openrouter",
-		},
-	}, nil
-}
 
 type openRouterClient struct {
 	inner openAICompatibleClient
@@ -100,4 +58,47 @@ func (c *openRouterClient) CheckUP(ctx context.Context) error {
 // of the first choice message. A json_schema response_format is always attached.
 func (c *openRouterClient) Complete(ctx context.Context, systemPrompt, userMessage string) (string, error) {
 	return c.inner.complete(ctx, systemPrompt, userMessage, true)
+}
+
+// newOpenRouterClient parses the DSN and returns a ready-to-use openRouterClient.
+//
+// DSN: openrouterai://_:<base64url(KEY)>@<host>/<base-path>?model=<model>&timeout=<duration>
+//
+// proxyURL is an optional HTTP proxy URL (e.g. "http://127.0.0.1:7788"); pass "" for none.
+func newOpenRouterClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (*openRouterClient, error) {
+	apiKey, err := parseDSNKey(dns)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+
+	baseURL, err := url.JoinPath("https://"+dns.Addr(), dns.Database())
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+
+	model := "openai/gpt-4o"
+	if v := dns.Option("model"); v != "" {
+		model = v
+	}
+
+	timeout, err := parseDSNTimeout(dns)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+
+	httpClient, err := buildHTTPClient(timeout, proxyURL)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+
+	return &openRouterClient{
+		inner: openAICompatibleClient{
+			baseURL:      baseURL,
+			model:        model,
+			apiKey:       apiKey,
+			httpClient:   httpClient,
+			logger:       log.New(logger, "openrouter ", log.LstdFlags),
+			providerName: "openrouter",
+		},
+	}, nil
 }

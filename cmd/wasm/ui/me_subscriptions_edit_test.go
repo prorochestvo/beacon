@@ -104,7 +104,7 @@ func TestRenderMeSubscriptionsEdit(t *testing.T) {
 		t.Parallel()
 
 		sources := make([]dto.SourceResponse, 0, application.PickerPageSize+3)
-		for i := 0; i < application.PickerPageSize+3; i++ {
+		for i := range application.PickerPageSize + 3 {
 			sources = append(sources, dto.SourceResponse{
 				Name:          "src_" + string(rune('a'+i)),
 				Title:         "P" + string(rune('0'+i)),
@@ -295,7 +295,6 @@ func TestRenderMeSubscriptionsEdit(t *testing.T) {
 			"cron":     "0 9 * * 1-5",
 		}
 		for ct, wantPlaceholder := range types {
-			ct, wantPlaceholder := ct, wantPlaceholder
 			t.Run(ct, func(t *testing.T) {
 				t.Parallel()
 				state := application.MeSubscriptionsEditState{
@@ -380,7 +379,7 @@ func TestRenderMeSubscriptionsEdit(t *testing.T) {
 		t.Parallel()
 
 		items := make([]dto.MeSubscriptionEditRow, 0, application.SubscriptionListPageSize+3)
-		for i := 0; i < application.SubscriptionListPageSize+3; i++ {
+		for i := range application.SubscriptionListPageSize + 3 {
 			items = append(items, dto.MeSubscriptionEditRow{
 				ID:             "id-" + string(rune('a'+i)),
 				SourceTitle:    "Provider " + string(rune('A'+i)),

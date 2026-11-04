@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ import (
 // buildInitData produces a correctly-signed initData string, mirroring the
 // Telegram WebApp signing algorithm exactly.
 func buildInitData(botToken string, fields map[string]string, authDate int64) string {
-	fields["auth_date"] = fmt.Sprintf("%d", authDate)
+	fields["auth_date"] = strconv.FormatInt(authDate, 10)
 
 	keys := make([]string, 0, len(fields))
 	for k := range fields {
@@ -118,7 +119,7 @@ func TestValidateInitData(t *testing.T) {
 	t.Run("auth_date older than maxAge returns expired error", func(t *testing.T) {
 		t.Parallel()
 
-		staleAuthDate := int64(1700000000 - int64(25*time.Hour/time.Second)) // 25 hours ago
+		staleAuthDate := 1700000000 - int64(25*time.Hour/time.Second) // 25 hours ago
 		initData := buildInitData(testBotToken, map[string]string{
 			"user": validUserJSON(),
 		}, staleAuthDate)

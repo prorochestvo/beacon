@@ -14,7 +14,6 @@ import (
 
 	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/shared"
 	"github.com/prorochestvo/dsninjector"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,7 +28,7 @@ func newTestOpenAIClient(t *testing.T, baseURL string) *openAIClient {
 		option.WithBaseURL(baseURL),
 	)
 	return &openAIClient{
-		model:   shared.ChatModel(openaisdk.ChatModelGPT4o),
+		model:   openaisdk.ChatModelGPT4o,
 		api:     api,
 		logger:  log.New(io.Discard, "", 0),
 		timeout: 10 * time.Second,
@@ -78,7 +77,7 @@ func TestOpenAIClient_CheckUP(t *testing.T) {
 			gotAuth = r.Header.Get("Authorization")
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write([]byte(`{"object":"list","data":[{"id":"gpt-4o","object":"model","created":0,"owned_by":"openai"}]}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -97,7 +96,7 @@ func TestOpenAIClient_CheckUP(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, werr := w.Write([]byte(`{"error":{"message":"Invalid API key","type":"invalid_request_error"}}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -113,7 +112,7 @@ func TestOpenAIClient_CheckUP(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write([]byte(`{"object":"list","data":[]}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -129,7 +128,7 @@ func TestOpenAIClient_CheckUP(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write([]byte(`{"object":"list","data":[{"id":"gpt-4o","object":"model","created":0,"owned_by":"openai"}]}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -146,7 +145,7 @@ func TestOpenAIClient_Model(t *testing.T) {
 
 	t.Run("returns bare model id without provider prefix", func(t *testing.T) {
 		t.Parallel()
-		c := &openAIClient{model: shared.ChatModel(openaisdk.ChatModelGPT4o)}
+		c := &openAIClient{model: openaisdk.ChatModelGPT4o}
 		assert.Equal(t, openaisdk.ChatModelGPT4o, c.Model())
 	})
 }
@@ -161,10 +160,10 @@ func TestOpenAIClient_Complete(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var err error
 			receivedBody, err = io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(minimalResponsesJSON(t, "extraction result"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -195,10 +194,10 @@ func TestOpenAIClient_Complete(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var err error
 			receivedBody, err = io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(minimalResponsesJSON(t, "result"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 

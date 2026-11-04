@@ -11,21 +11,6 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
-// HistoryValuesLoader loads paginated rate_values for a bulk set of
-// (source, base, quote) keys, sorted newest first. Returning both counts from
-// one snapshot prevents a concurrent collector write from making them disagree
-// (see plans/015-history-group-by-provider.md, Risk 2).
-type HistoryValuesLoader interface {
-	// ObtainHistoryForPairsPaged returns paginated rate_values rows, the
-	// row-level total, and the grouped total of distinct (provider title,
-	// timestamp) tuples, all from one read-only transaction for a consistent
-	// snapshot. Use groupedTotal as the user-facing pagination total; rowTotal
-	// is for diagnostics.
-	ObtainHistoryForPairsPaged(
-		ctx context.Context, pairs []domain.SourcePairKey, limit, offset int64,
-	) (rows []domain.RateValue, rowTotal int64, groupedTotal int64, err error)
-}
-
 // MeHistoryResult is the result of ObtainMeHistory: one page of rate-collection
 // events for a canonical pair, sorted newest first.
 type MeHistoryResult struct {
@@ -78,7 +63,7 @@ type MeHistoryRowResult struct {
 // the filtered grouped count and pagination stays correct. An unknown
 // sourceTitle returns 200 with Total=0 and empty Items — never 400.
 //
-// Load-bearing invariants (see plans/015-history-group-by-provider.md):
+// Load-bearing invariants, each of which the grouping below depends on:
 //
 //   - Invariant 1: each provider has at most one BID source and one ASK source
 //     per (base, quote) pair. If two BID sources share a title for one pair,
@@ -120,7 +105,7 @@ func (s *Service) ObtainMeHistory(ctx context.Context, userID, pair, sourceTitle
 			continue
 		}
 		label := pairGroupKey(src.BaseCurrency, src.QuoteCurrency)
-		if label != strings.ToUpper(pair) {
+		if !strings.EqualFold(label, pair) {
 			continue
 		}
 		// Dedup by source_name so each appears once in the tuple-IN clause. Do NOT
@@ -310,4 +295,19 @@ func (s *Service) ObtainMeHistory(ctx context.Context, userID, pair, sourceTitle
 		Total: groupedTotal,
 		Items: items,
 	}, nil
+}
+
+// HistoryValuesLoader loads paginated rate_values for a bulk set of
+// (source, base, quote) keys, sorted newest first. Returning both counts from
+// one snapshot prevents a concurrent collector write from making them disagree
+// — the page would then show rows the total does not account for.
+type HistoryValuesLoader interface {
+	// ObtainHistoryForPairsPaged returns paginated rate_values rows, the
+	// row-level total, and the grouped total of distinct (provider title,
+	// timestamp) tuples, all from one read-only transaction for a consistent
+	// snapshot. Use groupedTotal as the user-facing pagination total; rowTotal
+	// is for diagnostics.
+	ObtainHistoryForPairsPaged(
+		ctx context.Context, pairs []domain.SourcePairKey, limit, offset int64,
+	) (rows []domain.RateValue, rowTotal int64, groupedTotal int64, err error)
 }

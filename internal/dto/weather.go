@@ -1,8 +1,8 @@
 package dto
 
 // WeatherCitySearchItem is one geocoding result returned by
-// GET /api/me/weather/cities/search. The client picks one and posts it to
-// POST /api/me/weather/cities. All string fields are ready for display.
+// GET /api/v1/me/weather/cities/search. The client picks one and posts it to
+// POST /api/v1/me/weather/cities. All string fields are ready for display.
 type WeatherCitySearchItem struct {
 	// LocationID is the canonical location key derived from the geocoding result.
 	// It is stable for a given city and used to de-duplicate subscriptions.
@@ -15,22 +15,23 @@ type WeatherCitySearchItem struct {
 	Admin1      string  `json:"admin1"`
 }
 
-// WeatherCitySearchResponse is the JSON envelope for GET /api/me/weather/cities/search.
+// WeatherCitySearchResponse is the JSON envelope for GET /api/v1/me/weather/cities/search.
 // Items is always a non-nil slice; an empty search result returns an empty array.
 type WeatherCitySearchResponse struct {
 	Items []WeatherCitySearchItem `json:"items"`
 }
 
-// WeatherCityCreateRequest is the JSON body for POST /api/me/weather/cities.
+// WeatherCityCreateRequest is the JSON body for POST /api/v1/me/weather/cities.
 // The client copies the resolved fields from the chosen search result verbatim.
 // NotifyHour is the local hour (0–23) for the daily morning summary; when
 // omitted the server applies its default (7 = 07:00 local time).
 //
 // To create an alert, set NotifyKind to one of: "alert_heat", "alert_frost",
-// "alert_thunderstorm", "rain_alert". When NotifyKind is empty or omitted the
-// server defaults to "morning_summary". ConditionValue is the numeric threshold:
-// °C for heat/frost (e.g. "35"), probability percent for rain_alert (e.g. "70",
-// range [0,100]); empty for alert_thunderstorm and morning_summary.
+// "alert_thunderstorm", "rain_alert", "alert_thaw", "forecast_outlook". When
+// NotifyKind is empty or omitted the server defaults to "morning_summary".
+// ConditionValue is the numeric threshold: °C for heat/frost (e.g. "35"),
+// probability percent for rain_alert (e.g. "70", range [0,100]); empty for
+// alert_thunderstorm, alert_thaw, forecast_outlook, and morning_summary.
 type WeatherCityCreateRequest struct {
 	LocationID  string  `json:"location_id"`
 	DisplayName string  `json:"display_name"`
@@ -43,16 +44,18 @@ type WeatherCityCreateRequest struct {
 	NotifyHour *int `json:"notify_hour,omitempty"`
 	// NotifyKind identifies the subscription type. Omit or leave empty for the
 	// default "morning_summary". Alert kinds: "alert_heat", "alert_frost",
-	// "alert_thunderstorm", "rain_alert".
+	// "alert_thunderstorm", "rain_alert", "alert_thaw". The multi-week digest is
+	// "forecast_outlook".
 	NotifyKind string `json:"notify_kind,omitempty"`
 	// ConditionValue is the threshold for alert kinds. Required for alert_heat and
 	// alert_frost (a decimal number in °C) and for rain_alert (a probability percent
-	// in [0,100], e.g. "70"); empty for alert_thunderstorm and morning_summary.
+	// in [0,100], e.g. "70"); empty for alert_thunderstorm, alert_thaw,
+	// forecast_outlook, and morning_summary.
 	ConditionValue string `json:"condition_value,omitempty"`
 }
 
 // WeatherCityCreateResponse is the JSON envelope for a successful
-// POST /api/me/weather/cities (201 Created). Carries the generated city row ID.
+// POST /api/v1/me/weather/cities (201 Created). Carries the generated city row ID.
 type WeatherCityCreateResponse struct {
 	ID string `json:"id"`
 }
@@ -73,22 +76,23 @@ type WeatherCityRow struct {
 	// NotifyHour is the local hour (0–23) at which the daily morning summary fires.
 	NotifyHour int `json:"notify_hour"`
 	// NotifyKind is the subscription type: "morning_summary", "alert_heat",
-	// "alert_frost", "alert_thunderstorm", or "rain_alert".
+	// "alert_frost", "alert_thunderstorm", "rain_alert", "alert_thaw", or
+	// "forecast_outlook".
 	NotifyKind string `json:"notify_kind"`
 	// ConditionValue is the alert threshold: decimal °C string for heat/frost,
-	// decimal percent string (0–100) for rain_alert. Empty for morning_summary and
-	// alert_thunderstorm.
+	// decimal percent string (0–100) for rain_alert. Empty for morning_summary,
+	// alert_thunderstorm, alert_thaw, and forecast_outlook.
 	ConditionValue string `json:"condition_value,omitempty"`
 }
 
-// WeatherCitiesResponse is the JSON envelope for GET /api/me/weather/cities.
+// WeatherCitiesResponse is the JSON envelope for GET /api/v1/me/weather/cities.
 // Items is always a non-nil slice.
 type WeatherCitiesResponse struct {
 	Items []WeatherCityRow `json:"items"`
 }
 
 // WeatherCurrentItem is one city's latest stored weather observation in the
-// GET /api/me/weather/current response. HasData is false when the collector has
+// GET /api/v1/me/weather/current response. HasData is false when the collector has
 // not yet produced an observation for this location; all observation fields are
 // omitted in that case so the client can render a "no data yet" state without
 // interpreting absent numeric fields as zero.
@@ -123,9 +127,48 @@ type WeatherCurrentItem struct {
 	SunsetLocal  string `json:"sunset_local,omitempty"`
 	// CapturedAt is the UTC timestamp of the observation in RFC 3339 format.
 	CapturedAt string `json:"captured_at,omitempty"`
+
+	// Days is the multi-week outlook for this city, one entry per city-local
+	// calendar day starting with today, ascending. Absent (not an empty array)
+	// until the collector's first long-range fetch for this location completes,
+	// so a client that has never seen the field renders exactly as before.
+	Days []WeatherForecastDayItem `json:"days,omitempty"`
 }
 
-// WeatherCurrentResponse is the JSON envelope for GET /api/me/weather/current.
+// WeatherForecastDayItem is one day of the multi-week outlook in the
+// GET /api/v1/me/weather/current response.
+//
+// Rain and Snow are the server's verdict against the day thresholds rather than
+// the raw amounts, so every client draws the same badge from the same rule: a
+// rain day is at least 1 mm of rain, a snow day at least 1 cm of snowfall. The
+// amounts ride along for display and carry different units — RainSum is
+// millimetres, SnowfallSum is centimetres.
+type WeatherForecastDayItem struct {
+	// Date is the city-local calendar day as YYYY-MM-DD.
+	Date string `json:"date"`
+	// Label is Date pre-formatted as "Sun 23 Aug", computed server-side so the
+	// WASM client needs no tzdata and no locale table.
+	Label string `json:"label"`
+	// TempMax and TempMin are °C, nil when the provider had no value.
+	TempMax *float64 `json:"temp_max,omitempty"`
+	TempMin *float64 `json:"temp_min,omitempty"`
+	// RainSum is millimetres of rain; SnowfallSum is CENTIMETRES of snowfall.
+	RainSum     *float64 `json:"rain_sum,omitempty"`
+	SnowfallSum *float64 `json:"snowfall_sum,omitempty"`
+	// Rain and Snow are true when the day meets the corresponding day threshold.
+	Rain bool `json:"rain"`
+	Snow bool `json:"snow"`
+	// ZeroState is the day's position against freezing: "above" (never froze),
+	// "crossing" (spans 0 °C), "below" (never thawed), or "" when the day carries
+	// no usable pair of temperature bounds.
+	ZeroState string `json:"zero_state,omitempty"`
+	// WeatherCode is the raw WMO Weather Interpretation Code; ConditionEmoji is
+	// it resolved server-side, matching WeatherCurrentItem.
+	WeatherCode    *int   `json:"weather_code,omitempty"`
+	ConditionEmoji string `json:"condition_emoji,omitempty"`
+}
+
+// WeatherCurrentResponse is the JSON envelope for GET /api/v1/me/weather/current.
 // Items contains one entry per distinct subscribed location_id; it is always a
 // non-nil slice so the client can distinguish "no subscriptions" from an error.
 type WeatherCurrentResponse struct {

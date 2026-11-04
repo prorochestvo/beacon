@@ -15,7 +15,7 @@ type SourceResponse struct {
 	LastRunAt     string `json:"last_run_at,omitempty"`
 }
 
-// SourceActiveRequest is the body of PATCH /api/sources/{name}/active.
+// SourceActiveRequest is the body of PATCH /api/v1/sources/{name}/active.
 type SourceActiveRequest struct {
 	Active bool `json:"active"`
 }

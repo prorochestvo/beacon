@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	integration "github.com/seilbekskindirov/beacon/internal/infrastructure/telegrambot"
 	"github.com/seilbekskindirov/beacon/internal/repository"
@@ -13,6 +14,21 @@ import (
 )
 
 var _ rateUserEventRepository = &repository.RateUserEventRepository{}
+
+// TestRateDispatchAgent_AbortIsMarked: a failed pool read means nothing was dispatched at
+// all, as opposed to individual sends failing inside the loop.
+func TestRateDispatchAgent_AbortIsMarked(t *testing.T) {
+	t.Parallel()
+
+	readErr := errors.New("pool read interrupted")
+	agent, err := NewRateDispatchAgent(&mockTelegramClient{}, &mockRateUserEventRepository{obtainErr: readErr})
+	require.NoError(t, err)
+
+	runErr := agent.Run(t.Context())
+	require.Error(t, runErr)
+	require.ErrorIs(t, runErr, internal.ErrAgentAborted)
+	require.ErrorIs(t, runErr, readErr, "the cause must survive the marking")
+}
 
 func TestNewRateDispatchAgent(t *testing.T) {
 	t.Parallel()
@@ -215,6 +231,9 @@ func TestRateDispatchAgent_Vacuum(t *testing.T) {
 		require.NoError(t, err)
 
 		require.NoError(t, agent.Vacuum(t.Context()))
+		// Spelled out rather than compared against defaultEventRetention, which would
+		// assert the constant equals itself. This deletes user data irreversibly, so
+		// the retention window is pinned here and changing it has to be deliberate.
 		require.Equal(t, 180*24*time.Hour, repo.removedDuration)
 	})
 
@@ -229,6 +248,14 @@ func TestRateDispatchAgent_Vacuum(t *testing.T) {
 		require.Error(t, agent.Vacuum(t.Context()))
 	})
 }
+
+// The two seams this agent takes, asserted against the fakes that stand in for them.
+// Without this an interface change breaks the production implementation loudly and the
+// fake silently. Pre-existing gap; the file changed, so the gate holds it to R1.
+var (
+	_ rateUserEventRepository = (*mockRateUserEventRepository)(nil)
+	_ telegramClient          = (*mockTelegramClient)(nil)
+)
 
 type mockRateUserEventRepository struct {
 	events          []domain.RateUserEvent

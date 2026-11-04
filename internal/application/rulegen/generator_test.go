@@ -3,7 +3,6 @@ package rulegen
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -19,6 +18,7 @@ var _ rateSourceRepository = (*mockSourceRepo)(nil)
 var _ Fetcher = (*mockFetcher)(nil)
 var _ RuleExecutor = (*mockRuleExecutor)(nil)
 var _ RuleExecutor = (*sequentialExecutor)(nil)
+var _ RuleExecutor = (*defaultRuleExecutor)(nil)
 
 type mockAIClient struct {
 	name      string
@@ -215,7 +215,7 @@ func TestGenerator_Generate(t *testing.T) {
 		assert.Equal(t, 0, repo.retainCount)
 		assert.Contains(t, err.Error(), "all attempts exhausted")
 		assert.Contains(t, err.Error(), "primary=3, fallback=2")
-		assert.True(t, errors.Is(err, ErrAttemptsExhausted), "expected ErrAttemptsExhausted sentinel")
+		require.ErrorIs(t, err, ErrAttemptsExhausted, "expected ErrAttemptsExhausted sentinel")
 		assert.Equal(t, 2, fallback.callCount)
 	})
 
@@ -278,7 +278,7 @@ func TestGenerator_Generate(t *testing.T) {
 		require.Error(t, err)
 		require.Nil(t, result)
 		assert.Contains(t, err.Error(), "not found")
-		assert.True(t, errors.Is(err, ErrSourceNotFound), "expected ErrSourceNotFound sentinel")
+		require.ErrorIs(t, err, ErrSourceNotFound, "expected ErrSourceNotFound sentinel")
 		assert.Equal(t, 0, primary.callCount)
 	})
 
@@ -295,7 +295,7 @@ func TestGenerator_Generate(t *testing.T) {
 		)
 		_, err := gen.Generate(t.Context(), "missing-source", false)
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, ErrSourceNotFound))
+		assert.ErrorIs(t, err, ErrSourceNotFound)
 	})
 
 	t.Run("returns ErrAttemptsExhausted when all attempts fail", func(t *testing.T) {
@@ -316,7 +316,7 @@ func TestGenerator_Generate(t *testing.T) {
 
 		_, err := gen.Generate(t.Context(), "test-source", false)
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, ErrAttemptsExhausted))
+		assert.ErrorIs(t, err, ErrAttemptsExhausted)
 	})
 
 	t.Run("body exceeds 5 MB returns error before any AI call", func(t *testing.T) {
@@ -405,7 +405,7 @@ func TestGenerator_Generate(t *testing.T) {
 		fetcher := &mockFetcher{body: []byte("rate: 19.1671")}
 		executorFn := &sequentialExecutor{
 			results: []execResult{
-				{0, fmt.Errorf("rulegen: value 19.1671 rejected: outside plausible range [100, 1000] for USD/KZT")},
+				{0, errors.New("rulegen: value 19.1671 rejected: outside plausible range [100, 1000] for USD/KZT")},
 				{470.0, nil},
 			},
 		}
@@ -487,7 +487,7 @@ func TestGenerator_Generate(t *testing.T) {
 
 		_, err = gen.Generate(t.Context(), "chromedp-missing", false)
 		require.Error(t, err)
-		require.True(t, errors.Is(err, ErrUnsupportedFetcherKind),
+		require.ErrorIs(t, err, ErrUnsupportedFetcherKind,
 			"expected ErrUnsupportedFetcherKind, got: %v", err)
 		assert.Equal(t, 0, primary.callCount)
 		assert.Equal(t, 0, fallback.callCount)
@@ -757,7 +757,7 @@ func TestTruncate(t *testing.T) {
 		s := strings.Repeat("a", 600)
 		result := truncate(s, 512)
 		// "…" is 3 bytes UTF-8, so the total is 512 + 3 = 515 bytes.
-		assert.True(t, len(result) <= 515, "truncated string should be at most 515 bytes (512 + 3-byte ellipsis)")
+		assert.LessOrEqual(t, len(result), 515, "truncated string should be at most 515 bytes (512 + 3-byte ellipsis)")
 		assert.True(t, strings.HasSuffix(result, "…"))
 	})
 }

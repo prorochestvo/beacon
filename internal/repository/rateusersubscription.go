@@ -5,23 +5,23 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"time"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 	"github.com/seilbekskindirov/beacon/internal/domain/identity"
 )
 
-// NewRateUserSubscriptionRepository returns a repository for the rate_user_subscriptions table.
-func NewRateUserSubscriptionRepository(db db) (*RateUserSubscriptionRepository, error) {
-	return &RateUserSubscriptionRepository{db: db}, nil
-}
-
 // RateUserSubscriptionRepository persists and retrieves domain.RateUserSubscription records.
 type RateUserSubscriptionRepository struct {
 	db db
+}
+
+// NewRateUserSubscriptionRepository returns a repository for the rate_user_subscriptions table.
+func NewRateUserSubscriptionRepository(db db) (*RateUserSubscriptionRepository, error) {
+	return &RateUserSubscriptionRepository{db: db}, nil
 }
 
 // Name returns the name of the underlying database table.
@@ -31,20 +31,20 @@ func (r *RateUserSubscriptionRepository) Name() string { return rateUserSubscrip
 func (r *RateUserSubscriptionRepository) CheckUP(ctx context.Context) error {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
 
-	count, err := rateUserSubscriptionCount(tx, ctx, ";")
+	count, err := rateUserSubscriptionCount(ctx, tx, ";")
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if count < 0 {
 		err = errors.New("unexpected result")
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -56,12 +56,12 @@ func (r *RateUserSubscriptionRepository) CheckUP(ctx context.Context) error {
 func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsByUserID(ctx context.Context, userType domain.UserType, userID string) ([]domain.RateUserSubscription, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	defer printRollbackError(tx)
 
-	rows, err := rateUserSubscriptionQueryContext(tx, ctx, "WHERE "+rateUserSubscriptionUserTypeFieldName+" = ? AND "+rateUserSubscriptionUserIdFieldName+" = ?;", userType, userID)
+	rows, err := rateUserSubscriptionQueryContext(ctx, tx, "WHERE "+rateUserSubscriptionUserTypeFieldName+" = ? AND "+rateUserSubscriptionUserIdFieldName+" = ?;", userType, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -74,14 +74,14 @@ func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsByUserID(ctx
 func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsBySource(ctx context.Context, sourceName string) ([]domain.RateUserSubscription, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 	defer printRollbackError(tx)
 
-	rows, err := rateUserSubscriptionQueryContext(tx, ctx, "WHERE "+rateUserSubscriptionSourceNameFieldName+" = ?;", sourceName)
+	rows, err := rateUserSubscriptionQueryContext(ctx, tx, "WHERE "+rateUserSubscriptionSourceNameFieldName+" = ?;", sourceName)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
@@ -93,7 +93,7 @@ func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsBySource(ctx
 func (r *RateUserSubscriptionRepository) RetainRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error {
 	if record == nil {
 		err := errors.New("user subscription is nil")
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -109,14 +109,14 @@ func (r *RateUserSubscriptionRepository) RetainRateUserSubscription(ctx context.
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
 
-	count, err := rateUserSubscriptionCount(tx, ctx, "WHERE "+rateUserSubscriptionIdFieldName+" = ?;", record.ID)
+	count, err := rateUserSubscriptionCount(ctx, tx, "WHERE "+rateUserSubscriptionIdFieldName+" = ?;", record.ID)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -169,24 +169,24 @@ func (r *RateUserSubscriptionRepository) RetainRateUserSubscription(ctx context.
 		)
 	}
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	rows, err := res.RowsAffected()
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	if rows <= 0 {
 		err = errors.New("unexpected result: no rows affected")
 		err = errors.Join(err, internal.ErrNotFound)
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if err = tx.Commit(); err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -210,13 +210,13 @@ func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsBySourcePage
 
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
 	rows, err := tx.QueryContext(ctx, query, sourceName, limit, offset)
 	if err != nil {
-		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), internal.NewTraceError())
+		return nil, errors.Join(err, fmt.Errorf("SQL: %s", query), loginjector.NewTraceError())
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 
@@ -228,17 +228,20 @@ func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionsBySourcePage
 			&item.ID, &item.UserType, &item.SourceName,
 			&item.ConditionType, &item.ConditionValue, &updatedAt,
 		); scanErr != nil {
-			return nil, errors.Join(scanErr, internal.NewTraceError())
+			return nil, errors.Join(scanErr, loginjector.NewTraceError())
 		}
 		var parseErr error
 		item.LatestNotifiedAt, parseErr = time.Parse(time.RFC3339, updatedAt)
 		if parseErr != nil {
 			log.Print(errors.Join(
 				fmt.Errorf("subscription %s has invalid updated_at %q: %w", item.ID, updatedAt, parseErr),
-				internal.NewTraceError(),
+				loginjector.NewTraceError(),
 			))
 		}
 		items = append(items, item)
+	}
+	if iterErr := rows.Err(); iterErr != nil {
+		return nil, errors.Join(iterErr, loginjector.NewTraceError())
 	}
 
 	return items, nil
@@ -292,13 +295,13 @@ GROUP BY s.%[2]s, s.%[3]s;`,
 
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
 	rows, err := tx.QueryContext(ctx, query, sourceName)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 
@@ -311,20 +314,23 @@ GROUP BY s.%[2]s, s.%[3]s;`,
 			&s.SubscriptionCount, &lastSentAt,
 			&s.SuccessCount, &s.FailedCount,
 		); scanErr != nil {
-			return nil, errors.Join(scanErr, internal.NewTraceError())
+			return nil, errors.Join(scanErr, loginjector.NewTraceError())
 		}
 		if lastSentAt != nil && *lastSentAt != "" {
 			parsed, parseErr := time.Parse(time.RFC3339, *lastSentAt)
 			if parseErr != nil {
 				log.Print(errors.Join(
 					fmt.Errorf("subscription summary for source %q has invalid last_sent_at %q: %w", s.SourceName, *lastSentAt, parseErr),
-					internal.NewTraceError(),
+					loginjector.NewTraceError(),
 				))
 			} else {
 				s.LastSentAt = parsed
 			}
 		}
 		result = append(result, s)
+	}
+	if iterErr := rows.Err(); iterErr != nil {
+		return nil, errors.Join(iterErr, loginjector.NewTraceError())
 	}
 
 	return result, nil
@@ -336,24 +342,24 @@ GROUP BY s.%[2]s, s.%[3]s;`,
 func (r *RateUserSubscriptionRepository) ObtainRateUserSubscriptionByID(ctx context.Context, id string) (*domain.RateUserSubscription, error) {
 	tx, err := r.db.ReadOnlyTransaction(ctx)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewStackTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	defer printRollbackError(tx)
 
-	return rateUserSubscriptionQueryRowContext(tx, ctx, "WHERE "+rateUserSubscriptionIdFieldName+" = ?;", id)
+	return rateUserSubscriptionQueryRowContext(ctx, tx, "WHERE "+rateUserSubscriptionIdFieldName+" = ?;", id)
 }
 
 // RemoveRateUserSubscription deletes the given subscription record by ID.
 func (r *RateUserSubscriptionRepository) RemoveRateUserSubscription(ctx context.Context, record *domain.RateUserSubscription) error {
 	if record == nil {
 		err := errors.New("user subscription is nil")
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	tx, err := r.db.Transaction(ctx)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 	defer printRollbackError(tx)
@@ -362,12 +368,12 @@ func (r *RateUserSubscriptionRepository) RemoveRateUserSubscription(ctx context.
 	_, err = tx.ExecContext(ctx, cmd, record.ID)
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", cmd))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
 	if err = tx.Commit(); err != nil {
-		err = errors.Join(err, internal.NewStackTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return err
 	}
 
@@ -399,7 +405,7 @@ const (
 		"\nFROM " + rateUserSubscriptionTableName
 )
 
-func rateUserSubscriptionCount(tx *sql.Tx, ctx context.Context, condition string, args ...any) (int64, error) {
+func rateUserSubscriptionCount(ctx context.Context, tx *sql.Tx, condition string, args ...any) (int64, error) {
 	query := "SELECT\n" +
 		" COUNT(*)\n" +
 		"FROM " + rateUserSubscriptionTableName + "\n" + condition
@@ -410,22 +416,22 @@ func rateUserSubscriptionCount(tx *sql.Tx, ctx context.Context, condition string
 		return 0, nil
 	} else if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return 0, err
 	}
 
 	return count, nil
 }
 
-func rateUserSubscriptionQueryContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (items []domain.RateUserSubscription, err error) {
-	count, err := rateUserSubscriptionCount(tx, ctx, condition, args...)
+func rateUserSubscriptionQueryContext(ctx context.Context, tx *sql.Tx, condition string, args ...any) (items []domain.RateUserSubscription, err error) {
+	count, err := rateUserSubscriptionCount(ctx, tx, condition, args...)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
-		return
+		err = errors.Join(err, loginjector.NewTraceError())
+		return items, err
 	}
 	if count == 0 {
 		items = []domain.RateUserSubscription{}
-		return
+		return items, err
 	}
 
 	query := rateUserSubscriptionSqlSelect + "\n" + condition
@@ -433,10 +439,10 @@ func rateUserSubscriptionQueryContext(tx *sql.Tx, ctx context.Context, condition
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
-		return
+		err = errors.Join(err, loginjector.NewTraceError())
+		return items, err
 	}
-	defer func(rows io.Closer) { err = errors.Join(err, rows.Close()) }(rows)
+	defer func() { err = errors.Join(err, rows.Close()) }()
 
 	items = make([]domain.RateUserSubscription, 0, count)
 
@@ -456,29 +462,34 @@ func rateUserSubscriptionQueryContext(tx *sql.Tx, ctx context.Context, condition
 			&createdAt,
 		)
 		if err != nil {
-			err = errors.Join(err, internal.NewTraceError())
-			return
+			err = errors.Join(err, loginjector.NewTraceError())
+			return items, err
 		}
 
 		item.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
 		if err != nil {
-			err = errors.Join(err, internal.NewTraceError())
-			return
+			err = errors.Join(err, loginjector.NewTraceError())
+			return items, err
 		}
 
 		item.UpdatedAt, err = time.Parse(time.RFC3339, updatedAt)
 		if err != nil {
-			err = errors.Join(err, internal.NewTraceError())
+			err = errors.Join(err, loginjector.NewTraceError())
 			return nil, err
 		}
 
 		items = append(items, item)
 	}
 
-	return
+	if err = rows.Err(); err != nil {
+		err = errors.Join(err, loginjector.NewTraceError())
+		return nil, err
+	}
+
+	return items, err
 }
 
-func rateUserSubscriptionQueryRowContext(tx *sql.Tx, ctx context.Context, condition string, args ...any) (*domain.RateUserSubscription, error) {
+func rateUserSubscriptionQueryRowContext(ctx context.Context, tx *sql.Tx, condition string, args ...any) (*domain.RateUserSubscription, error) {
 	query := rateUserSubscriptionSqlSelect + "\n" + condition
 
 	var item domain.RateUserSubscription
@@ -495,22 +506,23 @@ func rateUserSubscriptionQueryRowContext(tx *sql.Tx, ctx context.Context, condit
 		&createdAt,
 	)
 	if err != nil && errors.Is(err, sql.ErrNoRows) {
+		//nolint:nilnil // (nil, nil) for "no such row" is this layer's contract, relied on by every caller
 		return nil, nil
 	} else if err != nil {
 		err = errors.Join(err, fmt.Errorf("SQL: %s", query))
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
 	item.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 
 	item.UpdatedAt, err = time.Parse(time.RFC3339, updatedAt)
 	if err != nil {
-		err = errors.Join(err, internal.NewTraceError())
+		err = errors.Join(err, loginjector.NewTraceError())
 		return nil, err
 	}
 

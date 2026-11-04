@@ -76,3 +76,10 @@ func (c *Client) MeWeatherCityCreate(ctx context.Context, initData string, body 
 func (c *Client) MeWeatherCityDelete(ctx context.Context, initData, id string) error {
 	return c.fetcher.FetchNoContent(ctx, "DELETE", meWeatherCityByIDURL(id), nil, meSubscriptionsHeaders(initData))
 }
+
+// MeWeatherLocationDelete removes every subscription row (all kinds, including the forced
+// thaw alert) owned by the caller at the given location. Server returns 204 on success.
+// initData is forwarded via the X-Telegram-Init-Data header.
+func (c *Client) MeWeatherLocationDelete(ctx context.Context, initData, locationID string) error {
+	return c.fetcher.FetchNoContent(ctx, "DELETE", meWeatherLocationByIDURL(locationID), nil, meSubscriptionsHeaders(initData))
+}

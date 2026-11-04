@@ -18,6 +18,10 @@ import (
 	"github.com/seilbekskindirov/beacon/cmd/wasm/apiclient"
 )
 
+// The external test package cannot name httpFetcher, so the contract is pinned
+// through the constructor's return value instead.
+var _ apiclient.Fetcher = apiclient.NewHTTPFetcher("", nil)
+
 func TestNewHTTPFetcher_FetchJSON(t *testing.T) {
 	t.Parallel()
 
@@ -26,7 +30,7 @@ func TestNewHTTPFetcher_FetchJSON(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, err := w.Write([]byte(`{"ok":true}`))
-			require.NoError(t, err)
+			assert.NoError(t, err)
 		}))
 		defer srv.Close()
 
@@ -55,7 +59,7 @@ func TestNewHTTPFetcher_FetchJSON(t *testing.T) {
 	t.Run("network error wraps with fetch prefix", func(t *testing.T) {
 		t.Parallel()
 		// Point at a server that is already closed so the TCP dial fails.
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 		srv.Close()
 
 		f := apiclient.NewHTTPFetcher(srv.URL, srv.Client())
@@ -70,12 +74,12 @@ func TestNewHTTPFetcher_FetchJSON(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, wantHeader, r.Header.Get("X-Telegram-Init-Data"))
 			_, err := w.Write([]byte(`{}`))
-			require.NoError(t, err)
+			assert.NoError(t, err)
 		}))
 		defer srv.Close()
 
 		f := apiclient.NewHTTPFetcher(srv.URL, srv.Client())
-		_, err := f.FetchJSON(t.Context(), "GET", "/api/me/subscriptions", nil, map[string]string{
+		_, err := f.FetchJSON(t.Context(), "GET", "/api/v1/me/subscriptions", nil, map[string]string{
 			"X-Telegram-Init-Data": wantHeader,
 		})
 		require.NoError(t, err)
@@ -89,12 +93,12 @@ func TestNewHTTPFetcher_FetchJSON(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 			raw, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			var p payload
-			require.NoError(t, json.Unmarshal(raw, &p))
+			assert.NoError(t, json.Unmarshal(raw, &p))
 			assert.Equal(t, "hello", p.Value)
 			_, err = w.Write([]byte(`{}`))
-			require.NoError(t, err)
+			assert.NoError(t, err)
 		}))
 		defer srv.Close()
 
@@ -109,7 +113,7 @@ func TestNewHTTPFetcher_FetchJSON(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			receivedPath = r.URL.Path
 			_, err := w.Write([]byte(`{}`))
-			require.NoError(t, err)
+			assert.NoError(t, err)
 		}))
 		defer srv.Close()
 
@@ -132,7 +136,7 @@ func TestNewHTTPFetcher_FetchNoContent(t *testing.T) {
 		defer srv.Close()
 
 		f := apiclient.NewHTTPFetcher(srv.URL, srv.Client())
-		err := f.FetchNoContent(t.Context(), "PATCH", "/api/sources/x/active", nil, nil)
+		err := f.FetchNoContent(t.Context(), "PATCH", "/api/v1/sources/x/active", nil, nil)
 		require.NoError(t, err)
 	})
 
@@ -144,18 +148,18 @@ func TestNewHTTPFetcher_FetchNoContent(t *testing.T) {
 		defer srv.Close()
 
 		f := apiclient.NewHTTPFetcher(srv.URL, srv.Client())
-		err := f.FetchNoContent(t.Context(), "PATCH", "/api/sources/x/active", nil, nil)
+		err := f.FetchNoContent(t.Context(), "PATCH", "/api/v1/sources/x/active", nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "http 404")
 	})
 
 	t.Run("network error wraps with fetch prefix", func(t *testing.T) {
 		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 		srv.Close()
 
 		f := apiclient.NewHTTPFetcher(srv.URL, srv.Client())
-		err := f.FetchNoContent(t.Context(), "PATCH", "/api/sources/x/active", nil, nil)
+		err := f.FetchNoContent(t.Context(), "PATCH", "/api/v1/sources/x/active", nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "fetch:")
 	})
@@ -168,16 +172,16 @@ func TestNewHTTPFetcher_FetchNoContent(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 			raw, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			var p payload
-			require.NoError(t, json.Unmarshal(raw, &p))
+			assert.NoError(t, json.Unmarshal(raw, &p))
 			assert.True(t, p.Active)
 			w.WriteHeader(http.StatusNoContent)
 		}))
 		defer srv.Close()
 
 		f := apiclient.NewHTTPFetcher(srv.URL, srv.Client())
-		err := f.FetchNoContent(t.Context(), "PATCH", "/api/sources/x/active", payload{Active: true}, nil)
+		err := f.FetchNoContent(t.Context(), "PATCH", "/api/v1/sources/x/active", payload{Active: true}, nil)
 		require.NoError(t, err)
 	})
 }

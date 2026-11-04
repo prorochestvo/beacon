@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -38,6 +37,8 @@ func TestRateUserProfileRepository_UpsertRateUserProfile(t *testing.T) {
 
 		// Sleep one second so the UpdatedAt change is observable through
 		// the 1-second RFC3339 truncation.
+		//nolint:forbidigo // the repository stamps time.Now() with no seam to inject,
+		// so observing an UpdatedAt change means waiting out the 1s RFC3339 truncation
 		time.Sleep(1100 * time.Millisecond)
 
 		err = repo.UpsertRateUserProfile(t.Context(), &domain.RateUserProfile{
@@ -74,7 +75,7 @@ func TestRateUserProfileRepository_UpsertRateUserProfile(t *testing.T) {
 
 		got, err := repo.ObtainRateUserProfileByUserID(t.Context(), domain.UserTypeTelegram, "no-locale")
 		require.NoError(t, err)
-		require.Equal(t, "", got.Locale)
+		require.Empty(t, got.Locale)
 	})
 
 	t.Run("rejects unknown IANA name with PublicError", func(t *testing.T) {
@@ -90,7 +91,7 @@ func TestRateUserProfileRepository_UpsertRateUserProfile(t *testing.T) {
 		})
 		require.Error(t, err)
 		var pub *internal.PublicError
-		require.True(t, errors.As(err, &pub))
+		require.ErrorAs(t, err, &pub)
 	})
 
 	t.Run("rejects empty identity", func(t *testing.T) {
@@ -105,7 +106,7 @@ func TestRateUserProfileRepository_UpsertRateUserProfile(t *testing.T) {
 			Timezone: "UTC",
 		})
 		var pub *internal.PublicError
-		require.True(t, errors.As(err, &pub))
+		require.ErrorAs(t, err, &pub)
 	})
 
 	t.Run("accepts UTC", func(t *testing.T) {
@@ -133,6 +134,6 @@ func TestRateUserProfileRepository_ObtainRateUserProfileByUserID(t *testing.T) {
 
 		got, err := repo.ObtainRateUserProfileByUserID(t.Context(), domain.UserTypeTelegram, "nobody")
 		require.Nil(t, got)
-		require.True(t, errors.Is(err, internal.ErrNotFound))
+		require.ErrorIs(t, err, internal.ErrNotFound)
 	})
 }

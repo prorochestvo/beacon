@@ -1,4 +1,4 @@
-// Package apiclient provides a typed Go client for the /api/... HTTP routes.
+// Package apiclient provides a typed Go client for the /api/v1/... HTTP routes.
 // It is used by the WASM frontend; transport is abstracted through the Fetcher
 // interface so tests can inject an in-process fake without real HTTP calls.
 package apiclient
@@ -11,14 +11,11 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/dto"
 )
 
-// Client is a typed HTTP client for the /api/... routes consumed by the WASM frontend.
+// Client is a typed HTTP client for the /api/v1/... routes consumed by the WASM frontend.
 // Construct one per WASM lifetime via New. Free of DOM concerns; transport is delegated to the Fetcher.
 type Client struct {
 	fetcher Fetcher
 }
-
-// New constructs a Client backed by the given Fetcher.
-func New(f Fetcher) *Client { return &Client{fetcher: f} }
 
 // ListSources fetches all configured rate sources with their latest execution status.
 func (c *Client) ListSources(ctx context.Context, limit int) ([]dto.SourceResponse, error) {
@@ -240,3 +237,6 @@ func (c *Client) MeSubscriptionUpdate(ctx context.Context, initData, id string, 
 func (c *Client) MeSubscriptionDelete(ctx context.Context, initData, id string) error {
 	return c.fetcher.FetchNoContent(ctx, "DELETE", meSubscriptionByIDURL(id), nil, meSubscriptionsHeaders(initData))
 }
+
+// New constructs a Client backed by the given Fetcher.
+func New(f Fetcher) *Client { return &Client{fetcher: f} }

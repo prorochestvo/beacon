@@ -59,6 +59,6 @@ func TestStubClient_Complete(t *testing.T) {
 		require.NoError(t, err)
 		got, err := c.Complete(t.Context(), "any system prompt", "any user message")
 		require.NoError(t, err)
-		assert.Equal(t, canned, got)
+		assert.JSONEq(t, canned, got)
 	})
 }

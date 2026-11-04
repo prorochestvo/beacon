@@ -63,10 +63,10 @@ func TestOpenRouterClient_Complete(t *testing.T) {
 			receivedContentType = r.Header.Get("Content-Type")
 			var err error
 			receivedBody, err = io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(validChatResponseJSON(t, "rate result"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -113,10 +113,10 @@ func TestOpenRouterClient_Complete(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var err error
 			receivedBody, err = io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(validChatResponseJSON(t, "rate result"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -142,11 +142,11 @@ func TestOpenRouterClient_Complete(t *testing.T) {
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, werr := w.Write([]byte(`{"error":{"message":"Invalid API key"}}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -160,11 +160,11 @@ func TestOpenRouterClient_Complete(t *testing.T) {
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			_, werr := w.Write([]byte(`{"error":{"message":"internal server error"}}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -178,10 +178,10 @@ func TestOpenRouterClient_Complete(t *testing.T) {
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write([]byte(`{"choices":[]}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -196,10 +196,10 @@ func TestOpenRouterClient_Complete(t *testing.T) {
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write([]byte(`{"invalid`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -214,10 +214,10 @@ func TestOpenRouterClient_Complete(t *testing.T) {
 		htmlBody := `<!DOCTYPE html><html><body>Cloudflare error 1020</body></html>`
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "text/html")
 			_, werr := w.Write([]byte(htmlBody))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -233,10 +233,10 @@ func TestOpenRouterClient_Complete(t *testing.T) {
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(validChatResponseJSON(t, "should not reach"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -265,10 +265,10 @@ func TestOpenRouterClient_CheckUP(t *testing.T) {
 			receivedContentType = r.Header.Get("Content-Type")
 			var err error
 			receivedBody, err = io.ReadAll(r.Body)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(validChatResponseJSON(t, "pong"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -295,7 +295,7 @@ func TestOpenRouterClient_CheckUP(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(validChatResponseJSON(t, "PONG!"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -310,7 +310,7 @@ func TestOpenRouterClient_CheckUP(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(validChatResponseJSON(t, "I cannot do that"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -326,7 +326,7 @@ func TestOpenRouterClient_CheckUP(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write([]byte(`{"choices":[]}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -343,7 +343,7 @@ func TestOpenRouterClient_CheckUP(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/html")
 			_, werr := w.Write([]byte(htmlBody))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -361,7 +361,7 @@ func TestOpenRouterClient_CheckUP(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, werr := w.Write([]byte(`{"error":{"message":"Invalid API key"}}`))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -376,7 +376,7 @@ func TestOpenRouterClient_CheckUP(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(validChatResponseJSON(t, "pong"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 
@@ -423,7 +423,7 @@ func TestOpenRouterClient_BaseURL(t *testing.T) {
 			capturedURL = r.URL.RequestURI()
 			w.Header().Set("Content-Type", "application/json")
 			_, werr := w.Write(validChatResponseJSON(t, "pong"))
-			require.NoError(t, werr)
+			assert.NoError(t, werr)
 		}))
 		t.Cleanup(server.Close)
 

@@ -3,13 +3,21 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sync"
 	"testing"
 
+	"github.com/prorochestvo/dsninjector"
+	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/application/sourceaudit"
+	"github.com/seilbekskindirov/beacon/internal/domain"
+	"github.com/seilbekskindirov/beacon/internal/infrastructure/sqlitedb"
+	"github.com/seilbekskindirov/beacon/internal/infrastructure/sqlitedb/sqlitedbtest"
+	"github.com/seilbekskindirov/beacon/internal/repository"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,11 +27,16 @@ var _ sourceaudit.Fetcher = (*stubFetcher)(nil)
 // stubFetcher is a sourceaudit.Fetcher test double returning pre-configured
 // responses per URL without hitting the network.
 type stubFetcher struct {
+	mu        sync.Mutex
 	responses map[string]*sourceaudit.FetchResult
 	errs      map[string]error
+	requested []string
 }
 
 func (s *stubFetcher) Fetch(_ context.Context, url string, _ map[string]string) (*sourceaudit.FetchResult, error) {
+	s.mu.Lock()
+	s.requested = append(s.requested, url)
+	s.mu.Unlock()
 	if err, ok := s.errs[url]; ok {
 		return nil, err
 	}
@@ -33,6 +46,53 @@ func (s *stubFetcher) Fetch(_ context.Context, url string, _ map[string]string) 
 	return &sourceaudit.FetchResult{Body: []byte(""), StatusCode: 200}, nil
 }
 
+func (s *stubFetcher) requestedURLs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.requested...)
+}
+
+// warmSQLite opens one database file before any parallel subtest does. The
+// modernc.org/sqlite driver initialises its global state on first open, and
+// concurrent first opens trip the race detector.
+var warmSQLite sync.Once
+
+func warmUpSQLite(t *testing.T) {
+	t.Helper()
+	warmSQLite.Do(func() {
+		ds, err := dsninjector.Parse("sqlite://_:_@_:_/" + filepath.Join(t.TempDir(), "warm.db"))
+		require.NoError(t, err)
+		db, err := sqlitedb.NewSQLiteClient(ds)
+		require.NoError(t, err)
+		require.NoError(t, db.Close())
+	})
+}
+
+func newMigratedAuditDB(t *testing.T) string {
+	t.Helper()
+	warmUpSQLite(t)
+	dsn := "sqlite://_:_@_:_/" + filepath.Join(t.TempDir(), "audit.db")
+	ds, err := dsninjector.Parse(dsn)
+	require.NoError(t, err)
+	db, err := sqlitedb.NewSQLiteClient(ds)
+	require.NoError(t, err)
+	sqlitedbtest.Apply(t, db)
+	require.NoError(t, db.Close())
+	return dsn
+}
+
+// openAuditDB opens the database at dsn. The caller closes it before running
+// the audit, because the audit opens the same file on its own connection.
+func openAuditDB(t *testing.T, dsn string) *sqlitedb.SQLiteClient {
+	t.Helper()
+	warmUpSQLite(t)
+	ds, err := dsninjector.Parse(dsn)
+	require.NoError(t, err)
+	db, err := sqlitedb.NewSQLiteClient(ds)
+	require.NoError(t, err)
+	return db
+}
+
 func TestRunAudit(t *testing.T) {
 	t.Parallel()
 
@@ -40,7 +100,7 @@ func TestRunAudit(t *testing.T) {
 		t.Parallel()
 
 		var out, errOut bytes.Buffer
-		code := runAudit(nil, &out, &errOut)
+		code := runAudit(nil, nil, nil, &out, &errOut)
 
 		assert.Equal(t, 2, code)
 		assert.Contains(t, errOut.String(), "specify --all, --source, or --only")
@@ -51,7 +111,7 @@ func TestRunAudit(t *testing.T) {
 		t.Parallel()
 
 		var out, errOut bytes.Buffer
-		code := runAudit([]string{"--all", "--source", "halyk_usd"}, &out, &errOut)
+		code := runAudit([]string{"--all", "--source", "halyk_usd"}, nil, nil, &out, &errOut)
 
 		assert.Equal(t, 2, code)
 		assert.Contains(t, errOut.String(), "mutually exclusive")
@@ -61,7 +121,7 @@ func TestRunAudit(t *testing.T) {
 		t.Parallel()
 
 		var out, errOut bytes.Buffer
-		code := runAudit([]string{"--all", "--only", "^halyk"}, &out, &errOut)
+		code := runAudit([]string{"--all", "--only", "^halyk"}, nil, nil, &out, &errOut)
 
 		assert.Equal(t, 2, code)
 		assert.Contains(t, errOut.String(), "mutually exclusive")
@@ -71,7 +131,7 @@ func TestRunAudit(t *testing.T) {
 		t.Parallel()
 
 		var out, errOut bytes.Buffer
-		code := runAudit([]string{"--source", "halyk_usd", "--only", "^halyk"}, &out, &errOut)
+		code := runAudit([]string{"--source", "halyk_usd", "--only", "^halyk"}, nil, nil, &out, &errOut)
 
 		assert.Equal(t, 2, code)
 		assert.Contains(t, errOut.String(), "mutually exclusive")
@@ -81,7 +141,7 @@ func TestRunAudit(t *testing.T) {
 		t.Parallel()
 
 		var out, errOut bytes.Buffer
-		code := runAudit([]string{"--only", "[invalid"}, &out, &errOut)
+		code := runAudit([]string{"--only", "[invalid"}, nil, nil, &out, &errOut)
 
 		assert.Equal(t, 2, code)
 		assert.Contains(t, errOut.String(), "compile --only regex")
@@ -93,7 +153,7 @@ func TestRunAudit(t *testing.T) {
 		dir := t.TempDir()
 		var out, errOut bytes.Buffer
 		// Point seed-glob at an empty temp dir so ParseSeedFiles finds nothing.
-		code := runAudit([]string{"--all", "--seed-glob", filepath.Join(dir, "*.sql")}, &out, &errOut)
+		code := runAudit([]string{"--all", "--seed-glob", filepath.Join(dir, "*.sql")}, nil, nil, &out, &errOut)
 
 		assert.Equal(t, 3, code)
 		assert.Contains(t, errOut.String(), "no sources found")
@@ -103,7 +163,7 @@ func TestRunAudit(t *testing.T) {
 		t.Parallel()
 
 		var out, errOut bytes.Buffer
-		code := runAudit([]string{"--help"}, &out, &errOut)
+		code := runAudit([]string{"--help"}, nil, nil, &out, &errOut)
 
 		assert.Equal(t, 0, code)
 	})
@@ -176,7 +236,7 @@ func TestRunAudit(t *testing.T) {
 		// maps to failures > 0 → exit 1.
 		fetcher := &stubFetcher{
 			errs: map[string]error{
-				"https://example.com/": fmt.Errorf("connection refused"),
+				"https://example.com/": errors.New("connection refused"),
 			},
 		}
 		auditor := &sourceaudit.Auditor{Fetcher: fetcher}
@@ -186,10 +246,10 @@ func TestRunAudit(t *testing.T) {
 		var out bytes.Buffer
 		failures, err := sourceaudit.WriteReport(&out, results, false)
 		require.NoError(t, err)
-		assert.Greater(t, failures, 0, "expected at least one MISS when fetch fails")
+		assert.Positive(t, failures, "expected at least one MISS when fetch fails")
 	})
 
-	t.Run("fetch failure produces exit code 1 via runAuditWith", func(t *testing.T) {
+	t.Run("fetch failure produces exit code 1 via runAudit", func(t *testing.T) {
 		t.Parallel()
 
 		dir := t.TempDir()
@@ -204,12 +264,12 @@ func TestRunAudit(t *testing.T) {
 
 		fetcher := &stubFetcher{
 			errs: map[string]error{
-				"https://example.com/": fmt.Errorf("connection refused"),
+				"https://example.com/": errors.New("connection refused"),
 			},
 		}
 
 		var out, errOut bytes.Buffer
-		code := runAuditWith(
+		code := runAudit(
 			[]string{"--all", "--seed-glob", "*.sql"},
 			fetcher,
 			os.DirFS(dir),
@@ -220,7 +280,7 @@ func TestRunAudit(t *testing.T) {
 		assert.Equal(t, 1, code, "expected exit 1 when at least one source is a MISS; stdout: %s", out.String())
 	})
 
-	t.Run("--source with dots only matches exact name via runAuditWith", func(t *testing.T) {
+	t.Run("--source with dots only matches exact name via runAudit", func(t *testing.T) {
 		t.Parallel()
 
 		dir := t.TempDir()
@@ -249,7 +309,7 @@ func TestRunAudit(t *testing.T) {
 		var out, errOut bytes.Buffer
 		// -v makes WriteReport emit the per-source table with source names; the
 		// non-verbose OK line ("OK: audited N sources across N URLs") does not.
-		code := runAuditWith(
+		code := runAudit(
 			[]string{"--source", "src.with.dots", "--seed-glob", "*.sql", "-v"},
 			fetcher,
 			os.DirFS(dir),
@@ -262,5 +322,211 @@ func TestRunAudit(t *testing.T) {
 		assert.Equal(t, 0, code, "exact-name match should exit 0; stdout: %s stderr: %s", out.String(), errOut.String())
 		assert.Contains(t, out.String(), "src.with.dots", "report must mention the audited source")
 		assert.NotContains(t, out.String(), "srcXwithXdots", "wildcard source must not appear in report")
+	})
+
+	t.Run("database mode", func(t *testing.T) {
+		t.Parallel()
+
+		const bccURL = "https://www.bcc.kz/en/personal/currency-rates/"
+		const bccBody = `currencyMain&quot;:&quot;USD&quot;,&quot;sell&quot;:478.5`
+
+		t.Run("--dsn and explicitly set --seed-glob are incompatible", func(t *testing.T) {
+			t.Parallel()
+			dsn := newMigratedAuditDB(t)
+			var out, errOut bytes.Buffer
+			code := runAudit([]string{"--dsn", dsn, "--seed-glob", "migrations/*.sql", "--all"}, nil, nil, &out, &errOut)
+			assert.Equal(t, 2, code)
+			assert.Contains(t, errOut.String(), "--dsn and --seed-glob")
+			assert.Empty(t, out.String())
+		})
+
+		t.Run("invalid DSN is a usage error", func(t *testing.T) {
+			t.Parallel()
+			var out, errOut bytes.Buffer
+			// dsninjector.Parse rejects only input its pattern cannot match, such as a newline in the query part.
+			code := runAudit([]string{"--dsn", "sqlite://_:_@_:_/audit.db?a=1\nb=2", "--all"}, nil, nil, &out, &errOut)
+			assert.Equal(t, 2, code)
+			assert.Contains(t, errOut.String(), "parse --dsn: unparseable value (contents not logged)")
+			assert.NotContains(t, errOut.String(), "audit.db?a=1")
+			assert.Empty(t, out.String())
+		})
+
+		t.Run("missing database file is not created", func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "missing.db")
+			dsn := "sqlite://_:_@_:_/" + path
+			var out, errOut bytes.Buffer
+			code := runAudit([]string{"--dsn", dsn, "--all"}, nil, nil, &out, &errOut)
+			assert.Equal(t, 3, code)
+			assert.Contains(t, errOut.String(), "database file not found")
+			assert.Empty(t, out.String())
+			_, err := os.Stat(path)
+			assert.ErrorIs(t, err, os.ErrNotExist)
+		})
+
+		t.Run("stat failure other than not-exist is an infrastructure error", func(t *testing.T) {
+			t.Parallel()
+			// A path below a regular file fails with ENOTDIR, not ErrNotExist.
+			blocker := filepath.Join(t.TempDir(), "file")
+			require.NoError(t, os.WriteFile(blocker, nil, 0o600))
+			dsn := "sqlite://_:_@_:_/" + filepath.Join(blocker, "audit.db")
+			var out, errOut bytes.Buffer
+			code := runAudit([]string{"--dsn", dsn, "--all"}, nil, nil, &out, &errOut)
+			assert.Equal(t, 3, code)
+			assert.Contains(t, errOut.String(), "doctor audit: stat database:")
+			assert.Empty(t, out.String())
+		})
+
+		t.Run("empty unmigrated database is rejected", func(t *testing.T) {
+			t.Parallel()
+			dsn := "sqlite://_:_@_:_/" + filepath.Join(t.TempDir(), "audit.db")
+			db := openAuditDB(t, dsn)
+			require.NoError(t, db.Close())
+			var out, errOut bytes.Buffer
+			code := runAudit([]string{"--dsn", dsn, "--all"}, nil, nil, &out, &errOut)
+			assert.Equal(t, 3, code)
+			assert.Contains(t, errOut.String(), "schema behind this build: run cmd/migrator")
+			assert.Empty(t, out.String())
+		})
+
+		t.Run("database mode reads effective BCC rules while seed mode reads INSERT rules", func(t *testing.T) {
+			t.Parallel()
+			dsn := newMigratedAuditDB(t)
+			fetcher := &stubFetcher{responses: map[string]*sourceaudit.FetchResult{
+				bccURL: {Body: []byte(bccBody), StatusCode: 200},
+			}}
+			var dbOut, dbErr bytes.Buffer
+			code := runAudit([]string{"--dsn", dsn, "--source", "KZ_BCC_FX_BID_USD_KZT"}, fetcher, nil, &dbOut, &dbErr)
+			assert.Equal(t, 0, code, "stdout: %s stderr: %s", dbOut.String(), dbErr.String())
+			assert.Contains(t, dbOut.String(), "OK")
+
+			seedFetcher := &stubFetcher{responses: map[string]*sourceaudit.FetchResult{
+				bccURL: {Body: []byte(bccBody), StatusCode: 200},
+			}}
+			var seedOut, seedErr bytes.Buffer
+			code = runAudit([]string{"--source", "KZ_BCC_FX_BID_USD_KZT"}, seedFetcher, os.DirFS("../.."), &seedOut, &seedErr)
+			assert.Equal(t, 1, code, "stdout: %s stderr: %s", seedOut.String(), seedErr.String())
+			assert.Contains(t, seedOut.String(), "REGEX_NO_MATCH")
+		})
+
+		t.Run("--all omits source deleted by migration 008", func(t *testing.T) {
+			t.Parallel()
+			dsn := newMigratedAuditDB(t)
+			var out, errOut bytes.Buffer
+			// The stub returns empty bodies, so every seeded rule misses: exit 1 proves the run audited sources.
+			code := runAudit([]string{"--dsn", dsn, "--all", "-v"}, &stubFetcher{}, nil, &out, &errOut)
+			assert.Equal(t, 1, code, "stdout: %s stderr: %s", out.String(), errOut.String())
+			assert.Contains(t, out.String(), "KZ_BCC_FX_BID_USD_KZT")
+			assert.NotContains(t, out.String(), "KZ_BCC_BID_USD_KZT")
+			assert.Contains(t, errOut.String(), "active sources from rate_sources")
+		})
+
+		t.Run("no active plain-fetcher sources is exit 3, not a filter miss", func(t *testing.T) {
+			t.Parallel()
+			dsn := newMigratedAuditDB(t)
+			db := openAuditDB(t, dsn)
+			repo, err := repository.NewRateSourceRepository(db)
+			require.NoError(t, err)
+			rows, err := repo.ObtainAllRateSources(t.Context())
+			require.NoError(t, err)
+			require.NotEmpty(t, rows)
+			for i := range rows {
+				rows[i].Active = false
+				require.NoError(t, repo.RetainRateSource(t.Context(), &rows[i]))
+			}
+			require.NoError(t, db.Close())
+
+			fetcher := &stubFetcher{}
+			var out, errOut bytes.Buffer
+			code := runAudit([]string{"--dsn", dsn, "--all"}, fetcher, nil, &out, &errOut)
+			assert.Equal(t, 3, code, "stderr: %s", errOut.String())
+			assert.Contains(t, errOut.String(), "no active plain-fetcher sources in rate_sources")
+			assert.NotContains(t, errOut.String(), "no sources matched")
+			assert.Empty(t, fetcher.requestedURLs())
+			assert.Empty(t, out.String())
+		})
+
+		t.Run("inactive rows are excluded and chromedp rows are skipped", func(t *testing.T) {
+			t.Parallel()
+			dsn := newMigratedAuditDB(t)
+			db := openAuditDB(t, dsn)
+			repo, err := repository.NewRateSourceRepository(db)
+			require.NoError(t, err)
+			require.NoError(t, repo.RetainRateSource(t.Context(), &domain.RateSource{
+				Name: "audit-inactive", Title: "Inactive", BaseCurrency: "USD", QuoteCurrency: "KZT",
+				URL: "https://inactive.example/", Interval: "1h", Kind: domain.RateSourceKindBID, Active: false,
+				FetcherKind: "plain", Rules: []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: "([0-9]+)"}},
+			}))
+			require.NoError(t, repo.RetainRateSource(t.Context(), &domain.RateSource{
+				Name: "audit-chromedp", Title: "Chromedp", BaseCurrency: "USD", QuoteCurrency: "KZT",
+				URL: "https://chromedp.example/", Interval: "1h", Kind: domain.RateSourceKindBID, Active: true,
+				FetcherKind: "chromedp", Rules: []domain.RateSourceRule{{Method: domain.MethodRegex, Pattern: "([0-9]+)"}},
+			}))
+			require.NoError(t, db.Close())
+
+			fetcher := &stubFetcher{}
+			var out, errOut bytes.Buffer
+			code := runAudit([]string{"--dsn", dsn, "--source", "audit-inactive"}, fetcher, nil, &out, &errOut)
+			assert.Equal(t, 3, code)
+			assert.Contains(t, errOut.String(), "no sources matched the given filter")
+			assert.Empty(t, fetcher.requestedURLs())
+
+			out.Reset()
+			errOut.Reset()
+			code = runAudit([]string{"--dsn", dsn, "--source", "audit-chromedp"}, fetcher, nil, &out, &errOut)
+			assert.Equal(t, 3, code)
+			assert.Contains(t, errOut.String(), "skipped audit-chromedp: fetcher_kind=chromedp is not audited (plain HTTP only)")
+			assert.Contains(t, errOut.String(), "active sources from rate_sources")
+			assert.Empty(t, fetcher.requestedURLs())
+			assert.Empty(t, out.String())
+		})
+	})
+}
+
+// unsetProxyEnv removes BEACON_PROXY_URL for the duration of the test. An empty
+// value is not used: proxyutil.ResolveURL treats it as malformed and exits the process.
+func unsetProxyEnv(t *testing.T) {
+	t.Helper()
+	prev, had := os.LookupEnv(internal.EnvProxyURL)
+	if !had {
+		return
+	}
+	// t.Setenv records prev and restores it at cleanup; the unset follows it.
+	t.Setenv(internal.EnvProxyURL, prev)
+	require.NoError(t, os.Unsetenv(internal.EnvProxyURL))
+}
+
+// TestRunAuditDSNEnvIgnored is not parallel: t.Setenv is not allowed in parallel tests.
+func TestRunAuditDSNEnvIgnored(t *testing.T) {
+	t.Setenv(internal.EnvSQLiteDSN, newMigratedAuditDB(t))
+	unsetProxyEnv(t)
+
+	t.Run("the DSN never comes from the environment", func(t *testing.T) {
+		emptyDir := t.TempDir()
+		var out, errOut bytes.Buffer
+		code := runAudit([]string{"--all", "--seed-glob", "*.sql"}, nil, os.DirFS(emptyDir), &out, &errOut)
+		assert.Equal(t, 3, code)
+		assert.Contains(t, errOut.String(), "no sources found matching glob")
+		assert.Empty(t, out.String())
+	})
+}
+
+// TestRunAuditProxyWarning is not parallel: it sets BEACON_PROXY_URL for the process.
+func TestRunAuditProxyWarning(t *testing.T) {
+	t.Setenv(internal.EnvProxyURL, "http://127.0.0.1:7788")
+	dsn := newMigratedAuditDB(t)
+
+	t.Run("database mode warns that every source is proxied", func(t *testing.T) { //nolint:paralleltest // shares the process environment set by the parent
+		var out, errOut bytes.Buffer
+		code := runAudit([]string{"--dsn", dsn, "--source", "KZ_BCC_FX_BID_USD_KZT"}, &stubFetcher{}, nil, &out, &errOut)
+		assert.Equal(t, 1, code, "stdout: %s stderr: %s", out.String(), errOut.String())
+		assert.Contains(t, errOut.String(), "warning: BEACON_PROXY_URL is set")
+	})
+
+	t.Run("seed mode does not print the proxy warning", func(t *testing.T) { //nolint:paralleltest // shares the process environment set by the parent
+		var out, errOut bytes.Buffer
+		code := runAudit([]string{"--source", "KZ_BCC_FX_BID_USD_KZT"}, &stubFetcher{}, os.DirFS("../.."), &out, &errOut)
+		assert.Equal(t, 1, code, "stderr: %s", errOut.String())
+		assert.NotContains(t, errOut.String(), "warning: BEACON_PROXY_URL")
 	})
 }

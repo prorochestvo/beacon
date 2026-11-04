@@ -29,6 +29,22 @@ func TestWriteReport(t *testing.T) {
 		assert.NotContains(t, out, "MISS DETAILS")
 	})
 
+	t.Run("MISS DETAILS block has the exact shape the nightly launcher parses", func(t *testing.T) {
+		t.Parallel()
+
+		results := []ProbeResult{
+			{Source: SeededSource{Name: "KZ_X_USD_KZT", Side: "BID", Active: true}, URL: "https://x.example/", Status: StatusRegexNoMatch, Detail: "no match for pattern"},
+			{Source: SeededSource{Name: "KZ_Y_USD_KZT", Side: "BID", Active: true}, URL: "https://y.example/", Status: StatusFetchError, Detail: "a\nb"},
+		}
+
+		var buf strings.Builder
+		_, err := WriteReport(&buf, results, true)
+		require.NoError(t, err)
+		assert.True(t, strings.HasSuffix(buf.String(),
+			"\nMISS DETAILS:\nKZ_X_USD_KZT\tREGEX_NO_MATCH\tno match for pattern\nKZ_Y_USD_KZT\tFETCH_ERROR\ta | b\n"),
+			"got: %q", buf.String())
+	})
+
 	t.Run("quiet with failures prints FAIL summary plus MISS DETAILS", func(t *testing.T) {
 		t.Parallel()
 

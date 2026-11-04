@@ -21,6 +21,7 @@ func TestNew(t *testing.T) {
 		identity.KindExecutionHistory,
 		identity.KindWeatherUserCity,
 		identity.KindWeatherObservation,
+		identity.KindWeatherForecastDay,
 	}
 
 	t.Run("prefix matches kind", func(t *testing.T) {
@@ -36,13 +37,13 @@ func TestNew(t *testing.T) {
 	t.Run("output is unique across calls", func(t *testing.T) {
 		t.Parallel()
 		seen := make(map[string]struct{}, 100)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			id := identity.New(identity.KindRateValue)
 			_, exists := seen[id]
 			require.False(t, exists, "duplicate ID produced on call %d: %q", i, id)
 			seen[id] = struct{}{}
 			tIdx := strings.LastIndex(id, "T")
-			require.Greater(t, tIdx, 0, "ID %q must contain the T separator", id)
+			require.Positive(t, tIdx, "ID %q must contain the T separator", id)
 			uuidHex := id[tIdx+1:]
 			require.NotEmpty(t, uuidHex, "UUID segment must not be empty in %q", id)
 			require.NotEqual(t, strings.Repeat("0", len(uuidHex)), uuidHex,
@@ -55,9 +56,10 @@ func TestNew(t *testing.T) {
 		for _, k := range allKinds {
 			prefix := regexp.QuoteMeta(string(k))
 			// UUIDv4 is 16 bytes -> exactly 32 uppercase hex chars when formatted with %X.
-			// \d+ for the nanosecond field allows "0" (legal at exact-second boundaries);
-			// uniqueness is guaranteed by the UUID segment, not the timestamp.
-			pattern := regexp.MustCompile(`^` + prefix + `\d{14}Z\d+T[0-9A-F]{32}$`)
+			// The nanosecond field is exactly 9 digits, zero-padded, so that identifiers
+			// sort chronologically as text; uniqueness is guaranteed by the UUID segment,
+			// not the timestamp.
+			pattern := regexp.MustCompile(`^` + prefix + `\d{14}Z\d{9}T[0-9A-F]{32}$`)
 			id := identity.New(k)
 			assert.True(t, pattern.MatchString(id),
 				"ID %q for kind %q does not match expected format", id, k)

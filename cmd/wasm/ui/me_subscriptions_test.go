@@ -106,12 +106,23 @@ func TestRenderMeSubscriptions(t *testing.T) {
 		assert.Contains(t, html, `class="me-manage-gear"`)
 	})
 
-	t.Run("weather button is present on authenticated screen", func(t *testing.T) {
+	t.Run("the screen is wrapped in the section shell with the rates tab active", func(t *testing.T) {
 		t.Parallel()
 		state := meSubsState(nil)
 		html := ui.RenderMeSubscriptions(state)
-		assert.Contains(t, html, `id="me-weather"`)
-		assert.Contains(t, html, `class="me-weather-cloud"`)
+		assert.Contains(t, html, `class="app-shell"`)
+		assert.Contains(t, html, `data-section="rates" aria-selected="true"`)
+		assert.Contains(t, html, `data-section="weather" aria-selected="false"`)
+	})
+
+	t.Run("the weather cloud is no longer a navigation button", func(t *testing.T) {
+		t.Parallel()
+		state := meSubsState(nil)
+		html := ui.RenderMeSubscriptions(state)
+		// Weather is reached through the section rail; a second header icon was
+		// the ambiguity this screen was redesigned to remove.
+		assert.NotContains(t, html, `id="me-weather"`)
+		assert.NotContains(t, html, `me-weather-cloud`)
 	})
 
 	t.Run("401 auth failure shows error message and hides chart, modal slot, and buttons", func(t *testing.T) {
@@ -122,10 +133,11 @@ func TestRenderMeSubscriptions(t *testing.T) {
 
 		assert.Contains(t, html, "must be opened from the bot")
 		assert.Contains(t, html, `class="error-msg"`)
-		// Auth failure must not render chart, modal slot, or the floating buttons.
+		// Auth failure must not render chart, modal slot, the gear, or the rail:
+		// a screen with no content has nothing to navigate between.
 		assert.NotContains(t, html, `id="me-sparkline-chart"`)
 		assert.NotContains(t, html, `id="me-pair-modal-slot"`)
 		assert.NotContains(t, html, `id="me-manage"`)
-		assert.NotContains(t, html, `id="me-weather"`)
+		assert.NotContains(t, html, `class="section-rail"`)
 	})
 }

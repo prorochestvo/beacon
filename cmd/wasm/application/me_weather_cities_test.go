@@ -26,12 +26,16 @@ type weatherFakeFetcher struct {
 	postErr map[string]error
 	// delErr maps URL prefix → error for DELETE requests via FetchNoContent.
 	delErr map[string]error
+	// lastPostBody records the body of the most recent POST FetchJSON call so tests
+	// can assert how the page marshals the create request.
+	lastPostBody any
 }
 
 var _ apiclient.Fetcher = (*weatherFakeFetcher)(nil)
 
-func (f *weatherFakeFetcher) FetchJSON(_ context.Context, method, rawURL string, _ any, _ map[string]string) ([]byte, error) {
+func (f *weatherFakeFetcher) FetchJSON(_ context.Context, method, rawURL string, body any, _ map[string]string) ([]byte, error) {
 	if method == "POST" {
+		f.lastPostBody = body
 		for prefix, err := range f.postErr {
 			if strings.HasPrefix(rawURL, prefix) {
 				return nil, err
@@ -92,11 +96,6 @@ func searchResponse(items []dto.WeatherCitySearchItem) []byte {
 	return mustMarshal(dto.WeatherCitySearchResponse{Items: items})
 }
 
-// createCityResponse marshals a dto.WeatherCityCreateResponse to JSON for fake fetcher setup.
-func createCityResponse(id string) []byte {
-	return mustMarshal(dto.WeatherCityCreateResponse{ID: id})
-}
-
 func TestMeWeatherCitiesPage_LoadCities(t *testing.T) {
 	t.Parallel()
 
@@ -111,7 +110,7 @@ func TestMeWeatherCitiesPage_LoadCities(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{city1}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{city1}),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -122,7 +121,7 @@ func TestMeWeatherCitiesPage_LoadCities(t *testing.T) {
 		assert.Equal(t, "c1", st.Cities[0].ID)
 		assert.Equal(t, "Almaty", st.Cities[0].DisplayName)
 		assert.False(t, st.AuthFailure)
-		assert.Nil(t, st.LoadError)
+		assert.NoError(t, st.LoadError)
 	})
 
 	t.Run("empty list returns non-nil slice", func(t *testing.T) {
@@ -130,7 +129,7 @@ func TestMeWeatherCitiesPage_LoadCities(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse(nil),
+				"/api/v1/me/weather/cities": citiesResponse(nil),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -146,7 +145,7 @@ func TestMeWeatherCitiesPage_LoadCities(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlErr: map[string]error{
-				"/api/me/weather/cities": errors.New("http 401"),
+				"/api/v1/me/weather/cities": errors.New("http 401"),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -155,7 +154,7 @@ func TestMeWeatherCitiesPage_LoadCities(t *testing.T) {
 		require.Error(t, err)
 		st := page.State()
 		assert.True(t, st.AuthFailure)
-		assert.NotNil(t, st.LoadError)
+		assert.Error(t, st.LoadError)
 	})
 
 	t.Run("network error does not set AuthFailure", func(t *testing.T) {
@@ -163,7 +162,7 @@ func TestMeWeatherCitiesPage_LoadCities(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlErr: map[string]error{
-				"/api/me/weather/cities": errors.New("connection refused"),
+				"/api/v1/me/weather/cities": errors.New("connection refused"),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -193,7 +192,7 @@ func TestMeWeatherCitiesPage_SearchCities(t *testing.T) {
 
 		st := page.State()
 		assert.Nil(t, st.SearchResults)
-		assert.Nil(t, st.SearchError)
+		assert.NoError(t, st.SearchError)
 	})
 
 	t.Run("whitespace-only query clears results without an API call", func(t *testing.T) {
@@ -212,7 +211,7 @@ func TestMeWeatherCitiesPage_SearchCities(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities/search": searchResponse([]dto.WeatherCitySearchItem{item1}),
+				"/api/v1/me/weather/cities/search": searchResponse([]dto.WeatherCitySearchItem{item1}),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -229,7 +228,7 @@ func TestMeWeatherCitiesPage_SearchCities(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities/search": searchResponse(nil),
+				"/api/v1/me/weather/cities/search": searchResponse(nil),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -245,7 +244,7 @@ func TestMeWeatherCitiesPage_SearchCities(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlErr: map[string]error{
-				"/api/me/weather/cities/search": errors.New("http 401"),
+				"/api/v1/me/weather/cities/search": errors.New("http 401"),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -260,7 +259,7 @@ func TestMeWeatherCitiesPage_SearchCities(t *testing.T) {
 
 		f := &editFakeFetcher{
 			urlErr: map[string]error{
-				"/api/me/weather/cities/search": errors.New("upstream timeout"),
+				"/api/v1/me/weather/cities/search": errors.New("upstream timeout"),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -268,7 +267,7 @@ func TestMeWeatherCitiesPage_SearchCities(t *testing.T) {
 
 		require.Error(t, err)
 		st := page.State()
-		assert.NotNil(t, st.SearchError)
+		require.Error(t, st.SearchError)
 		assert.False(t, st.AuthFailure)
 	})
 }
@@ -283,7 +282,7 @@ func TestMeWeatherCitiesPage_SelectSearchResult(t *testing.T) {
 		t.Helper()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities/search": searchResponse(items),
+				"/api/v1/me/weather/cities/search": searchResponse(items),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -327,7 +326,7 @@ func TestMeWeatherCitiesPage_SaveSelected(t *testing.T) {
 	// call can carry different error maps without prefix overlap.
 	makePageWithSelection := func(t *testing.T, f *weatherFakeFetcher) *application.MeWeatherCitiesPage {
 		t.Helper()
-		f.getJSON["/api/me/weather/cities/search"] = searchResponse([]dto.WeatherCitySearchItem{item})
+		f.getJSON["/api/v1/me/weather/cities/search"] = searchResponse([]dto.WeatherCitySearchItem{item})
 		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
 		require.NoError(t, page.SearchCities(t.Context(), "Almaty"))
 		page.SelectSearchResult(0)
@@ -345,7 +344,7 @@ func TestMeWeatherCitiesPage_SaveSelected(t *testing.T) {
 		t.Parallel()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{{
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{{
 					ID: "c-new", LocationID: "1234", DisplayName: "Almaty", NotifyHour: 7,
 				}}),
 			},
@@ -367,20 +366,20 @@ func TestMeWeatherCitiesPage_SaveSelected(t *testing.T) {
 		// postErr only affects the POST create call; GET search uses getJSON.
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{},
-			postErr: map[string]error{"/api/me/weather/cities": errors.New("server error")},
+			postErr: map[string]error{"/api/v1/me/weather/cities": errors.New("server error")},
 		}
 		page := makePageWithSelection(t, f)
 
 		err := page.SaveSelected(context.Background())
 		require.Error(t, err)
-		assert.NotNil(t, page.State().SaveError)
+		assert.Error(t, page.State().SaveError)
 	})
 
 	t.Run("create 401 sets AuthFailure", func(t *testing.T) {
 		t.Parallel()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{},
-			postErr: map[string]error{"/api/me/weather/cities": errors.New("http 401")},
+			postErr: map[string]error{"/api/v1/me/weather/cities": errors.New("http 401")},
 		}
 		page := makePageWithSelection(t, f)
 
@@ -397,7 +396,7 @@ func TestMeWeatherCitiesPage_DeleteCity(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse(nil),
+				"/api/v1/me/weather/cities": citiesResponse(nil),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -412,7 +411,7 @@ func TestMeWeatherCitiesPage_DeleteCity(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlNoContentErr: map[string]error{
-				"/api/me/weather/cities/": errors.New("server error"),
+				"/api/v1/me/weather/cities/": errors.New("server error"),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -426,12 +425,59 @@ func TestMeWeatherCitiesPage_DeleteCity(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlNoContentErr: map[string]error{
-				"/api/me/weather/cities/": errors.New("http 401"),
+				"/api/v1/me/weather/cities/": errors.New("http 401"),
 			},
 		}
 		page := weatherPageWithFetcher(f)
 
 		err := page.DeleteCity(t.Context(), "city-1")
+		require.Error(t, err)
+		assert.True(t, page.State().AuthFailure)
+	})
+}
+
+func TestMeWeatherCitiesPage_RemoveCity(t *testing.T) {
+	t.Parallel()
+
+	t.Run("successful removal reloads list", func(t *testing.T) {
+		t.Parallel()
+		f := &editFakeFetcher{
+			urlJSON: map[string][]byte{
+				"/api/v1/me/weather/cities": citiesResponse(nil),
+			},
+		}
+		page := weatherPageWithFetcher(f)
+
+		require.NoError(t, page.RemoveCity(t.Context(), "loc-1"))
+
+		st := page.State()
+		assert.Empty(t, st.Cities)
+	})
+
+	t.Run("removal error is returned and AuthFailure is not set for non-401", func(t *testing.T) {
+		t.Parallel()
+		f := &editFakeFetcher{
+			urlNoContentErr: map[string]error{
+				"/api/v1/me/weather/locations/": errors.New("server error"),
+			},
+		}
+		page := weatherPageWithFetcher(f)
+
+		err := page.RemoveCity(t.Context(), "loc-1")
+		require.Error(t, err)
+		assert.False(t, page.State().AuthFailure)
+	})
+
+	t.Run("removal 401 sets AuthFailure", func(t *testing.T) {
+		t.Parallel()
+		f := &editFakeFetcher{
+			urlNoContentErr: map[string]error{
+				"/api/v1/me/weather/locations/": errors.New("http 401"),
+			},
+		}
+		page := weatherPageWithFetcher(f)
+
+		err := page.RemoveCity(t.Context(), "loc-1")
 		require.Error(t, err)
 		assert.True(t, page.State().AuthFailure)
 	})
@@ -449,7 +495,7 @@ func TestMeWeatherCitiesPage_OpenAlertForm(t *testing.T) {
 		t.Helper()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{city1}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{city1}),
 			},
 		}
 		page := weatherPageWithFetcher(f)
@@ -466,7 +512,7 @@ func TestMeWeatherCitiesPage_OpenAlertForm(t *testing.T) {
 		assert.Equal(t, "loc1", st.AlertFormLocationID)
 		assert.Equal(t, "alert_heat", st.AlertFormKind)
 		assert.Empty(t, st.AlertFormValue)
-		assert.Nil(t, st.AlertSaveError)
+		assert.NoError(t, st.AlertSaveError)
 	})
 
 	t.Run("SetAlertFormKind updates kind", func(t *testing.T) {
@@ -496,7 +542,7 @@ func TestMeWeatherCitiesPage_OpenAlertForm(t *testing.T) {
 		assert.Empty(t, st.AlertFormLocationID)
 		assert.Empty(t, st.AlertFormKind)
 		assert.Empty(t, st.AlertFormValue)
-		assert.Nil(t, st.AlertSaveError)
+		assert.NoError(t, st.AlertSaveError)
 	})
 }
 
@@ -514,14 +560,14 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 		t.Helper()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
 			},
 		}
 		if citiesAfterSave != nil {
-			f.getJSON["/api/me/weather/cities"] = citiesResponse(citiesAfterSave)
+			f.getJSON["/api/v1/me/weather/cities"] = citiesResponse(citiesAfterSave)
 		}
 		if postErr != nil {
-			f.postErr = map[string]error{"/api/me/weather/cities": postErr}
+			f.postErr = map[string]error{"/api/v1/me/weather/cities": postErr}
 		}
 		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
 		require.NoError(t, page.LoadCities(t.Context()))
@@ -539,7 +585,7 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 		t.Parallel()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{}),
 			},
 		}
 		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
@@ -557,22 +603,16 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 			ID: "c-alert", LocationID: "loc1", DisplayName: "Almaty",
 			Timezone: "Asia/Almaty", NotifyKind: "alert_heat", ConditionValue: "35",
 		}
-		f := &weatherFakeFetcher{
-			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow, savedRow}),
-			},
-		}
 		// First GET loads initial list; POST succeeds (no postErr); second GET after save.
 		initialFetcher := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
 			},
 		}
-		_ = f // reassigned below for the reload
 		page := application.NewMeWeatherCitiesPage(apiclient.New(initialFetcher), "init-token")
 		require.NoError(t, page.LoadCities(t.Context()))
 		// Swap fetcher so that post-save reload returns two rows.
-		initialFetcher.getJSON["/api/me/weather/cities"] = citiesResponse([]dto.WeatherCityRow{cityRow, savedRow})
+		initialFetcher.getJSON["/api/v1/me/weather/cities"] = citiesResponse([]dto.WeatherCityRow{cityRow, savedRow})
 
 		page.OpenAlertForm("loc1")
 		page.SetAlertFormKind("alert_heat")
@@ -582,7 +622,7 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 
 		st := page.State()
 		assert.Empty(t, st.AlertFormLocationID, "form must be closed on success")
-		assert.Nil(t, st.AlertSaveError)
+		require.NoError(t, st.AlertSaveError)
 		assert.Len(t, st.Cities, 2, "list must be reloaded after save")
 	})
 
@@ -590,9 +630,9 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 		t.Parallel()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
 			},
-			postErr: map[string]error{"/api/me/weather/cities": errors.New("validation: bad kind")},
+			postErr: map[string]error{"/api/v1/me/weather/cities": errors.New("validation: bad kind")},
 		}
 		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
 		require.NoError(t, page.LoadCities(t.Context()))
@@ -606,16 +646,16 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 
 		st := page.State()
 		assert.NotEmpty(t, st.AlertFormLocationID, "form must stay open on error")
-		assert.NotNil(t, st.AlertSaveError)
+		assert.Error(t, st.AlertSaveError)
 	})
 
 	t.Run("POST 401 sets AuthFailure", func(t *testing.T) {
 		t.Parallel()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
 			},
-			postErr: map[string]error{"/api/me/weather/cities": errors.New("http 401")},
+			postErr: map[string]error{"/api/v1/me/weather/cities": errors.New("http 401")},
 		}
 		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
 		require.NoError(t, page.LoadCities(t.Context()))
@@ -630,7 +670,7 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 		t.Parallel()
 		f := &weatherFakeFetcher{
 			getJSON: map[string][]byte{
-				"/api/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
 			},
 		}
 		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
@@ -644,7 +684,71 @@ func TestMeWeatherCitiesPage_SavePendingAlert(t *testing.T) {
 
 		st := page.State()
 		assert.Empty(t, st.AlertFormLocationID, "form must be closed on success")
-		assert.Nil(t, st.AlertSaveError)
+		assert.NoError(t, st.AlertSaveError)
+	})
+
+	t.Run("morning_summary routes the value to NotifyHour, not ConditionValue", func(t *testing.T) {
+		t.Parallel()
+		f := &weatherFakeFetcher{
+			getJSON: map[string][]byte{
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+			},
+		}
+		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
+		require.NoError(t, page.LoadCities(t.Context()))
+
+		page.OpenAlertForm("loc1")
+		page.SetAlertFormKind("morning_summary")
+		page.SetAlertFormValue("9")
+		require.NoError(t, page.SavePendingAlert(t.Context()))
+
+		body, ok := f.lastPostBody.(dto.WeatherCityCreateRequest)
+		require.True(t, ok, "POST body must be a WeatherCityCreateRequest")
+		require.NotNil(t, body.NotifyHour, "hour must be sent for morning_summary")
+		assert.Equal(t, 9, *body.NotifyHour)
+		assert.Empty(t, body.ConditionValue, "morning_summary must not send a condition_value")
+	})
+
+	t.Run("morning_summary with blank hour omits NotifyHour so the server default applies", func(t *testing.T) {
+		t.Parallel()
+		f := &weatherFakeFetcher{
+			getJSON: map[string][]byte{
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+			},
+		}
+		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
+		require.NoError(t, page.LoadCities(t.Context()))
+
+		page.OpenAlertForm("loc1")
+		page.SetAlertFormKind("morning_summary")
+		// Value left blank on purpose.
+		require.NoError(t, page.SavePendingAlert(t.Context()))
+
+		body, ok := f.lastPostBody.(dto.WeatherCityCreateRequest)
+		require.True(t, ok)
+		assert.Nil(t, body.NotifyHour, "blank hour must omit NotifyHour")
+	})
+
+	t.Run("morning_summary non-numeric hour is rejected client-side without a POST", func(t *testing.T) {
+		t.Parallel()
+		f := &weatherFakeFetcher{
+			getJSON: map[string][]byte{
+				"/api/v1/me/weather/cities": citiesResponse([]dto.WeatherCityRow{cityRow}),
+			},
+		}
+		page := application.NewMeWeatherCitiesPage(apiclient.New(f), "init-token")
+		require.NoError(t, page.LoadCities(t.Context()))
+
+		page.OpenAlertForm("loc1")
+		page.SetAlertFormKind("morning_summary")
+		page.SetAlertFormValue("noon")
+		err := page.SavePendingAlert(t.Context())
+		require.Error(t, err)
+
+		st := page.State()
+		assert.NotEmpty(t, st.AlertFormLocationID, "form must stay open on a client-side validation error")
+		require.Error(t, st.AlertSaveError)
+		assert.Nil(t, f.lastPostBody, "no POST must be made when the hour is invalid")
 	})
 }
 
@@ -655,7 +759,7 @@ func TestMeWeatherCitiesPage_ClearSearch(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/cities/search": searchResponse([]dto.WeatherCitySearchItem{
+				"/api/v1/me/weather/cities/search": searchResponse([]dto.WeatherCitySearchItem{
 					{LocationID: "1", DisplayName: "Alpha"},
 				}),
 			},
@@ -670,7 +774,7 @@ func TestMeWeatherCitiesPage_ClearSearch(t *testing.T) {
 		assert.Empty(t, st.SearchQuery)
 		assert.Nil(t, st.SearchResults)
 		assert.Nil(t, st.Selected)
-		assert.Nil(t, st.SearchError)
-		assert.Nil(t, st.SaveError)
+		assert.NoError(t, st.SearchError)
+		assert.NoError(t, st.SaveError)
 	})
 }

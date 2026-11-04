@@ -1,8 +1,10 @@
-// Package application contains the WASM page controllers for the Mini App.
 package application
+
+// Package application contains the WASM page controllers for the Mini App.
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -326,105 +328,6 @@ func (p *MeSubscriptionsEditPage) SetDraftDirection(sourceName string) {
 	}
 }
 
-// resolvePairDirections returns every source sharing (Title, Base, Quote) with
-// anchor, sorted by SourceName ASC for deterministic radio order. With more than
-// one direction, each Label is the segment of its Name that DIFFERS from the
-// others in the bucket (longest common prefix and suffix stripped). For the
-// project's KZ_<bank>_<dir>_<base>_<quote> data this yields "BID"/"ASK"; for any
-// other scheme it falls back to whatever non-shared substring distinguishes the
-// rows. Single-direction pairs return one entry with an empty Label — no radio.
-func resolvePairDirections(sources []dto.SourceResponse, anchor dto.SourceResponse) []PairDirection {
-	if anchor.Name == "" {
-		return nil
-	}
-	matches := make([]dto.SourceResponse, 0, 2)
-	for _, s := range sources {
-		if s.Title != anchor.Title {
-			continue
-		}
-		if s.BaseCurrency != anchor.BaseCurrency || s.QuoteCurrency != anchor.QuoteCurrency {
-			continue
-		}
-		matches = append(matches, s)
-	}
-	sort.Slice(matches, func(i, j int) bool { return matches[i].Name < matches[j].Name })
-	if len(matches) == 0 {
-		return nil
-	}
-	if len(matches) == 1 {
-		return []PairDirection{{Label: "", SourceName: matches[0].Name}}
-	}
-	names := make([]string, len(matches))
-	for i, m := range matches {
-		names[i] = m.Name
-	}
-	prefix, suffix := longestCommonPrefix(names), longestCommonSuffix(names)
-	out := make([]PairDirection, 0, len(matches))
-	for i, m := range matches {
-		mid := strings.TrimPrefix(m.Name, prefix)
-		mid = strings.TrimSuffix(mid, suffix)
-		mid = strings.Trim(mid, "_-")
-		if mid == "" {
-			// Names collapse to empty after stripping shared affixes — use a
-			// positional label so the radio remains clickable.
-			mid = fmt.Sprintf("Option %d", i+1)
-		}
-		out = append(out, PairDirection{
-			Label:      strings.ToUpper(mid),
-			SourceName: m.Name,
-		})
-	}
-	return out
-}
-
-// longestCommonPrefix returns the longest string that is a prefix of every
-// input. Returns "" on empty input or no shared prefix.
-func longestCommonPrefix(ss []string) string {
-	if len(ss) == 0 {
-		return ""
-	}
-	p := ss[0]
-	for _, s := range ss[1:] {
-		max := len(p)
-		if len(s) < max {
-			max = len(s)
-		}
-		i := 0
-		for i < max && p[i] == s[i] {
-			i++
-		}
-		p = p[:i]
-		if p == "" {
-			return ""
-		}
-	}
-	return p
-}
-
-// longestCommonSuffix returns the longest string that is a suffix of every
-// input. Returns "" on empty input or no shared suffix.
-func longestCommonSuffix(ss []string) string {
-	if len(ss) == 0 {
-		return ""
-	}
-	p := ss[0]
-	for _, s := range ss[1:] {
-		max := len(p)
-		if len(s) < max {
-			max = len(s)
-		}
-		i := 0
-		for i < max && p[len(p)-1-i] == s[len(s)-1-i] {
-			i++
-		}
-		p = p[len(p)-i:]
-		if p == "" {
-			return ""
-		}
-	}
-	return p
-}
-
 // ClosePickers hides both overlays. Used as the outside-click handler.
 func (p *MeSubscriptionsEditPage) ClosePickers() {
 	p.state.ProviderPickerOpen = false
@@ -516,12 +419,9 @@ func (p *MeSubscriptionsEditPage) SaveDraft(ctx context.Context) error {
 // UpdateRow updates the condition fields of an existing subscription and
 // reloads the list on success. FormError is populated on failure.
 func (p *MeSubscriptionsEditPage) UpdateRow(ctx context.Context, id, conditionType, conditionValue string) error {
-	draft := MeSubscriptionDraft{
-		SourceName:     "",
-		ConditionType:  conditionType,
-		ConditionValue: conditionValue,
-	}
-	if err := validateCondition(draft.ConditionType, draft.ConditionValue); err != nil {
+	// The draft struct this used to build was read for two of its fields and
+	// discarded; the request below already takes the parameters directly.
+	if err := validateCondition(conditionType, conditionValue); err != nil {
 		p.state.FormError = err
 		return err
 	}
@@ -570,6 +470,105 @@ func (p *MeSubscriptionsEditPage) reloadList(ctx context.Context) error {
 	return nil
 }
 
+// resolvePairDirections returns every source sharing (Title, Base, Quote) with
+// anchor, sorted by SourceName ASC for deterministic radio order. With more than
+// one direction, each Label is the segment of its Name that DIFFERS from the
+// others in the bucket (longest common prefix and suffix stripped). For the
+// project's KZ_<bank>_<dir>_<base>_<quote> data this yields "BID"/"ASK"; for any
+// other scheme it falls back to whatever non-shared substring distinguishes the
+// rows. Single-direction pairs return one entry with an empty Label — no radio.
+func resolvePairDirections(sources []dto.SourceResponse, anchor dto.SourceResponse) []PairDirection {
+	if anchor.Name == "" {
+		return nil
+	}
+	matches := make([]dto.SourceResponse, 0, 2)
+	for _, s := range sources {
+		if s.Title != anchor.Title {
+			continue
+		}
+		if s.BaseCurrency != anchor.BaseCurrency || s.QuoteCurrency != anchor.QuoteCurrency {
+			continue
+		}
+		matches = append(matches, s)
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].Name < matches[j].Name })
+	if len(matches) == 0 {
+		return nil
+	}
+	if len(matches) == 1 {
+		return []PairDirection{{Label: "", SourceName: matches[0].Name}}
+	}
+	names := make([]string, len(matches))
+	for i, m := range matches {
+		names[i] = m.Name
+	}
+	prefix, suffix := longestCommonPrefix(names), longestCommonSuffix(names)
+	out := make([]PairDirection, 0, len(matches))
+	for i, m := range matches {
+		mid := strings.TrimPrefix(m.Name, prefix)
+		mid = strings.TrimSuffix(mid, suffix)
+		mid = strings.Trim(mid, "_-")
+		if mid == "" {
+			// Names collapse to empty after stripping shared affixes — use a
+			// positional label so the radio remains clickable.
+			mid = fmt.Sprintf("Option %d", i+1)
+		}
+		out = append(out, PairDirection{
+			Label:      strings.ToUpper(mid),
+			SourceName: m.Name,
+		})
+	}
+	return out
+}
+
+// longestCommonPrefix returns the longest string that is a prefix of every
+// input. Returns "" on empty input or no shared prefix.
+func longestCommonPrefix(ss []string) string {
+	if len(ss) == 0 {
+		return ""
+	}
+	p := ss[0]
+	for _, s := range ss[1:] {
+		upper := len(p)
+		if len(s) < upper {
+			upper = len(s)
+		}
+		i := 0
+		for i < upper && p[i] == s[i] {
+			i++
+		}
+		p = p[:i]
+		if p == "" {
+			return ""
+		}
+	}
+	return p
+}
+
+// longestCommonSuffix returns the longest string that is a suffix of every
+// input. Returns "" on empty input or no shared suffix.
+func longestCommonSuffix(ss []string) string {
+	if len(ss) == 0 {
+		return ""
+	}
+	p := ss[0]
+	for _, s := range ss[1:] {
+		upper := len(p)
+		if len(s) < upper {
+			upper = len(s)
+		}
+		i := 0
+		for i < upper && p[len(p)-1-i] == s[len(s)-1-i] {
+			i++
+		}
+		p = p[len(p)-i:]
+		if p == "" {
+			return ""
+		}
+	}
+	return p
+}
+
 // ValidateSubscriptionDraft mirrors domain.RateUserSubscription.Validate() for
 // WASM. Cron expressions are accepted if non-empty and delegated to the server
 // for structural validation (robfig/cron/v3 is not shipped to WASM because it
@@ -579,7 +578,7 @@ func (p *MeSubscriptionsEditPage) reloadList(ctx context.Context) error {
 // nil when the draft is valid.
 func ValidateSubscriptionDraft(d MeSubscriptionDraft) error {
 	if d.SourceName == "" {
-		return fmt.Errorf("source is required")
+		return errors.New("source is required")
 	}
 	return validateCondition(d.ConditionType, d.ConditionValue)
 }
@@ -590,27 +589,27 @@ func validateCondition(conditionType, conditionValue string) error {
 	switch conditionType {
 	case "daily":
 		if _, err := time.Parse(time.TimeOnly, conditionValue); err != nil {
-			return fmt.Errorf("daily: expected HH:MM:SS (e.g. 09:00:00)")
+			return errors.New("daily: expected HH:MM:SS (e.g. 09:00:00)")
 		}
 	case "delta":
 		d, err := strconv.ParseFloat(conditionValue, 64)
 		if err != nil {
-			return fmt.Errorf("delta: expected a non-negative number (e.g. 1.5)")
+			return errors.New("delta: expected a non-negative number (e.g. 1.5)")
 		}
 		if d < 0 {
-			return fmt.Errorf("delta: threshold must be non-negative")
+			return errors.New("delta: threshold must be non-negative")
 		}
 	case "interval":
 		dur, err := time.ParseDuration(conditionValue)
 		if err != nil {
-			return fmt.Errorf("interval: expected a Go duration (e.g. 1h30m)")
+			return errors.New("interval: expected a Go duration (e.g. 1h30m)")
 		}
 		if dur < time.Minute {
-			return fmt.Errorf("interval: minimum interval is 1m")
+			return errors.New("interval: minimum interval is 1m")
 		}
 	case "cron":
 		if strings.TrimSpace(conditionValue) == "" {
-			return fmt.Errorf("cron: expression must not be empty")
+			return errors.New("cron: expression must not be empty")
 		}
 	default:
 		return fmt.Errorf("unknown condition type %q; must be one of delta, interval, daily, cron", conditionType)

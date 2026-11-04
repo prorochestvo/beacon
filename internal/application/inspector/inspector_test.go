@@ -16,6 +16,13 @@ var _ Inspector = (*stubInspector)(nil)
 var _ dbPinger = (*stubPinger)(nil)
 var _ botPinger = (*stubPinger)(nil)
 
+// The three production implementations return concrete types from their
+// constructors, so without these the only thing holding the Inspector contract
+// together is the wiring in cmd/web — and /health/check is the deploy gate.
+var _ Inspector = (*DBInspector)(nil)
+var _ Inspector = (*TelegramInspector)(nil)
+var _ Inspector = (*OpenMeteoInspector)(nil)
+
 // stubInspector is a test double for Inspector. When block is true, CheckUP blocks
 // until ctx is cancelled and returns its error, simulating a hung dependency.
 type stubInspector struct {
@@ -302,135 +309,8 @@ func TestOpenMeteoInspector(t *testing.T) {
 	})
 }
 
-func TestGismeteoInspector_CheckUP(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Name returns gismeteo", func(t *testing.T) {
-		t.Parallel()
-		insp := NewGismeteoInspector()
-		assert.Equal(t, "gismeteo", insp.Name())
-	})
-
-	t.Run("CheckUP returns nil on 200", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer srv.Close()
-		insp := newGismeteoInspectorForTest(srv.Client(), srv.URL)
-		require.NoError(t, insp.CheckUP(context.Background()))
-	})
-
-	t.Run("CheckUP returns nil on 301 redirect (reachable)", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			// Serve 301 with no Location header. Without a custom CheckRedirect the
-			// default client would try to follow the redirect and fail because there is
-			// no Location target to redirect to. ErrUseLastResponse stops the client
-			// at the 301 so CheckUP receives the status directly and evaluates it.
-			w.WriteHeader(http.StatusMovedPermanently)
-		}))
-		defer srv.Close()
-		client := &http.Client{
-			Timeout: gismeteoProbeTimeout,
-			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		}
-		insp := newGismeteoInspectorForTest(client, srv.URL)
-		require.NoError(t, insp.CheckUP(context.Background()))
-	})
-
-	t.Run("CheckUP returns nil on 403 (reachable, bot-fence)", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusForbidden)
-		}))
-		defer srv.Close()
-		insp := newGismeteoInspectorForTest(srv.Client(), srv.URL)
-		require.NoError(t, insp.CheckUP(context.Background()))
-	})
-
-	t.Run("CheckUP returns error on 500", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-		}))
-		defer srv.Close()
-		insp := newGismeteoInspectorForTest(srv.Client(), srv.URL)
-		err := insp.CheckUP(context.Background())
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "500")
-	})
-
-	t.Run("CheckUP returns error on 503", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
-		}))
-		defer srv.Close()
-		insp := newGismeteoInspectorForTest(srv.Client(), srv.URL)
-		err := insp.CheckUP(context.Background())
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "503")
-	})
-
-	t.Run("CheckUP returns error on transport failure", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}))
-		srv.Close() // close before the request so the transport fails
-		insp := newGismeteoInspectorForTest(srv.Client(), srv.URL)
-		err := insp.CheckUP(context.Background())
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "gismeteo health")
-	})
-
-	t.Run("request carries the configured User-Agent", func(t *testing.T) {
-		t.Parallel()
-		var gotUA string
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			gotUA = r.Header.Get("User-Agent")
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer srv.Close()
-		insp := newGismeteoInspectorForTest(srv.Client(), srv.URL)
-		require.NoError(t, insp.CheckUP(context.Background()))
-		assert.Equal(t, gismeteoInspectorUA, gotUA, "User-Agent must match gismeteoInspectorUA")
-	})
-
-	t.Run("advisory gismeteo failure does not flip aggregate healthy", func(t *testing.T) {
-		t.Parallel()
-		agent := NewAgentWithAdvisory(inspectorTimeout,
-			[]Inspector{&stubInspector{name: "sqlite", err: nil}},
-			[]Inspector{&stubInspector{name: "gismeteo", err: errors.New("gismeteo down")}},
-		)
-		healthy, report := agent.CheckUp(context.Background())
-
-		assert.True(t, healthy, "advisory gismeteo failure must not set healthy=false")
-		assert.Equal(t, "gismeteo down", report["gismeteo"])
-		assert.Equal(t, "ok", report["sqlite"])
-	})
-
-	t.Run("NewGismeteoInspectorWithURL probes the configured base URL", func(t *testing.T) {
-		t.Parallel()
-		var hit bool
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			hit = true
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer srv.Close()
-
-		insp := NewGismeteoInspectorWithURL(srv.URL)
-		require.NoError(t, insp.CheckUP(context.Background()))
-		assert.True(t, hit, "probe must hit the configured base URL")
-	})
-
-	t.Run("NewGismeteoInspectorWithURL empty base URL falls back to default probe URL", func(t *testing.T) {
-		t.Parallel()
-		insp := NewGismeteoInspectorWithURL("")
-		assert.Equal(t, gismeteoProbeURL, insp.probeURL,
-			"an empty base_url must keep the compiled-in default probe URL")
-	})
+// newOpenMeteoInspectorForTest builds an inspector that probes probeURL through the
+// given client, aiming CheckUP at an httptest.Server instead of the live endpoint.
+func newOpenMeteoInspectorForTest(client *http.Client, probeURL string) *OpenMeteoInspector {
+	return &OpenMeteoInspector{client: client, probeURL: probeURL}
 }

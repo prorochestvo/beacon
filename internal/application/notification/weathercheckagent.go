@@ -7,107 +7,91 @@ import (
 	"io"
 	"time"
 
+	"github.com/prorochestvo/loginjector"
 	"github.com/seilbekskindirov/beacon/internal"
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
-// weatherGismeteoMaxAge is the maximum age of a gismeteo observation that will be
-// included in the morning summary. An observation older than this constant is treated
-// as stale and the summary falls back to Open-Meteo only. This is a belt-and-braces
-// backstop: the forecast_date equality check is the primary freshness guard.
-const weatherGismeteoMaxAge = 24 * time.Hour
-
-// weatherAlertCooldownForecast is the minimum gap between successive alerts for
-// forecast-based kinds (heat, frost, thunderstorm). ~20 h means the alert can
-// re-arm the next calendar day without firing twice within one notifier run cycle.
-// It must be strictly greater than the notifier's tick interval (typically minutes)
-// so the cooldown is what prevents per-tick spam, not luck.
-const weatherAlertCooldownForecast = 20 * time.Hour
-
-// weatherAlertCooldownRain is the cooldown for rain alerts. A shorter ~6 h window
-// re-arms when a second rain band enters the fixed look-ahead window later in the
-// day, while still preventing per-tick spam. Must be strictly greater than the
-// notifier tick interval.
-const weatherAlertCooldownRain = 6 * time.Hour
-
-// weatherAlertCooldown returns the per-kind cooldown for alert kinds.
-func weatherAlertCooldown(kind domain.WeatherNotifyKind) time.Duration {
-	switch kind {
-	case domain.WeatherNotifyAlertHeat, domain.WeatherNotifyAlertFrost, domain.WeatherNotifyAlertThunderstorm:
-		return weatherAlertCooldownForecast
-	case domain.WeatherNotifyAlertRain:
-		return weatherAlertCooldownRain
-	default:
-		return weatherAlertCooldownForecast // safe default for any unrecognised future kind
-	}
-}
-
-// NewWeatherCheckAgent constructs a WeatherCheckAgent. All arguments are required.
-func NewWeatherCheckAgent(
-	cityRepo weatherCheckCityRepository,
-	obsRepo weatherCheckObsRepository,
-	eventRepo rateCheckEventRepository,
-	logger io.Writer,
-) (*WeatherCheckAgent, error) {
-	if cityRepo == nil || obsRepo == nil || eventRepo == nil {
-		return nil, errors.New("weather check agent: cityRepo, obsRepo, and eventRepo are all required")
-	}
-	if logger == nil {
-		logger = io.Discard
-	}
-	return &WeatherCheckAgent{
-		cityRepo:  cityRepo,
-		obsRepo:   obsRepo,
-		eventRepo: eventRepo,
-		logger:    logger,
-	}, nil
-}
+// Alert kinds (heat, frost, thunderstorm, rain, thaw) are edge-triggered via the
+// per-row domain.WeatherUserCity.AlertLatched boolean, not a timer cooldown: a row
+// fires once on the transition into its condition and stays silent until the
+// condition clears and the latch re-arms (domain.WeatherUserCity.EvaluateLatched).
+// On top of the latch, a per-forecast_date fire cap (keyed on the repurposed
+// last_notified_at column via domain.ForecastDateKey) caps a row to at most one
+// fire per forecast_date — the anti-jitter backstop for a daily min/max that
+// crosses the fire/re-arm boundary more than once within one calendar day as the
+// collector rewrites the observation. The alert-phase loop below is the whole of it.
+//
+// rain_alert is the one kind outside both of those generalisations: it notifies on
+// BOTH latch edges (rain expected / rain cleared) and is exempt from the fire cap,
+// because its metric is a rolling 6 h window whose two transitions routinely fall on
+// the same forecast_date. Its dead band lives in the domain evaluator instead
+// (domain.WeatherNotifyKind.UsesForecastDateCap gates the cap here).
 
 // WeatherCheckAgent evaluates due weather city subscriptions, renders morning-weather
 // summaries, and queues them as RateUserEvents for delivery by RateDispatchAgent.
 // It reuses the existing FX notification queue (rate_user_events) with an empty
 // SourceName → NULL so there is no FK dependency on rate_sources.
-//
-// When a fresh gismeteo observation exists for the same forecast_date, both
-// observations are passed to RenderMorningSummary for a side-by-side comparison.
-// A missing or stale gismeteo observation is a normal non-error condition — the
-// summary falls back to Open-Meteo only.
 type WeatherCheckAgent struct {
-	cityRepo  weatherCheckCityRepository
-	obsRepo   weatherCheckObsRepository
-	eventRepo rateCheckEventRepository // reuse the same narrow interface as RateCheckAgent
-	logger    io.Writer
+	cityRepo     weatherCheckCityRepository
+	obsRepo      weatherCheckObsRepository
+	forecastRepo weatherCheckForecastRepository
+	eventRepo    rateCheckEventRepository // reuse the same narrow interface as RateCheckAgent
+	logger       io.Writer
 }
 
-// weatherCheckCityRepository is the narrow city-repository surface the check agent needs.
-type weatherCheckCityRepository interface {
-	ObtainDueWeatherUserCities(ctx context.Context, notifyKind domain.WeatherNotifyKind) ([]domain.WeatherUserCity, error)
-	AdvanceLastNotifiedAt(ctx context.Context, id string, when time.Time) error
-}
-
-// weatherCheckObsRepository is the narrow observation-repository surface the check agent needs.
-type weatherCheckObsRepository interface {
-	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
+// NewWeatherCheckAgent constructs a WeatherCheckAgent. All repository arguments are
+// required; a nil logger discards output.
+func NewWeatherCheckAgent(
+	cityRepo weatherCheckCityRepository,
+	obsRepo weatherCheckObsRepository,
+	forecastRepo weatherCheckForecastRepository,
+	eventRepo rateCheckEventRepository,
+	logger io.Writer,
+) (*WeatherCheckAgent, error) {
+	if cityRepo == nil || obsRepo == nil || forecastRepo == nil || eventRepo == nil {
+		return nil, errors.New("weather check agent: cityRepo, obsRepo, forecastRepo, and eventRepo are all required")
+	}
+	if logger == nil {
+		logger = io.Discard
+	}
+	return &WeatherCheckAgent{
+		cityRepo:     cityRepo,
+		obsRepo:      obsRepo,
+		forecastRepo: forecastRepo,
+		eventRepo:    eventRepo,
+		logger:       logger,
+	}, nil
 }
 
 // Run loads all morning-summary city subscriptions, evaluates which are due in
-// each city's local timezone, loads the latest Open-Meteo observation, optionally
-// loads a gismeteo observation for cross-provider comparison, renders the summary,
-// and queues it as a RateUserEvent.
+// each city's local timezone, loads the latest Open-Meteo observation, renders the
+// summary, and queues it as a RateUserEvent.
 //
 // Critical ordering: AdvanceLastNotifiedAt is called only after the event is
 // successfully queued. On a RetainRateUserEvent failure, the city is NOT marked
 // notified so the next run retries. A city with no observation yet is skipped
 // without advancing so it fires once collection data arrives.
 func (a *WeatherCheckAgent) Run(ctx context.Context) error {
-	cities, err := a.cityRepo.ObtainDueWeatherUserCities(ctx, domain.WeatherNotifyMorningSummary)
-	if err != nil {
-		return errors.Join(err, internal.NewTraceError())
-	}
-
 	now := time.Now().UTC()
 	var errs []error
 	var totalQueued, totalAttempted int
+
+	// A failure here is recorded and execution continues. The alert phase below issues
+	// its own queries per kind and shares nothing with this one, so returning would
+	// suppress heat, frost, thunderstorm, rain and thaw for the whole tick over a fault
+	// in the morning-summary read (#75). Nothing is lost either way — IsMorningDue stays
+	// true until AdvanceLastNotifiedAt fires and the alert latches hold — but a delayed
+	// thunderstorm alert is the part of "delayed" that matters.
+	//
+	// cities is nil on error, so the loop below is a no-op without a guard.
+	cities, err := a.cityRepo.ObtainDueWeatherUserCities(ctx, domain.WeatherNotifyMorningSummary)
+	if err != nil {
+		errs = append(errs, errors.Join(
+			fmt.Errorf("weather summary: load due cities: %w", err),
+			loginjector.NewTraceError(),
+		))
+	}
 
 	for _, city := range cities {
 		due, tzErr := city.IsMorningDue(now)
@@ -133,14 +117,7 @@ func (a *WeatherCheckAgent) Run(ctx context.Context) error {
 			continue
 		}
 
-		// Attempt to load a fresh gismeteo observation for cross-provider comparison.
-		// A missing or stale gismeteo observation is a normal non-error condition.
-		observations := []domain.WeatherObservation{*obs}
-		if gObs := a.loadFreshGismeteo(ctx, city.LocationID, obs.ForecastDate, now); gObs != nil {
-			observations = append(observations, *gObs)
-		}
-
-		htmlMsg, renderErr := RenderMorningSummary(city, observations...)
+		htmlMsg, renderErr := RenderMorningSummary(city, *obs)
 		if renderErr != nil {
 			errs = append(errs, fmt.Errorf("weather check city=%s: render: %w", city.ID, renderErr))
 			continue
@@ -183,6 +160,7 @@ func (a *WeatherCheckAgent) Run(ctx context.Context) error {
 		domain.WeatherNotifyAlertFrost,
 		domain.WeatherNotifyAlertThunderstorm,
 		domain.WeatherNotifyAlertRain,
+		domain.WeatherNotifyAlertThaw,
 	}
 
 	for _, kind := range alertKinds {
@@ -205,23 +183,51 @@ func (a *WeatherCheckAgent) Run(ctx context.Context) error {
 				continue
 			}
 
-			fired, reason, evalErr := city.EvaluateAlert(*obs, now)
+			prev := city.AlertLatched
+			edge, next, reason, evalErr := city.EvaluateLatched(*obs, now, prev)
 			if evalErr != nil {
 				errs = append(errs, fmt.Errorf("weather alert city=%s: evaluate: %w", city.ID, evalErr))
 				continue
 			}
-			if !fired {
+
+			if edge == domain.AlertEdgeNone {
+				// A latch change without a notification must still be persisted: this is the
+				// silent re-arm of a daily-metric kind. Only write on a real change so steady
+				// state costs zero writes per tick.
+				if next != prev {
+					if setErr := a.cityRepo.SetWeatherAlertLatched(ctx, city.ID, next); setErr != nil {
+						errs = append(errs, fmt.Errorf("weather alert city=%s: persist re-arm: %w", city.ID, setErr))
+					}
+				}
 				continue
 			}
 
-			// Cooldown gate: suppress if an alert was sent recently for this row.
-			cooldown := weatherAlertCooldown(city.NotifyKind)
-			if !city.LastNotifiedAt.IsZero() && now.Sub(city.LastNotifiedAt) < cooldown {
+			// Second gate: cap to one notification per forecast_date (anti-jitter backstop),
+			// for the daily-metric kinds only. For those kinds LastNotifiedAt holds the
+			// forecast_date of the last fire. rain_alert opts out — it is expected to notify
+			// both of its transitions within one forecast_date, and its anti-spam guarantee
+			// is the latch plus the hysteresis dead band (domain.WeatherNotifyKind.UsesForecastDateCap).
+			usesCap := city.NotifyKind.UsesForecastDateCap()
+			fdKey, keyErr := domain.ForecastDateKey(obs.ForecastDate)
+			if usesCap && keyErr == nil && !city.LastNotifiedAt.IsZero() && city.LastNotifiedAt.Equal(fdKey) {
+				// Same forecast_date already fired — a within-day jitter re-cross. Record
+				// the latch edge (next == true) but do NOT notify again.
+				if next != prev {
+					if setErr := a.cityRepo.SetWeatherAlertLatched(ctx, city.ID, next); setErr != nil {
+						errs = append(errs, fmt.Errorf("weather alert city=%s: persist latch (gated): %w", city.ID, setErr))
+					}
+				}
 				alertSuppressed++
-				continue // condition still holds but we alerted recently
+				continue
+			}
+			if usesCap && keyErr != nil {
+				// Malformed/empty forecast_date is an anomaly: log, allow the fire (never
+				// drop an alert), but the fire cap cannot be recorded — fall back to a
+				// latch-only write below.
+				fmt.Fprintf(a.logger, "weather alert: city %s: unparseable forecast_date %q: %v\n", city.ID, obs.ForecastDate, keyErr)
 			}
 
-			msg, renderErr := RenderWeatherAlert(city, reason, *obs)
+			msg, renderErr := RenderWeatherAlert(city, edge, reason, *obs)
 			if renderErr != nil {
 				errs = append(errs, fmt.Errorf("weather alert city=%s: render: %w", city.ID, renderErr))
 				continue
@@ -236,20 +242,188 @@ func (a *WeatherCheckAgent) Run(ctx context.Context) error {
 			alertAttempted++
 			if retainErr := a.eventRepo.RetainRateUserEvent(ctx, ev); retainErr != nil {
 				errs = append(errs, fmt.Errorf("weather alert city=%s: queue event: %w", city.ID, retainErr))
-				continue // do NOT advance; next run retries
+				continue // do NOT latch or record the fire date; next tick retries
 			}
 			alertQueued++
 
-			if advErr := a.cityRepo.AdvanceLastNotifiedAt(ctx, city.ID, now); advErr != nil {
-				errs = append(errs, fmt.Errorf("weather alert city=%s: advance last_notified_at: %w", city.ID, advErr))
+			// Persist ONLY after a successful enqueue, so a queue failure re-fires next tick.
+			// Kinds outside the forecast_date cap (rain_alert) write the latch alone — in
+			// either direction, since their clear transition sets it back to false.
+			var persistErr error
+			switch {
+			case !usesCap:
+				persistErr = a.cityRepo.SetWeatherAlertLatched(ctx, city.ID, next)
+			case keyErr == nil:
+				persistErr = a.cityRepo.MarkWeatherAlertFired(ctx, city.ID, fdKey) // latch=1 + record forecast_date
+			default:
+				persistErr = a.cityRepo.SetWeatherAlertLatched(ctx, city.ID, true) // anomaly: latch only
+			}
+			if persistErr != nil {
+				errs = append(errs, fmt.Errorf("weather alert city=%s: persist fire: %w", city.ID, persistErr))
 			}
 		}
 	}
 
+	outlookQueued, outlookAttempted, outlookQuiet, outlookErrs := a.runOutlookPhase(ctx, now)
+	errs = append(errs, outlookErrs...)
+
 	// Proof-of-execution marker matching RateCheckAgent's pattern.
-	fmt.Fprintf(a.logger, "weather check: queued %d/%d events (alerts: %d/%d suppressed: %d)\n",
-		totalQueued, totalAttempted, alertQueued, alertAttempted, alertSuppressed)
+	fmt.Fprintf(a.logger, "weather check: queued %d/%d events (alerts: %d/%d suppressed: %d) (outlook: %d/%d quiet: %d)\n",
+		totalQueued, totalAttempted, alertQueued, alertAttempted, alertSuppressed,
+		outlookQueued, outlookAttempted, outlookQuiet)
 	return errors.Join(errs...)
+}
+
+// runOutlookPhase delivers the multi-week forecast digest for every forecast_outlook
+// subscription that is due in its own local day, and returns what it did for the run's log
+// line plus every error it survived.
+//
+// The digest is content-gated, not edge-triggered. A day two weeks out changes its mind
+// several times before it arrives, so a latch per condition would either send every flip or,
+// with a dead band wide enough to stop that, say nothing at all. Instead the phase compares
+// the outlook's signature with the one stored on the row and sends only when they differ.
+//
+// The per-day cursor advances on every evaluation that had data, not only on a send. That is
+// what bounds the digest at one message per city per local day regardless of how often the
+// collector refreshes the forecast underneath it — a property the fetch cadence should not be
+// able to take away by changing.
+func (a *WeatherCheckAgent) runOutlookPhase(ctx context.Context, now time.Time) (queued, attempted, quiet int, errs []error) {
+	cities, err := a.cityRepo.ObtainDueWeatherUserCities(ctx, domain.WeatherNotifyForecastOutlook)
+	if err != nil {
+		return 0, 0, 0, []error{errors.Join(
+			fmt.Errorf("weather outlook: load due cities: %w", err),
+			loginjector.NewTraceError(),
+		)}
+	}
+
+	// The forecast window is cached for the length of the phase, the way the alert phase
+	// caches observations: two users subscribed to the same city and due on the same tick
+	// would otherwise each pay a read transaction for the same sixteen rows, and the count
+	// grows with subscribers rather than with locations.
+	forecastCache := make(map[string][]domain.WeatherForecastDay)
+	forecastCached := make(map[string]bool)
+
+	for _, city := range cities {
+		due, tzErr := city.IsMorningDue(now)
+		if tzErr != nil {
+			fmt.Fprintf(a.logger, "weather outlook: city %s: timezone error: %v\n", city.ID, tzErr)
+			continue
+		}
+		if !due {
+			continue
+		}
+
+		baseline, dateErr := city.LocalDate(now)
+		if dateErr != nil {
+			fmt.Fprintf(a.logger, "weather outlook: city %s: local date: %v\n", city.ID, dateErr)
+			continue
+		}
+
+		days, loadErr := a.loadCachedForecastDays(ctx, city.LocationID, baseline, forecastCache, forecastCached)
+		if loadErr != nil {
+			errs = append(errs, fmt.Errorf("weather outlook city=%s: load forecast: %w", city.ID, loadErr))
+			continue
+		}
+		if len(days) == 0 {
+			// Nothing collected for this location yet. Do NOT advance the cursor, so the
+			// first digest fires once the collector has stored a forecast — the same rule
+			// the morning-summary phase follows for a missing observation.
+			fmt.Fprintf(a.logger, "weather outlook: city %s location %s: no forecast yet, skipping\n", city.ID, city.LocationID)
+			continue
+		}
+
+		outlook := domain.NewWeatherOutlook(days, baseline)
+		if outlook.AheadDays() == 0 {
+			// Rows exist but none of them is in the future — a window that has drained
+			// from the front because collection stopped days ago. That is not an outlook
+			// with nothing in it, it is an outlook with nothing to look at, and it is
+			// treated like a missing one: no message, no cursor, resumes when collection
+			// does.
+			fmt.Fprintf(a.logger, "weather outlook: city %s location %s: window holds no future day, skipping\n", city.ID, city.LocationID)
+			continue
+		}
+		signature := outlook.Signature()
+
+		// Compare against the stored signature reduced to the days still ahead of today.
+		// Yesterday's signature still names the day that has since become the baseline, and
+		// letting that difference through would send a digest every morning of a wet stretch
+		// and announce the arriving day as cleared.
+		prevSignature := domain.PruneWeatherOutlookSignature(city.NotifyState, baseline)
+
+		// Two quiet cases. The outlook is unchanged since the last digest; or this is the
+		// first evaluation and there is nothing to report, where an opening message saying
+		// "nothing" would be the worst possible introduction to a notification channel.
+		if signature == prevSignature || (city.NotifyState == "" && len(outlook.NotableDays()) == 0) {
+			if city.NotifyState != signature {
+				if setErr := a.cityRepo.SetWeatherNotifyState(ctx, city.ID, signature); setErr != nil {
+					errs = append(errs, fmt.Errorf("weather outlook city=%s: persist state: %w", city.ID, setErr))
+				}
+			}
+			if advErr := a.cityRepo.AdvanceLastNotifiedAt(ctx, city.ID, now); advErr != nil {
+				errs = append(errs, fmt.Errorf("weather outlook city=%s: advance last_notified_at: %w", city.ID, advErr))
+			}
+			quiet++
+			continue
+		}
+
+		msg, renderErr := RenderForecastOutlook(city, outlook, prevSignature)
+		if renderErr != nil {
+			errs = append(errs, fmt.Errorf("weather outlook city=%s: render: %w", city.ID, renderErr))
+			continue
+		}
+
+		ev := &domain.RateUserEvent{
+			UserType: domain.UserTypeTelegram,
+			UserID:   city.UserID,
+			Message:  msg,
+			// SourceName empty → stored as NULL; same transport as the morning summary.
+		}
+		attempted++
+		if retainErr := a.eventRepo.RetainRateUserEvent(ctx, ev); retainErr != nil {
+			errs = append(errs, fmt.Errorf("weather outlook city=%s: queue event: %w", city.ID, retainErr))
+			continue // neither the state nor the cursor moves; the next tick retries
+		}
+		queued++
+
+		if setErr := a.cityRepo.SetWeatherNotifyState(ctx, city.ID, signature); setErr != nil {
+			errs = append(errs, fmt.Errorf("weather outlook city=%s: persist state: %w", city.ID, setErr))
+		}
+		if advErr := a.cityRepo.AdvanceLastNotifiedAt(ctx, city.ID, now); advErr != nil {
+			errs = append(errs, fmt.Errorf("weather outlook city=%s: advance last_notified_at: %w", city.ID, advErr))
+		}
+	}
+
+	return queued, attempted, quiet, errs
+}
+
+// loadCachedForecastDays returns the stored forecast window for locationID as seen from
+// baseline, reading it at most once per (location, baseline) pair inside one phase. The
+// baseline is part of the key because it bounds the query, and two cities sharing a location
+// can sit in different timezones and therefore on different local days.
+//
+// The cached slice is handed to every caller for the same key. Nothing mutates it —
+// domain.NewWeatherOutlook copies into a window of its own — so it is shared rather than
+// cloned.
+func (a *WeatherCheckAgent) loadCachedForecastDays(
+	ctx context.Context,
+	locationID, baseline string,
+	cache map[string][]domain.WeatherForecastDay,
+	cached map[string]bool,
+) ([]domain.WeatherForecastDay, error) {
+	// An empty window is a real answer and caches like any other, so presence is tracked in
+	// its own map rather than inferred from a nil slice.
+	key := locationID + "|" + baseline
+	if cached[key] {
+		return cache[key], nil
+	}
+
+	days, err := a.forecastRepo.ObtainForecastDays(ctx, locationID, domain.ProviderOpenMeteo, baseline, domain.WeatherOutlookHorizonDays)
+	if err != nil {
+		return nil, err
+	}
+	cache[key] = days
+	cached[key] = true
+	return days, nil
 }
 
 // loadCachedObservation returns the latest Open-Meteo observation for locationID,
@@ -265,6 +439,7 @@ func (a *WeatherCheckAgent) loadCachedObservation(
 	obsNotFound map[string]bool,
 ) (*domain.WeatherObservation, error) {
 	if obsNotFound[locationID] {
+		//nolint:nilnil // "no observation yet" is a state, not a failure; see the doc comment
 		return nil, nil
 	}
 	if obs, ok := obsCache[locationID]; ok {
@@ -274,6 +449,7 @@ func (a *WeatherCheckAgent) loadCachedObservation(
 	if err != nil {
 		if errors.Is(err, internal.ErrNotFound) {
 			obsNotFound[locationID] = true
+			//nolint:nilnil // the caller renders a missing observation, it does not fail on one
 			return nil, nil
 		}
 		return nil, fmt.Errorf("weather alert: location %s: load observation: %w", locationID, err)
@@ -282,39 +458,22 @@ func (a *WeatherCheckAgent) loadCachedObservation(
 	return obs, nil
 }
 
-// loadFreshGismeteo attempts to load the latest gismeteo observation for locationID.
-// Returns nil (without error) when:
-//   - no gismeteo observation exists (ErrNotFound),
-//   - the observation's ForecastDate does not match openMeteoForecastDate,
-//   - the observation's CapturedAt is older than weatherGismeteoMaxAge.
-//
-// A non-ErrNotFound error is logged and treated the same as an absent observation —
-// gismeteo must never block the morning summary.
-func (a *WeatherCheckAgent) loadFreshGismeteo(ctx context.Context, locationID, openMeteoForecastDate string, now time.Time) *domain.WeatherObservation {
-	gObs, err := a.obsRepo.ObtainLatestObservation(ctx, locationID, domain.ProviderGismeteo)
-	if err != nil {
-		if !errors.Is(err, internal.ErrNotFound) {
-			// Unexpected error — log so operators can investigate without failing the summary.
-			fmt.Fprintf(a.logger, "weather check: location %s: load gismeteo observation: %v\n", locationID, err)
-		}
-		return nil
-	}
+// weatherCheckCityRepository is the narrow city-repository surface the check agent needs.
+type weatherCheckCityRepository interface {
+	ObtainDueWeatherUserCities(ctx context.Context, notifyKind domain.WeatherNotifyKind) ([]domain.WeatherUserCity, error)
+	AdvanceLastNotifiedAt(ctx context.Context, id string, when time.Time) error
+	SetWeatherAlertLatched(ctx context.Context, id string, latched bool) error
+	SetWeatherNotifyState(ctx context.Context, id, state string) error
+	MarkWeatherAlertFired(ctx context.Context, id string, firedForDate time.Time) error
+}
 
-	// forecast_date equality is the primary guard: yesterday's gismeteo scrape must
-	// not appear next to today's Open-Meteo observation.
-	if gObs.ForecastDate != openMeteoForecastDate {
-		fmt.Fprintf(a.logger, "weather check: location %s: gismeteo observation skipped (forecast_date %q != open-meteo %q)\n",
-			locationID, gObs.ForecastDate, openMeteoForecastDate)
-		return nil
-	}
+// weatherCheckForecastRepository is the narrow long-range-forecast surface the check agent
+// needs for the outlook digest.
+type weatherCheckForecastRepository interface {
+	ObtainForecastDays(ctx context.Context, locationID, provider, fromDate string, limit int) ([]domain.WeatherForecastDay, error)
+}
 
-	// CapturedAt age bound is a belt-and-braces backstop in case forecast_date
-	// comparison passes but the observation is nonetheless very old.
-	if now.Sub(gObs.CapturedAt) > weatherGismeteoMaxAge {
-		fmt.Fprintf(a.logger, "weather check: location %s: gismeteo observation skipped (captured_at %s is older than %s)\n",
-			locationID, gObs.CapturedAt.Format(time.RFC3339), weatherGismeteoMaxAge)
-		return nil
-	}
-
-	return gObs
+// weatherCheckObsRepository is the narrow observation-repository surface the check agent needs.
+type weatherCheckObsRepository interface {
+	ObtainLatestObservation(ctx context.Context, locationID, provider string) (*domain.WeatherObservation, error)
 }

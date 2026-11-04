@@ -60,6 +60,14 @@ type alertTrigger struct {
 	ConditionValue string
 }
 
+// tableRow holds pre-rendered column strings for one alert row.
+type tableRow struct {
+	pair  string // e.g. "USD/KZT" or "KZT/USD"
+	value string // e.g. "68 382.56"
+	delta string // e.g. "+2.60" or "−74.79", or "" when suppressed
+	arrow string // "↑", "↓", or "" when suppressed
+}
+
 // buildAlertMessage renders alerts into one or more Telegram HTML message parts.
 // now is the run timestamp used verbatim in the header — the clock is injected,
 // never read here. loc is the render timezone; nil falls back to UTC.
@@ -92,14 +100,6 @@ func pairLabel(a alert) string {
 	return fmt.Sprintf("%s/%s", quote, base)
 }
 
-// tableRow holds pre-rendered column strings for one alert row.
-type tableRow struct {
-	pair  string // e.g. "USD/KZT" or "KZT/USD"
-	value string // e.g. "68 382.56"
-	delta string // e.g. "+2.60" or "−74.79", or "" when suppressed
-	arrow string // "↑", "↓", or "" when suppressed
-}
-
 // buildRows renders alerts into tableRow values, applying the first-fire guard
 // (Delta == 0 || Delta == CurrentPrice → blank delta+arrow cells).
 func buildRows(alerts []alert) []tableRow {
@@ -111,7 +111,7 @@ func buildRows(alerts []alert) []tableRow {
 		}
 		if a.Delta != 0 && a.Delta != a.CurrentPrice {
 			if a.Delta > 0 {
-				row.delta = fmt.Sprintf("+%s", labelfmt.GroupThousands(a.Delta))
+				row.delta = "+" + labelfmt.GroupThousands(a.Delta)
 				row.arrow = arrowUp
 			} else {
 				row.delta = fmt.Sprintf("%s%s", minusSign, labelfmt.GroupThousands(-a.Delta))

@@ -1,8 +1,8 @@
 package rulegen
 
 import (
-	"fmt"
 	"math"
+	"strconv"
 	"testing"
 
 	"github.com/seilbekskindirov/beacon/internal/domain"
@@ -105,7 +105,7 @@ func TestDefaultRuleExecutor_Execute(t *testing.T) {
 
 	t.Run("value above ceiling returns error", func(t *testing.T) {
 		t.Parallel()
-		body := []byte(fmt.Sprintf("%d", math.MaxInt32+1))
+		body := []byte(strconv.Itoa(math.MaxInt32 + 1))
 		rules := []domain.RateSourceRule{
 			{Method: domain.MethodRegex, Pattern: `(\d+)`},
 		}

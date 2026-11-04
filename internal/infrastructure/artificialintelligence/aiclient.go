@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/prorochestvo/dsninjector"
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 )
 
 // AIClient is the interface that all AI provider drivers implement.
@@ -30,6 +30,12 @@ type AIClient interface {
 	CheckUP(ctx context.Context) error
 	Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error)
 }
+
+const (
+	clientOpenAI     = "openai"
+	clientGroq       = "groq"
+	clientOpenRouter = "openrouterai"
+)
 
 // NewClient parses the driver from dns and dispatches to the matching
 // provider constructor. proxyURL is an optional HTTP proxy URL
@@ -65,7 +71,7 @@ func NewClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (A
 
 	r, err := newStubAIClient(stubAIDefaultResponse)
 	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
+		return nil, errors.Join(err, loginjector.NewTraceError())
 	}
 	return r, nil
 }
@@ -76,12 +82,6 @@ func NewClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (A
 func NewStubClient() (AIClient, error) {
 	return newStubAIClient(stubAIDefaultResponse)
 }
-
-const (
-	clientOpenAI     = "openai"
-	clientGroq       = "groq"
-	clientOpenRouter = "openrouterai"
-)
 
 // parseDSNTimeout reads the "timeout" DSN option and returns a duration clamped
 // to [10s, 15m]. When the option is absent or empty, it returns one minute.
@@ -94,7 +94,7 @@ func parseDSNTimeout(dns dsninjector.DataSource) (time.Duration, error) {
 	if err != nil {
 		return 0, errors.Join(
 			fmt.Errorf("unable to parse timeout=%q: %w", value, err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 	duration = max(duration, 10*time.Second)
@@ -131,8 +131,8 @@ func parseDSNKey(dns dsninjector.DataSource) (string, error) {
 	encoded := dns.Password()
 	if encoded == "" {
 		return "", errors.Join(
-			fmt.Errorf("missing API key in DSN"),
-			internal.NewTraceError(),
+			errors.New("missing API key in DSN"),
+			loginjector.NewTraceError(),
 		)
 	}
 
@@ -140,14 +140,14 @@ func parseDSNKey(dns dsninjector.DataSource) (string, error) {
 	if err != nil {
 		return "", errors.Join(
 			fmt.Errorf("unable to base64-decode API key: %w", err),
-			internal.NewTraceError(),
+			loginjector.NewTraceError(),
 		)
 	}
 
 	if len(decoded) == 0 {
 		return "", errors.Join(
-			fmt.Errorf("missing API key in DSN"),
-			internal.NewTraceError(),
+			errors.New("missing API key in DSN"),
+			loginjector.NewTraceError(),
 		)
 	}
 

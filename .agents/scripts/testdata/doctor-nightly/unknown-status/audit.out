@@ -1,0 +1,11 @@
+name          | url                      | side | value  | status
+--------------+--------------------------+------+--------+-----------
+KZ_T_USD_KZT  | https://t.example/rates  | BID  |        | TIMEOUT
+KZ_F_USD_KZT  | https://f.example/rates  | BID  |        | FETCH_ERROR
+KZ_OK_USD_KZT | https://ok.example/rates | BID  | 451.00 | OK
+
+audited 3 sources across 3 URLs: 1 OK, 2 MISS
+
+MISS DETAILS:
+KZ_T_USD_KZT	TIMEOUT	deadline
+KZ_F_USD_KZT	FETCH_ERROR	do request: context deadline exceeded

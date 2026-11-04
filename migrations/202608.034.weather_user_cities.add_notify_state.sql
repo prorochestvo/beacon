@@ -1,0 +1,16 @@
+-- Per-subscription notification state that is not a timestamp and not a boolean.
+--
+-- The forecast_outlook kind is content-gated rather than edge-triggered: it sends when what
+-- it would say has changed since it last said it, and stays silent otherwise. That needs the
+-- previous message's content, compressed to a signature (domain.WeatherOutlook.Signature),
+-- and there is nowhere on the row to put it — last_notified_at is a cursor and alert_latched
+-- is one bit.
+--
+-- Empty string means "never evaluated" and is distinct from an evaluated-but-empty outlook,
+-- which encodes as the signature version prefix alone. Insert-only in the subscription
+-- upsert, like last_notified_at and alert_latched, so re-adding a subscription cannot
+-- replay a digest the user has already read.
+--
+-- Not personal data: the value is derived entirely from public meteorological numbers for a
+-- city the user picked, and holds no user attribute of any kind.
+ALTER TABLE weather_user_cities ADD COLUMN notify_state TEXT NOT NULL DEFAULT '';

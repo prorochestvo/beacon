@@ -33,7 +33,7 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		temp := 22.5
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/current": currentResponse([]dto.WeatherCurrentItem{
+				"/api/v1/me/weather/current": currentResponse([]dto.WeatherCurrentItem{
 					{
 						LocationID:     "1234",
 						DisplayName:    "Almaty",
@@ -55,14 +55,14 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		assert.Equal(t, "Almaty", st.Items[0].DisplayName)
 		assert.True(t, st.Items[0].HasData)
 		assert.False(t, st.AuthFailure)
-		assert.Nil(t, st.LoadError)
+		assert.NoError(t, st.LoadError)
 	})
 
 	t.Run("empty server response returns non-nil empty slice", func(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/current": currentResponse(nil),
+				"/api/v1/me/weather/current": currentResponse(nil),
 			},
 		}
 		page := currentPageWithFetcher(f)
@@ -77,7 +77,7 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/current": currentResponse([]dto.WeatherCurrentItem{
+				"/api/v1/me/weather/current": currentResponse([]dto.WeatherCurrentItem{
 					{LocationID: "1234", DisplayName: "Almaty", Timezone: "Asia/Almaty", HasData: false},
 				}),
 			},
@@ -95,7 +95,7 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlErr: map[string]error{
-				"/api/me/weather/current": errors.New("http 401"),
+				"/api/v1/me/weather/current": errors.New("http 401"),
 			},
 		}
 		page := currentPageWithFetcher(f)
@@ -104,14 +104,14 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		require.Error(t, err)
 		st := page.State()
 		assert.True(t, st.AuthFailure)
-		assert.NotNil(t, st.LoadError)
+		assert.Error(t, st.LoadError)
 	})
 
 	t.Run("network error does not set AuthFailure", func(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlErr: map[string]error{
-				"/api/me/weather/current": errors.New("connection refused"),
+				"/api/v1/me/weather/current": errors.New("connection refused"),
 			},
 		}
 		page := currentPageWithFetcher(f)
@@ -120,14 +120,14 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		require.Error(t, err)
 		st := page.State()
 		assert.False(t, st.AuthFailure)
-		assert.NotNil(t, st.LoadError)
+		assert.Error(t, st.LoadError)
 	})
 
 	t.Run("loading flag is reset to false after successful load", func(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlJSON: map[string][]byte{
-				"/api/me/weather/current": currentResponse(nil),
+				"/api/v1/me/weather/current": currentResponse(nil),
 			},
 		}
 		page := currentPageWithFetcher(f)
@@ -139,7 +139,7 @@ func TestMeWeatherCurrentPage_Load(t *testing.T) {
 		t.Parallel()
 		f := &editFakeFetcher{
 			urlErr: map[string]error{
-				"/api/me/weather/current": errors.New("network down"),
+				"/api/v1/me/weather/current": errors.New("network down"),
 			},
 		}
 		page := currentPageWithFetcher(f)

@@ -1,3 +1,5 @@
+package artificialintelligence
+
 // Groq client.
 //
 // The Groq REST API is OpenAI-compatible at the chat-completions path, so this
@@ -16,7 +18,6 @@
 // is the cheapest model in the strict-schema tier ($0.075/$0.30 per 1M tokens),
 // hence the default. Before changing it, verify the replacement model's
 // strict-schema support at https://console.groq.com/docs/structured-outputs.
-package artificialintelligence
 
 import (
 	"context"
@@ -27,53 +28,10 @@ import (
 	"net/url"
 
 	"github.com/prorochestvo/dsninjector"
-	"github.com/seilbekskindirov/beacon/internal"
+	"github.com/prorochestvo/loginjector"
 )
 
 const groqDefaultModel = "openai/gpt-oss-20b"
-
-// newGroqClient parses the DSN and returns a ready-to-use groqClient.
-//
-// DSN: groq://_:<base64url(KEY)>@api.groq.com/openai/v1?model=<model>&timeout=<dur>
-//
-// proxyURL is an optional HTTP proxy URL (e.g. "http://127.0.0.1:7788"); pass "" for none.
-func newGroqClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (*groqClient, error) {
-	apiKey, err := parseDSNKey(dns)
-	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
-	}
-
-	baseURL, err := url.JoinPath(fmt.Sprintf("https://%s", dns.Addr()), dns.Database())
-	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
-	}
-
-	model := groqDefaultModel
-	if v := dns.Option("model"); v != "" {
-		model = v
-	}
-
-	timeout, err := parseDSNTimeout(dns)
-	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
-	}
-
-	httpClient, err := buildHTTPClient(timeout, proxyURL)
-	if err != nil {
-		return nil, errors.Join(err, internal.NewTraceError())
-	}
-
-	return &groqClient{
-		inner: openAICompatibleClient{
-			baseURL:      baseURL,
-			model:        model,
-			apiKey:       apiKey,
-			httpClient:   httpClient,
-			logger:       log.New(logger, "groq ", log.LstdFlags),
-			providerName: "groq",
-		},
-	}, nil
-}
 
 type groqClient struct {
 	inner openAICompatibleClient
@@ -97,4 +55,47 @@ func (c *groqClient) CheckUP(ctx context.Context) error {
 // the first choice message. A json_schema response_format is always attached.
 func (c *groqClient) Complete(ctx context.Context, systemPrompt, userMessage string) (string, error) {
 	return c.inner.complete(ctx, systemPrompt, userMessage, true)
+}
+
+// newGroqClient parses the DSN and returns a ready-to-use groqClient.
+//
+// DSN: groq://_:<base64url(KEY)>@api.groq.com/openai/v1?model=<model>&timeout=<dur>
+//
+// proxyURL is an optional HTTP proxy URL (e.g. "http://127.0.0.1:7788"); pass "" for none.
+func newGroqClient(dns dsninjector.DataSource, logger io.Writer, proxyURL string) (*groqClient, error) {
+	apiKey, err := parseDSNKey(dns)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+
+	baseURL, err := url.JoinPath("https://"+dns.Addr(), dns.Database())
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+
+	model := groqDefaultModel
+	if v := dns.Option("model"); v != "" {
+		model = v
+	}
+
+	timeout, err := parseDSNTimeout(dns)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+
+	httpClient, err := buildHTTPClient(timeout, proxyURL)
+	if err != nil {
+		return nil, errors.Join(err, loginjector.NewTraceError())
+	}
+
+	return &groqClient{
+		inner: openAICompatibleClient{
+			baseURL:      baseURL,
+			model:        model,
+			apiKey:       apiKey,
+			httpClient:   httpClient,
+			logger:       log.New(logger, "groq ", log.LstdFlags),
+			providerName: "groq",
+		},
+	}, nil
 }

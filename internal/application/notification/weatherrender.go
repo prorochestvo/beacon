@@ -9,23 +9,8 @@ import (
 	"github.com/seilbekskindirov/beacon/internal/domain"
 )
 
-// weatherProviderLabel maps a literal provider data token to a human-readable display label.
-// The input is a data token that must never be translated; only the returned label is English prose.
-func weatherProviderLabel(provider string) string {
-	switch provider {
-	case domain.ProviderOpenMeteo:
-		return "Open-Meteo"
-	case domain.ProviderGismeteo:
-		return "Gismeteo"
-	default:
-		return html.EscapeString(provider)
-	}
-}
-
-// RenderMorningSummary produces a Telegram HTML morning-weather summary for city,
-// incorporating one or more provider observations. The variadic obs signature allows
-// the gismeteo increment (Task 13) to pass two observations for a side-by-side
-// comparison; the MVP passes a single Open-Meteo observation.
+// RenderMorningSummary produces a Telegram HTML morning-weather summary for city
+// from a single Open-Meteo observation.
 //
 // All dynamic text (city name, condition descriptions) is HTML-escaped.
 // Times in the header and sunrise/sunset are shown in the city's IANA timezone.
@@ -33,11 +18,8 @@ func weatherProviderLabel(provider string) string {
 // converted to city-local time here via obs.Sunrise.In(cityLoc). Nil optional
 // fields render as "—", never "0".
 //
-// Returns an error when obs is empty or the city timezone fails to load.
-func RenderMorningSummary(city domain.WeatherUserCity, obs ...domain.WeatherObservation) (string, error) {
-	if len(obs) == 0 {
-		return "", fmt.Errorf("RenderMorningSummary: no observations provided for city %s", city.ID)
-	}
+// Returns an error when the city timezone fails to load.
+func RenderMorningSummary(city domain.WeatherUserCity, obs domain.WeatherObservation) (string, error) {
 	loc, err := time.LoadLocation(city.Timezone)
 	if err != nil {
 		return "", fmt.Errorf("weather render: load timezone %q: %w", city.Timezone, err)
@@ -49,19 +31,8 @@ func RenderMorningSummary(city domain.WeatherUserCity, obs ...domain.WeatherObse
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "<b>%s</b>\n%s", cityName, ts)
-
-	multiProvider := len(obs) > 1
-	for i, o := range obs {
-		sb.WriteString("\n\n")
-		if multiProvider {
-			fmt.Fprintf(&sb, "<b>%s</b>\n", weatherProviderLabel(o.Provider))
-		}
-		sb.WriteString(renderWeatherBlock(o, loc))
-		// between provider sections add an extra blank line
-		if multiProvider && i < len(obs)-1 {
-			sb.WriteString("\n")
-		}
-	}
+	sb.WriteString("\n\n")
+	sb.WriteString(renderWeatherBlock(obs, loc))
 
 	return sb.String(), nil
 }
@@ -117,19 +88,20 @@ func renderWeatherBlock(obs domain.WeatherObservation, cityLoc *time.Location) s
 	return sb.String()
 }
 
-// RenderWeatherAlert produces a compact Telegram HTML alert message for a threshold
-// alert kind (heat, frost, thunderstorm). It includes a kind-specific header with
-// emoji, the city name, the reason string from EvaluateAlert, and a one-line
-// forecast snapshot (condition + high/low).
+// RenderWeatherAlert produces a compact Telegram HTML alert message for an alert
+// kind (heat, frost, thunderstorm, rain, thaw). It includes a header keyed on the kind
+// AND the latch edge, the city name, the reason string from EvaluateLatched, and a
+// one-line forecast snapshot (condition + high/low).
 //
 // All dynamic text (city name, condition descriptions) is HTML-escaped; the reason
-// string from EvaluateAlert may contain ≥/≤/U+2212 which are safe plain-text
-// characters. Nil optional fields render as "—", never "0". Returns an error only
-// if called for a kind that has no registered header (programming error).
-func RenderWeatherAlert(city domain.WeatherUserCity, reason string, obs domain.WeatherObservation) (string, error) {
-	header, emoji, ok := alertKindHeader(city.NotifyKind)
+// string from EvaluateLatched may contain ≥/≤/U+2212 which are safe plain-text
+// characters. Nil optional fields render as "—", never "0". Returns an error when the
+// (kind, edge) pair has no registered header — an unknown kind, a non-notifiable edge,
+// or a cleared edge on a kind that only notifies one way (programming error).
+func RenderWeatherAlert(city domain.WeatherUserCity, edge domain.AlertEdge, reason string, obs domain.WeatherObservation) (string, error) {
+	header, emoji, ok := alertKindHeader(city.NotifyKind, edge)
 	if !ok {
-		return "", fmt.Errorf("RenderWeatherAlert: unrecognised alert kind %q for city %s", city.NotifyKind, city.ID)
+		return "", fmt.Errorf("RenderWeatherAlert: unrenderable alert kind %q edge %d for city %s", city.NotifyKind, edge, city.ID)
 	}
 
 	cityName := html.EscapeString(city.DisplayName)
@@ -157,10 +129,26 @@ func RenderWeatherAlert(city domain.WeatherUserCity, reason string, obs domain.W
 	return sb.String(), nil
 }
 
-// alertKindHeader returns the human-readable label and display emoji for the
-// given alert kind. Returns ok=false for non-alert kinds (morning_summary,
-// unknown), which must not be passed to RenderWeatherAlert.
-func alertKindHeader(kind domain.WeatherNotifyKind) (header, emoji string, ok bool) {
+// alertKindHeader returns the human-readable label and display emoji for the given alert
+// kind and latch edge. Returns ok=false for non-alert kinds (morning_summary, unknown),
+// for AlertEdgeNone (nothing to render), and for AlertEdgeCleared on any kind but
+// rain_alert — the daily-metric kinds re-arm silently, so a cleared edge reaching the
+// renderer for one of them is a bug, not a message.
+func alertKindHeader(kind domain.WeatherNotifyKind, edge domain.AlertEdge) (header, emoji string, ok bool) {
+	if kind == domain.WeatherNotifyAlertRain {
+		switch edge {
+		case domain.AlertEdgeEntered:
+			return "Rain alert", "🌧️", true
+		case domain.AlertEdgeCleared:
+			return "Rain cleared", "🌤️", true
+		default:
+			return "", "", false
+		}
+	}
+
+	if edge != domain.AlertEdgeEntered {
+		return "", "", false
+	}
 	switch kind {
 	case domain.WeatherNotifyAlertHeat:
 		return "Heat alert", "🔥", true
@@ -168,8 +156,8 @@ func alertKindHeader(kind domain.WeatherNotifyKind) (header, emoji string, ok bo
 		return "Frost alert", "❄️", true
 	case domain.WeatherNotifyAlertThunderstorm:
 		return "Thunderstorm alert", "⛈️", true
-	case domain.WeatherNotifyAlertRain:
-		return "Rain alert", "🌧️", true
+	case domain.WeatherNotifyAlertThaw:
+		return "Thaw alert", "🫠", true
 	default:
 		return "", "", false
 	}
@@ -185,4 +173,63 @@ func formatWeatherTemp(v float64) string {
 	// fmt.Sprintf formats the negative float with an ASCII hyphen-minus; replace
 	// with the U+2212 MINUS SIGN for visual alignment with the FX table style.
 	return fmt.Sprintf("%s%.1f°C", minusSign, -v)
+}
+
+// RenderForecastOutlook produces the Telegram HTML multi-week outlook digest for city.
+//
+// It lists only the days the outlook considers notable — rain, snow, or a change in the
+// freezing regime — because a line per day over two weeks is a wall of text whose signal is
+// the three lines that differ. Days whose entry is new or has changed since prevSignature
+// carry a marker; when prevSignature names no comparable previous state, nothing is marked,
+// since marking every line of a first digest tells the reader nothing.
+//
+// Returns an error only for a city of the wrong kind, which is a wiring bug rather than a
+// message. A forecast date that will not parse degrades to the raw date rather than failing
+// the digest: the reader loses a weekday name, not the warning.
+func RenderForecastOutlook(city domain.WeatherUserCity, outlook domain.WeatherOutlook, prevSignature string) (string, error) {
+	if city.NotifyKind != domain.WeatherNotifyForecastOutlook {
+		return "", fmt.Errorf("RenderForecastOutlook: city %s is %q, not %q", city.ID, city.NotifyKind, domain.WeatherNotifyForecastOutlook)
+	}
+
+	cityName := html.EscapeString(city.DisplayName)
+	notable := outlook.NotableDays()
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "🗓 <b>Outlook — %s</b>\n", cityName)
+
+	if len(notable) == 0 {
+		fmt.Fprintf(&sb, "No rain, snow or freezing change in the next %d days.", outlook.AheadDays())
+		return sb.String(), nil
+	}
+
+	change := domain.CompareWeatherOutlookSignatures(prevSignature, outlook.Signature())
+
+	fmt.Fprintf(&sb, "Next %d days\n", outlook.AheadDays())
+	for _, day := range notable {
+		sb.WriteByte('\n')
+		if change.Changed[day.ForecastDate] {
+			sb.WriteString("🆕 ")
+		}
+		fmt.Fprintf(&sb, "<b>%s</b>", html.EscapeString(domain.FormatWeatherForecastDate(day.ForecastDate)))
+		if day.IsRainDay() && day.RainSum != nil {
+			fmt.Fprintf(&sb, "  🌧 %.1f mm", *day.RainSum)
+		}
+		if day.IsSnowDay() && day.SnowfallSum != nil {
+			fmt.Fprintf(&sb, "  ❄ %.1f cm", *day.SnowfallSum)
+		}
+		fmt.Fprintf(&sb, "  %s", day.ZeroState().Symbol())
+		if day.TempMax != nil && day.TempMin != nil {
+			fmt.Fprintf(&sb, " %s / %s", formatWeatherTemp(*day.TempMax), formatWeatherTemp(*day.TempMin))
+		}
+	}
+
+	if len(change.Cleared) > 0 {
+		labels := make([]string, 0, len(change.Cleared))
+		for _, date := range change.Cleared {
+			labels = append(labels, html.EscapeString(domain.FormatWeatherForecastDate(date)))
+		}
+		fmt.Fprintf(&sb, "\n\nCleared: %s", strings.Join(labels, ", "))
+	}
+
+	return sb.String(), nil
 }

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/seilbekskindirov/beacon/cmd/wasm/application"
@@ -16,7 +17,7 @@ func RenderSourceDetail(state application.SourceDetailState) string {
 	var b strings.Builder
 
 	b.WriteString(`<div class="breadcrumb"><a href="#/">← All Sources</a></div>`)
-	b.WriteString(fmt.Sprintf("<h1>%s</h1>", dom.Escape(state.Title)))
+	fmt.Fprintf(&b, "<h1>%s</h1>", dom.Escape(state.Title))
 
 	b.WriteString("<h2>Rate History</h2>")
 	b.WriteString(`<div class="filters">`)
@@ -169,7 +170,7 @@ func renderDailyEventRow(e dto.DailyEventResponse) string {
         </tr>`,
 		dom.Escape(e.Type),
 		dom.Escape(e.Date),
-		dom.Escape(fmt.Sprintf("%d", e.SuccessCount)),
-		dom.Escape(fmt.Sprintf("%d", e.FailedCount)),
+		dom.Escape(strconv.FormatInt(e.SuccessCount, 10)),
+		dom.Escape(strconv.FormatInt(e.FailedCount, 10)),
 	)
 }
