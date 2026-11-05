@@ -5,9 +5,11 @@
 # Linux only: needs GNU coreutils (gnudate, gnutimeout, gnusha256sum; on hosts
 # without the gnu-prefixed names the plain GNU tools are used) and util-linux
 # flock. Every case runs a copy of the launcher under a temporary HOME. The
-# external commands the launcher calls (git, go, claude, openrouter-cli,
-# tbot-cli, jev-cli and the built doctor and migrator) are stubs that record
-# their arguments and replay the fixture of the case, testdata/doctor-nightly/<case>/.
+# external commands the launcher calls (git, go, claude, openrouter-cli, curl,
+# jev-cli and the built doctor and migrator) are stubs that record their
+# arguments and replay the fixture of the case, testdata/doctor-nightly/<case>/.
+# The webhook URL in the fake mattermost.env is a secret: no recorded file may
+# contain it, and assert_no_secret checks that after every case.
 #
 # Usage: doctor-nightly.test.sh [CASE...]
 
@@ -16,6 +18,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$HERE/doctor-nightly.sh"
 FIXTURES="$HERE/testdata/doctor-nightly"
+TOKEN="s3cr3thookid0123456789abcd"
+SENTINEL="https://mm.invalid/hooks/inheritedsentinel0123456789"
 
 PASS=0
 FAIL=0
@@ -123,6 +127,7 @@ EOF
 
   stub "$bin/claude" claude <<'EOF'
 pwd >>"$HOME/calls/claude-cwd.txt"
+env >>"$HOME/calls/claude-env.txt"
 cat >"$HOME/calls/claude-stdin.txt"
 if [[ -f "$HOME/fixture/claude.json" ]]; then
   cat "$HOME/fixture/claude.json"
@@ -140,6 +145,47 @@ if [[ -f "$HOME/fixture/openrouter.out" ]]; then
 fi
 if [[ -f "$HOME/fixture/openrouter.exit" ]]; then
   exit "$(cat "$HOME/fixture/openrouter.exit")"
+fi
+exit 0
+EOF
+
+  # curl stands in for the webhook post. It refuses any argv whose first argument is not
+  # --disable, compares the URL in its --config descriptor with the fake env file without
+  # printing either, and records the decoded post text. It answers with fixture/curl.http.
+  stub "$bin/curl" curl <<'EOF'
+if [[ "${1:-}" != --disable ]]; then
+  printf 'first-arg-not-disable\n' >>"$HOME/calls/curl-violations.txt"
+  exit 99
+fi
+env >>"$HOME/calls/curl-env.txt"
+config=""
+prev=""
+for arg in "$@"; do
+  if [[ "$prev" == --config ]]; then
+    config="$arg"
+  fi
+  prev="$arg"
+done
+url=""
+if [[ -n "$config" ]]; then
+  url=$(sed -n 's/^url = "\(.*\)"$/\1/p' "$config")
+fi
+expected=$(sed -n 's#^MM_WEBHOOK_URL=##p' "$HOME/.config/beacon-doctor/mattermost.env" | tr -d '\r')
+if [[ -n "$url" && "$url" == "$expected" ]]; then
+  printf 'match\n' >"$HOME/calls/curl-config.txt"
+else
+  printf 'mismatch\n' >"$HOME/calls/curl-config.txt"
+fi
+payload=$(cat)
+printf '%s' "$payload" >>"$HOME/calls/mattermost-payload.txt"
+printf '%s' "$payload" | python3 -c 'import json,sys; sys.stdout.write(json.load(sys.stdin)["text"] + "\n---\n")' >>"$HOME/calls/mattermost-messages.txt"
+if [[ -f "$HOME/fixture/curl.http" ]]; then
+  printf '%s' "$(cat "$HOME/fixture/curl.http")"
+else
+  printf '200'
+fi
+if [[ -f "$HOME/fixture/curl.exit" ]]; then
+  exit "$(cat "$HOME/fixture/curl.exit")"
 fi
 exit 0
 EOF
@@ -163,13 +209,8 @@ EOF
   chmod +x "$bin/replay"
 }
 
-# install_cli_stubs: the CLIs the launcher calls by absolute path under HOME.
+# install_cli_stubs: the CLI the launcher calls by absolute path under HOME.
 install_cli_stubs() {
-  stub "$HOME_DIR/.claude/skills/cli-telegram/tbot-cli" tbot <<'EOF'
-printf '%s\n---\n' "$1" >>"$HOME/calls/tbot-messages.txt"
-exit 0
-EOF
-
   stub "$HOME_DIR/.claude/skills/cli-jev/jev-cli" jev <<'EOF'
 cat >/dev/null
 if [[ -f "$HOME/fixture/jev.out" ]]; then
@@ -202,6 +243,13 @@ place_transient() {
   rm -rf "$HOME_DIR/fixture/transient"
 }
 
+# write_env LINE...: writes the fake mattermost.env of the current HOME, mode 600.
+write_env() {
+  local env_file="$HOME_DIR/.config/beacon-doctor/mattermost.env"
+  printf '%s\n' "$@" >"$env_file"
+  chmod 600 "$env_file"
+}
+
 # setup_home FIXTURE: a fresh HOME with stubs, the launcher copies and the fixture.
 setup_home() {
   local fixture="$1" state bin
@@ -209,10 +257,11 @@ setup_home() {
   bin="$HOME_DIR/.local/bin"
   state="$HOME_DIR/.local/state/beacon-doctor"
   mkdir -p "$bin" "$HOME_DIR/calls" "$HOME_DIR/fixture" \
-    "$HOME_DIR/.claude/skills/cli-telegram" "$HOME_DIR/.claude/skills/cli-jev" \
+    "$HOME_DIR/.claude/skills/cli-jev" "$HOME_DIR/.config/beacon-doctor" \
     "$state/repo/.agents/scripts" "$state/bin" "$state/runs" "$state/transient"
   install_stubs "$bin"
   install_cli_stubs
+  write_env "MM_WEBHOOK_URL=https://mm.invalid/hooks/$TOKEN"
   cp "$SCRIPT" "$state/doctor-nightly.sh"
   cp "$SCRIPT" "$state/repo/.agents/scripts/doctor-nightly.sh"
   if [[ -d "$FIXTURES/$fixture" ]]; then
@@ -232,10 +281,11 @@ break_gnudate() {
   chmod +x "$HOME_DIR/.local/bin/gnudate"
 }
 
-# run_launcher: runs the installed launcher copy with --max-delay 0; prints its exit code.
+# run_launcher [VAR=VALUE...]: runs the installed launcher copy with --max-delay 0 in a
+# cleared environment plus the given variables; prints its exit code.
 run_launcher() {
   local rc=0
-  env -i HOME="$HOME_DIR" PATH=/usr/bin:/bin \
+  env -i HOME="$HOME_DIR" PATH=/usr/bin:/bin "$@" \
     bash "$HOME_DIR/.local/state/beacon-doctor/doctor-nightly.sh" --max-delay 0 \
     >"$HOME_DIR/stdout.txt" 2>&1 || rc=$?
   printf '%s' "$rc"
@@ -250,15 +300,15 @@ today_transient() {
 }
 
 message_count() {
-  local f="$HOME_DIR/calls/tbot-messages.txt" n=0
+  local f="$HOME_DIR/calls/mattermost-messages.txt" n=0
   if [[ -f "$f" ]]; then
     n=$(grep -c '^---$' "$f" || true)
   fi
   printf '%s' "$n"
 }
 
-# message_chars: UTF-16 code units (Telegram's measure, not bytes) of the last message,
-# without the tbot separator.
+# message_chars: Unicode code points (Mattermost's measure, not bytes) of the message in the
+# calls file, without the stub's separator. It is the only message of a case that posts once.
 message_chars() {
   python3 -c '
 import sys
@@ -266,11 +316,11 @@ data = open(sys.argv[1], "rb").read().decode("utf-8")
 end = "\n---\n"
 if data.endswith(end):
     data = data[: -len(end)]
-print(len(data.encode("utf-16-le")) // 2)
-' "$HOME_DIR/calls/tbot-messages.txt"
+print(len(data))
+' "$HOME_DIR/calls/mattermost-messages.txt"
 }
 
-# message_bytes: bytes of the last message, without the tbot separator.
+# message_bytes: bytes of the last message, without the stub's separator.
 message_bytes() {
   python3 -c '
 import sys
@@ -279,7 +329,40 @@ end = b"\n---\n"
 if data.endswith(end):
     data = data[: -len(end)]
 print(len(data))
-' "$HOME_DIR/calls/tbot-messages.txt"
+' "$HOME_DIR/calls/mattermost-messages.txt"
+}
+
+# message_utf16: UTF-16 code units of the message in the calls file, without the stub's separator.
+message_utf16() {
+  python3 -c '
+import sys
+data = open(sys.argv[1], "rb").read().decode("utf-8")
+end = "\n---\n"
+if data.endswith(end):
+    data = data[: -len(end)]
+print(len(data.encode("utf-16-le")) // 2)
+' "$HOME_DIR/calls/mattermost-messages.txt"
+}
+
+# assert_no_secret: the webhook token and the inherited sentinel appear in no file under the test
+# HOME (state, stdout, recorded calls, stubs) except the fake env file itself.
+assert_no_secret() {
+  local hits=""
+  hits=$(grep -rlF -e "$TOKEN" -e "$SENTINEL" --exclude=mattermost.env "$HOME_DIR" 2>/dev/null || true)
+  check "webhook URL and inherited sentinel absent from every file under the test HOME" test -z "$hits"
+}
+
+# current_run_log: run.log of the newest run directory, which is the run under test.
+current_run_log() {
+  local dirs=("$(state_dir)"/runs/*/)
+  printf '%s/run.log' "${dirs[-1]%/}"
+}
+
+# current_run_id: the name of the newest run directory, as the OK message carries it.
+current_run_id() {
+  local dirs=("$(state_dir)"/runs/*/)
+  dirs=("${dirs[-1]%/}")
+  printf '%s' "${dirs[0]##*/}"
 }
 
 # called NAME: succeeds when the stub NAME recorded at least one call.
@@ -290,9 +373,17 @@ called() {
 check_static() {
   local hits=""
   CASE="static"
-  hits=$(grep -vE '^[[:space:]]*#' "$SCRIPT" | grep -nE '(^|[^[:alnum:]_./-])(date|timeout|sha256sum)([[:space:]]|$)' || true)
+  hits=$(grep -nE '(^|[^[:alnum:]_./-])(date|timeout|sha256sum)([[:space:]]|$)' "$SCRIPT" | grep -vE '^[0-9]+:[[:space:]]*#' || true)
   check "no plain date, timeout or sha256sum call" test -z "$hits"
   check "script is valid bash" bash -n "$SCRIPT"
+  hits=$(grep -nE '(^|[^[:alnum:]_./-])tbot' "$SCRIPT" | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+  check "no tbot reference" test -z "$hits"
+  hits=$(grep -nE 'set -x|set -o xtrace|export MM_WEBHOOK_URL' "$SCRIPT" || true)
+  check "no xtrace and no exported webhook URL" test -z "$hits"
+  hits=$(grep -nE '(^|[^[:alnum:]_./-])curl([[:space:]]|$)' "$SCRIPT" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -vE 'curl --disable([[:space:]]|$)' || true)
+  check "every curl invocation starts with --disable" test -z "$hits"
+  # shellcheck disable=SC2016
+  check "the env file path is under the user config directory" grep -Eq '^MM_ENV="\$HOME/\.config/[^"]+"$' "$SCRIPT"
 }
 
 preflight() {
@@ -305,7 +396,7 @@ preflight() {
     # shellcheck source=/dev/null
     source "$SCRIPT"
     setup_path
-    for tool in git go claude openrouter-cli gnudate gnutimeout gnusha256sum; do
+    for tool in git go claude openrouter-cli curl gnudate gnutimeout gnusha256sum; do
       case "$(command -v "$tool" || true)" in
         "$HOME_DIR/.local/bin/"*) ;;
         *)
@@ -314,9 +405,9 @@ preflight() {
           ;;
       esac
     done
-    case "$TBOT_CLI" in
+    case "$MM_ENV" in
       "$HOME_DIR"/*) ;;
-      *) printf 'preflight: TBOT_CLI is outside the temporary HOME\n' >&2; exit 1 ;;
+      *) printf 'preflight: MM_ENV is outside the temporary HOME\n' >&2; exit 1 ;;
     esac
     case "$JEV_CLI" in
       "$HOME_DIR"/*) ;;
@@ -336,7 +427,11 @@ case_all_ok() {
   setup_home all-ok
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
-  check "no message" test "$(message_count)" = 0
+  check "exactly one post, the OK message" test "$(message_count)" = 1
+  check "the OK message has the OK header" grep -Fq '#BEACON doctor nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "the OK message counts the audited sources and names the run" grep -Fq "3 sources checked, run $(current_run_id)" "$HOME_DIR/calls/mattermost-messages.txt"
+  check "run.log ends with the OK report then finish failures=0" test "$(tail -n 2 "$(current_run_log)" | head -n 1 | grep -c 'report ok-sent$')" = 1
+  check "the last run.log line is finish failures=0" test "$(tail -n 1 "$(current_run_log)" | grep -c ' finish failures=0$')" = 1
   check "today transient file exists" test -f "$(today_transient)"
   check "today transient file is empty" test ! -s "$(today_transient)"
   check "claude is called once" test "$(grep -c '' "$HOME_DIR/calls/claude.txt")" = 1
@@ -359,10 +454,17 @@ case_regex_fix() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "header is FIX" grep -Fq ': FIX' "$HOME_DIR/calls/tbot-messages.txt"
-  check "names the source" grep -Fq 'KZ_X_USD_KZT REGEX_NO_MATCH' "$HOME_DIR/calls/tbot-messages.txt"
-  check "carries the model next step" grep -Fq 'doctor rulegen KZ_X_USD_KZT' "$HOME_DIR/calls/tbot-messages.txt"
-  check "model text is marked unverified" grep -Fq 'model (unverified): KZ_X_USD_KZT' "$HOME_DIR/calls/tbot-messages.txt"
+  check "header is FIX" grep -Fq ': FIX' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "names the source" grep -Fq 'KZ_X_USD_KZT REGEX_NO_MATCH' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "carries the model next step" grep -Fq 'doctor rulegen KZ_X_USD_KZT' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "model text is marked unverified" grep -Fq 'model (unverified): KZ_X_USD_KZT' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "curl reads the URL from a process-substitution config" grep -Fq -- '--config /dev/fd/' "$HOME_DIR/calls/curl.txt"
+  check "curl posts the payload on stdin" grep -Fq -- '--data-binary @-' "$HOME_DIR/calls/curl.txt"
+  check "curl config carries the configured URL" grep -qx match "$HOME_DIR/calls/curl-config.txt"
+  check "payload is a JSON object whose only key is text" python3 -c '
+import json, sys
+sys.exit(0 if list(json.load(open(sys.argv[1]))) == ["text"] else 1)
+' "$HOME_DIR/calls/mattermost-payload.txt"
 }
 
 case_regex_disagree() {
@@ -370,14 +472,16 @@ case_regex_disagree() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "header is DISAGREEMENT" grep -Fq ': DISAGREEMENT' "$HOME_DIR/calls/tbot-messages.txt"
+  check "header is DISAGREEMENT" grep -Fq ': DISAGREEMENT' "$HOME_DIR/calls/mattermost-messages.txt"
 }
 
 case_fetch_first() {
   setup_home fetch-first
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
-  check "no message for a first-time fetch failure" test "$(message_count)" = 0
+  check "a silent run posts the OK message" test "$(message_count)" = 1
+  check "the silent run posts the OK header" grep -Fq '#BEACON doctor nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "the OK message counts the audited sources and names the run" grep -Fq "2 sources checked, run $(current_run_id)" "$HOME_DIR/calls/mattermost-messages.txt"
   check "source recorded as transient today" grep -Fqx KZ_A_USD_KZT "$(today_transient)"
 }
 
@@ -386,14 +490,15 @@ case_fetch_repeated() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "source listed as repeated" grep -Fq 'repeated (1):' "$HOME_DIR/calls/tbot-messages.txt"
+  check "source listed as repeated" grep -Fq 'repeated (1):' "$HOME_DIR/calls/mattermost-messages.txt"
 }
 
 case_fetch_gap() {
   setup_home fetch-gap
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
-  check "no message when a night was skipped in between" test "$(message_count)" = 0
+  check "a silent run posts the OK message" test "$(message_count)" = 1
+  check "the silent run posts the OK header" grep -Fq '#BEACON doctor nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
   check "source recorded as transient today" grep -Fqx KZ_A_USD_KZT "$(today_transient)"
 }
 
@@ -402,7 +507,7 @@ case_unparsed() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "malformed MISS line is reported as unparsed" grep -Fq '<unparsed> UNPARSED' "$HOME_DIR/calls/tbot-messages.txt"
+  check "malformed MISS line is reported as unparsed" grep -Fq '<unparsed> UNPARSED' "$HOME_DIR/calls/mattermost-messages.txt"
   check "transient file is not written" test ! -e "$(today_transient)"
 }
 
@@ -411,8 +516,8 @@ case_max_turns() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "header is MODEL FAILURE" grep -Fq ': MODEL FAILURE' "$HOME_DIR/calls/tbot-messages.txt"
-  check "reason is max turns" grep -Fq 'max turns reached' "$HOME_DIR/calls/tbot-messages.txt"
+  check "header is MODEL FAILURE" grep -Fq ': MODEL FAILURE' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "reason is max turns" grep -Fq 'max turns reached' "$HOME_DIR/calls/mattermost-messages.txt"
   check "jev is not called" test ! -s "$HOME_DIR/calls/jev.txt"
   check "openrouter is not called" test ! -s "$HOME_DIR/calls/openrouter.txt"
 }
@@ -421,7 +526,8 @@ case_limit_regex() {
   setup_home limit-regex
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
-  check "no message" test "$(message_count)" = 0
+  check "a silent run posts the OK message" test "$(message_count)" = 1
+  check "the silent run posts the OK header" grep -Fq '#BEACON doctor nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
   check "skip-until written with a UTC timestamp" grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "$(state_dir)/skip-until"
   check "jev is not called" test ! -s "$HOME_DIR/calls/jev.txt"
   check "openrouter is not called" test ! -s "$HOME_DIR/calls/openrouter.txt"
@@ -440,7 +546,8 @@ case_limit_jev_openrouter() {
   printf '%sT09:00:00+00:00\n' "$reset_day" >"$HOME_DIR/fixture/openrouter.out"
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
-  check "no message" test "$(message_count)" = 0
+  check "a silent run posts the OK message" test "$(message_count)" = 1
+  check "the silent run posts the OK header" grep -Fq '#BEACON doctor nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
   check "skip-until is the OpenRouter answer" grep -qx "${reset_day}T09:00:00Z" "$(state_dir)/skip-until"
   check "jev is called once" test "$(grep -c '' "$HOME_DIR/calls/jev.txt")" = 1
   check "openrouter is called once" test "$(grep -c '' "$HOME_DIR/calls/openrouter.txt")" = 1
@@ -450,7 +557,8 @@ case_limit_none() {
   setup_home limit-none
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
-  check "no message" test "$(message_count)" = 0
+  check "a silent run posts the OK message" test "$(message_count)" = 1
+  check "the silent run posts the OK header" grep -Fq '#BEACON doctor nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
   check "no skip-until written" test ! -e "$(state_dir)/skip-until"
   check "reset time logged as not determined" grep -rq 'reset-time not determined' "$(state_dir)/runs"
 }
@@ -460,9 +568,9 @@ case_jev_low() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "header is MODEL FAILURE" grep -Fq ': MODEL FAILURE' "$HOME_DIR/calls/tbot-messages.txt"
-  check "reason is claude failed" grep -Fq 'model unavailable: claude failed' "$HOME_DIR/calls/tbot-messages.txt"
-  check "the Claude tail is in the message" grep -Fq 'Something odd happened in the request.' "$HOME_DIR/calls/tbot-messages.txt"
+  check "header is MODEL FAILURE" grep -Fq ': MODEL FAILURE' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "reason is claude failed" grep -Fq 'model unavailable: claude failed' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "the Claude tail is in the message" grep -Fq 'Something odd happened in the request.' "$HOME_DIR/calls/mattermost-messages.txt"
   check "no skip-until written" test ! -e "$(state_dir)/skip-until"
   check "openrouter is not called" test ! -s "$HOME_DIR/calls/openrouter.txt"
 }
@@ -472,7 +580,7 @@ case_jev_fail() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "reason is jev failed" grep -Fq 'model unavailable: jev failed' "$HOME_DIR/calls/tbot-messages.txt"
+  check "reason is jev failed" grep -Fq 'model unavailable: jev failed' "$HOME_DIR/calls/mattermost-messages.txt"
   check "no skip-until written" test ! -e "$(state_dir)/skip-until"
 }
 
@@ -481,7 +589,7 @@ case_openrouter_fail() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "reason is openrouter failed" grep -Fq 'model unavailable: openrouter failed' "$HOME_DIR/calls/tbot-messages.txt"
+  check "reason is openrouter failed" grep -Fq 'model unavailable: openrouter failed' "$HOME_DIR/calls/mattermost-messages.txt"
   check "no skip-until written" test ! -e "$(state_dir)/skip-until"
 }
 
@@ -490,7 +598,7 @@ case_invalid_verdict() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "header is MODEL FAILURE" grep -Fq ': MODEL FAILURE' "$HOME_DIR/calls/tbot-messages.txt"
+  check "header is MODEL FAILURE" grep -Fq ': MODEL FAILURE' "$HOME_DIR/calls/mattermost-messages.txt"
   check "jev is called for the unknown failure" called jev
 }
 
@@ -499,9 +607,9 @@ case_infra_audit3() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "header is INFRA" grep -Fq ': INFRA' "$HOME_DIR/calls/tbot-messages.txt"
-  check "names the audit exit" grep -Fq 'infra: audit exit 3' "$HOME_DIR/calls/tbot-messages.txt"
-  check "says the model failed" grep -Fq 'model unavailable: claude failed' "$HOME_DIR/calls/tbot-messages.txt"
+  check "header is INFRA" grep -Fq ': INFRA' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "names the audit exit" grep -Fq 'infra: audit exit 3' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "says the model failed" grep -Fq 'model unavailable: claude failed' "$HOME_DIR/calls/mattermost-messages.txt"
 }
 
 case_go_fail() {
@@ -509,8 +617,8 @@ case_go_fail() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "header is INFRA" grep -Fq ': INFRA' "$HOME_DIR/calls/tbot-messages.txt"
-  check "names the failed build step" grep -Fq 'infra: step build-doctor exit 1' "$HOME_DIR/calls/tbot-messages.txt"
+  check "header is INFRA" grep -Fq ': INFRA' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "names the failed build step" grep -Fq 'infra: step build-doctor exit 1' "$HOME_DIR/calls/mattermost-messages.txt"
   check "claude is still invoked" test -s "$HOME_DIR/calls/claude-stdin.txt"
   check "audit is not run after the failed build" test ! -s "$HOME_DIR/calls/binaries.txt"
 }
@@ -520,8 +628,8 @@ case_audit_exit1_no_miss() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "header is INFRA" grep -Fq ': INFRA' "$HOME_DIR/calls/tbot-messages.txt"
-  check "names the missing MISS lines" grep -Fq 'audit exit 1 without parsable MISS lines' "$HOME_DIR/calls/tbot-messages.txt"
+  check "header is INFRA" grep -Fq ': INFRA' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "names the missing MISS lines" grep -Fq 'audit exit 1 without parsable MISS lines' "$HOME_DIR/calls/mattermost-messages.txt"
 }
 
 case_limit_with_alertable() {
@@ -529,8 +637,8 @@ case_limit_with_alertable() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "header is FIX" grep -Fq ': FIX' "$HOME_DIR/calls/tbot-messages.txt"
-  check "says the model was skipped until a time" grep -Fq 'model skipped until' "$HOME_DIR/calls/tbot-messages.txt"
+  check "header is FIX" grep -Fq ': FIX' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "says the model was skipped until a time" grep -Fq 'model skipped until' "$HOME_DIR/calls/mattermost-messages.txt"
   check "skip-until written" test -s "$(state_dir)/skip-until"
 }
 
@@ -539,11 +647,12 @@ case_budget_56() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "message is at most 4096 characters" test "$(message_chars)" -le 4096
-  check "keeps the first 15 names" grep -Fq 'KZ_BULK_15_USD_KZT REGEX_NO_MATCH' "$HOME_DIR/calls/tbot-messages.txt"
-  check "does not list the sixteenth name" test -z "$(grep -F 'KZ_BULK_16_USD_KZT' "$HOME_DIR/calls/tbot-messages.txt" || true)"
-  check "counts the rest" grep -Fq '+41 more' "$HOME_DIR/calls/tbot-messages.txt"
-  check "keeps the log line" grep -Fq "log: $(hostname -s 2>/dev/null || echo unknown):" "$HOME_DIR/calls/tbot-messages.txt"
+  check "message is at most 16000 code points" test "$(message_chars)" -le 16000
+  check "lists all 56 names" grep -Fq 'immediate (56):' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "lists the fifteenth name" grep -Fq 'KZ_BULK_15_USD_KZT REGEX_NO_MATCH' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "lists the last name" grep -Fq 'KZ_BULK_56_USD_KZT REGEX_NO_MATCH' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "counts nothing as not listed" test -z "$(grep -F ' more' "$HOME_DIR/calls/mattermost-messages.txt" || true)"
+  check "keeps the log line" grep -Fq "log: $(hostname -s 2>/dev/null || echo unknown):" "$HOME_DIR/calls/mattermost-messages.txt"
 }
 
 case_audit_100k() {
@@ -560,9 +669,9 @@ case_control_chars() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "control characters are stripped from the model text" test -z "$(tr -cd '\001' <"$HOME_DIR/calls/tbot-messages.txt")"
-  check "zero-width space is stripped" test "$(LC_ALL=C grep -c "$(printf '\342\200\213')" "$HOME_DIR/calls/tbot-messages.txt" || true)" = 0
-  check "model text is still delivered" grep -Fq 'Line one with control char' "$HOME_DIR/calls/tbot-messages.txt"
+  check "control characters are stripped from the model text" test -z "$(tr -cd '\001' <"$HOME_DIR/calls/mattermost-messages.txt")"
+  check "zero-width space is stripped" test "$(LC_ALL=C grep -c "$(printf '\342\200\213')" "$HOME_DIR/calls/mattermost-messages.txt" || true)" = 0
+  check "model text is still delivered" grep -Fq 'Line one with control char' "$HOME_DIR/calls/mattermost-messages.txt"
 }
 
 case_lock_held() {
@@ -585,7 +694,7 @@ case_lock_error() {
   LAST_RC=$(run_launcher)
   check "exit 1" test "$LAST_RC" = 1
   check "one message sent" test "$(message_count)" = 1
-  check "message names the lock error" grep -Fq 'lock error' "$HOME_DIR/calls/tbot-messages.txt"
+  check "message names the lock error" grep -Fq 'lock error' "$HOME_DIR/calls/mattermost-messages.txt"
   check "no go call without the lock" test ! -e "$HOME_DIR/calls/go.txt"
 }
 
@@ -607,11 +716,12 @@ case_drift() {
   printf '# local change\n' >>"$(state_dir)/repo/.agents/scripts/doctor-nightly.sh"
   LAST_RC=$(run_launcher)
   check "first run exits 0" test "$LAST_RC" = 0
-  check "first run sends one drift message" test "$(message_count)" = 1
-  check "drift message names the reinstall" grep -Fq 'launcher copy is out of date' "$HOME_DIR/calls/tbot-messages.txt"
+  check "first run posts the OK message and one drift message" test "$(message_count)" = 2
+  check "drift message names the reinstall" grep -Fq 'launcher copy is out of date' "$HOME_DIR/calls/mattermost-messages.txt"
   LAST_RC=$(run_launcher)
   check "second run exits 0" test "$LAST_RC" = 0
-  check "second run does not repeat the drift message" test "$(message_count)" = 1
+  check "second run posts only the OK message" test "$(message_count)" = 3
+  check "second run does not repeat the drift message" test "$(grep -c 'launcher copy is out of date' "$HOME_DIR/calls/mattermost-messages.txt")" = 1
 }
 
 case_skip_future() {
@@ -640,8 +750,8 @@ case_gnudate_missing() {
   LAST_RC=$(run_launcher)
   check "exit is non-zero" test "$LAST_RC" != 0
   check "one abort message" test "$(message_count)" = 1
-  check "abort message names the exit" grep -Fq 'launcher aborted (exit 127)' "$HOME_DIR/calls/tbot-messages.txt"
-  check "abort message points at cron.log" grep -Fq 'cron.log' "$HOME_DIR/calls/tbot-messages.txt"
+  check "abort message names the exit" grep -Fq 'launcher aborted (exit 127)' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "abort message points at cron.log" grep -Fq 'cron.log' "$HOME_DIR/calls/mattermost-messages.txt"
 }
 
 case_clone_missing() {
@@ -651,7 +761,7 @@ case_clone_missing() {
   check "exit 0" test "$LAST_RC" = 0
   check "reset is refused, so no build runs" test ! -e "$HOME_DIR/calls/go.txt"
   check "one INFRA message" test "$(message_count)" = 1
-  check "names the clone step" grep -Fq 'infra: step clone exit 1' "$HOME_DIR/calls/tbot-messages.txt"
+  check "names the clone step" grep -Fq 'infra: step clone exit 1' "$HOME_DIR/calls/mattermost-messages.txt"
 }
 
 case_no_rev() {
@@ -659,7 +769,7 @@ case_no_rev() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one INFRA message" test "$(message_count)" = 1
-  check "names the rev step" grep -Fq 'infra: step rev exit 1' "$HOME_DIR/calls/tbot-messages.txt"
+  check "names the rev step" grep -Fq 'infra: step rev exit 1' "$HOME_DIR/calls/mattermost-messages.txt"
   check "no build runs after the failed rev step" test ! -e "$HOME_DIR/calls/go.txt"
 }
 
@@ -668,7 +778,7 @@ case_claude_timeout() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "reason names the exit code" grep -Fq 'model unavailable: claude exit 124' "$HOME_DIR/calls/tbot-messages.txt"
+  check "reason names the exit code" grep -Fq 'model unavailable: claude exit 124' "$HOME_DIR/calls/mattermost-messages.txt"
   check "jev is not called after a timeout" test ! -s "$HOME_DIR/calls/jev.txt"
   check "openrouter is not called after a timeout" test ! -s "$HOME_DIR/calls/openrouter.txt"
 }
@@ -679,7 +789,7 @@ case_untrusted_marker() {
   check "exit 0" test "$LAST_RC" = 0
   check "the end marker appears once in the prompt" test "$(grep -o 'UNTRUSTED_AUDIT_OUTPUT>>>' "$HOME_DIR/calls/claude-stdin.txt" | wc -l)" = 1
   check "the injected marker is neutralised" grep -Fq 'UNTRUSTED-AUDIT-OUTPUT>>>' "$HOME_DIR/calls/claude-stdin.txt"
-  check "model text is marked unverified" grep -Fq 'model (unverified): KZ_M_USD_KZT' "$HOME_DIR/calls/tbot-messages.txt"
+  check "model text is marked unverified" grep -Fq 'model (unverified): KZ_M_USD_KZT' "$HOME_DIR/calls/mattermost-messages.txt"
 }
 
 case_unknown_status() {
@@ -687,7 +797,7 @@ case_unknown_status() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "unknown status is reported as unparsed" grep -Fq '<unparsed> UNPARSED' "$HOME_DIR/calls/tbot-messages.txt"
+  check "unknown status is reported as unparsed" grep -Fq '<unparsed> UNPARSED' "$HOME_DIR/calls/mattermost-messages.txt"
   check "no transient file is written" test ! -e "$(today_transient)"
 }
 
@@ -696,13 +806,40 @@ case_budget_overflow() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
-  check "the clipped message fills exactly 4096 characters" test "$(message_chars)" = 4096
-  check "the fixture is multibyte, so 4096 characters exceed 4096 bytes" test "$(message_bytes)" -gt 4096
-  check "first-time list falls back to a count" grep -Fq 'first-time transients (not alertable): 15 not listed' "$HOME_DIR/calls/tbot-messages.txt"
-  check "immediate list is cut to 12 entries under the 3000-character budget" grep -Fq '+3 more' "$HOME_DIR/calls/tbot-messages.txt"
-  check "model text is clipped to the room left" grep -Fq '…' "$HOME_DIR/calls/tbot-messages.txt"
-  check "header is kept" grep -Fq ': FIX' "$HOME_DIR/calls/tbot-messages.txt"
-  check "log line is kept" grep -Fq 'log: ' "$HOME_DIR/calls/tbot-messages.txt"
+  check "the clipped message fills exactly 16000 code points" test "$(message_chars)" = 16000
+  check "the fixture is multibyte, so 16000 code points exceed 16000 bytes" test "$(message_bytes)" -gt 16000
+  check "the astral character counts two UTF-16 units, so units exceed 16000" test "$(message_utf16)" -gt 16000
+  check "first-time list falls back to a count" grep -Fq 'first-time transients (not alertable): 15 not listed' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "immediate list is cut under the lists budget and counts the rest" grep -Fq '  +10 more' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "model text is clipped to the room left" grep -Fq '…' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "header is kept" grep -Fq ': FIX' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "both fence lines are kept" test "$(grep -cx -F -- '```' "$HOME_DIR/calls/mattermost-messages.txt")" = 2
+  check "log line is kept" grep -Fq 'log: ' "$HOME_DIR/calls/mattermost-messages.txt"
+}
+
+case_model_fix_silent() {
+  setup_home model-fix-silent
+  LAST_RC=$(run_launcher)
+  check "exit 0" test "$LAST_RC" = 0
+  check "exactly one post, the OK message" test "$(message_count)" = 1
+  check "the post has the OK header" grep -Fq '#BEACON doctor nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "run.log records the model fix verdict" grep -rFq 'model status=fix' "$(state_dir)/runs"
+}
+
+case_markdown_inert() {
+  local text=""
+  setup_home markdown-inert
+  text="$HOME_DIR/calls/mattermost-messages.txt"
+  LAST_RC=$(run_launcher)
+  check "exit 0" test "$LAST_RC" = 0
+  check "one message" test "$(message_count)" = 1
+  check "exactly two fence lines" test "$(grep -cx -F -- '```' "$text")" = 2
+  check "no backtick outside the fence lines" test "$(tr -cd '`' <"$text" | wc -c)" = 6
+  check "no mention or image markup before the opening fence" \
+    test -z "$(sed -n '1,/^```$/p' "$text" | sed '$d' | grep -F -e '@channel' -e '![' || true)"
+  # shellcheck disable=SC2016
+  check "mention and image markup sit inside the fence" \
+    test "$(sed -n '/^```$/,/^```$/p' "$text" | grep -c -F -e '@channel' -e '![x]' || true)" = 1
 }
 
 case_skip_expired() {
@@ -712,6 +849,120 @@ case_skip_expired() {
   check "exit 0" test "$LAST_RC" = 0
   check "expired skip-until is removed" test ! -e "$(state_dir)/skip-until"
   check "the run proceeds and calls claude" test -s "$HOME_DIR/calls/claude.txt"
+}
+
+case_mm_env_missing() {
+  setup_home all-ok
+  rm -f "$HOME_DIR/.config/beacon-doctor/mattermost.env"
+  LAST_RC=$(run_launcher)
+  check "exit 1" test "$LAST_RC" = 1
+  check "stdout names the env file path" grep -Fq "$HOME_DIR/.config/beacon-doctor/mattermost.env" "$HOME_DIR/stdout.txt"
+  check "no git call before the refusal" test ! -e "$HOME_DIR/calls/git.txt"
+  check "no go call before the refusal" test ! -e "$HOME_DIR/calls/go.txt"
+  check "no curl call before the refusal" test ! -e "$HOME_DIR/calls/curl.txt"
+  check "no lock file is created before the refusal" test ! -e "$(state_dir)/lock"
+}
+
+# mm_env_refused LINE: a launcher given a malformed env file exits 1 before any build or post.
+mm_env_refused() {
+  setup_home regex-fix
+  write_env "$1"
+  LAST_RC=$(run_launcher)
+  check "exit 1" test "$LAST_RC" = 1
+  check "stdout reports the missing or malformed file" grep -Fq 'mattermost webhook not configured' "$HOME_DIR/stdout.txt"
+  check "no curl call" test ! -e "$HOME_DIR/calls/curl.txt"
+  check "no go call" test ! -e "$HOME_DIR/calls/go.txt"
+  check "no lock file is created before the refusal" test ! -e "$(state_dir)/lock"
+}
+
+case_mm_env_malformed() {
+  mm_env_refused "MM_WEBHOOK_URL=\"https://mm.invalid/hooks/$TOKEN\""
+}
+
+case_mm_env_quote() {
+  mm_env_refused "MM_WEBHOOK_URL=https://mm.invalid/a\"b/hooks/$TOKEN"
+}
+
+case_mm_env_space() {
+  mm_env_refused "MM_WEBHOOK_URL=https://mm.invalid/a b/hooks/$TOKEN"
+}
+
+case_mm_env_backslash() {
+  mm_env_refused "MM_WEBHOOK_URL=https://mm.invalid/a\\b/hooks/$TOKEN"
+}
+
+case_mm_env_bom() {
+  mm_env_refused "$(printf '\357\273\277')MM_WEBHOOK_URL=https://mm.invalid/hooks/$TOKEN"
+}
+
+case_mm_env_crlf() {
+  setup_home regex-fix
+  write_env "MM_WEBHOOK_URL=https://mm.invalid/hooks/$TOKEN"$'\r'
+  LAST_RC=$(run_launcher)
+  check "exit 0" test "$LAST_RC" = 0
+  check "one post" test "$(message_count)" = 1
+  check "curl config carries the URL without a carriage return" grep -qx match "$HOME_DIR/calls/curl-config.txt"
+}
+
+case_mm_env_inherited() {
+  setup_home regex-fix
+  LAST_RC=$(run_launcher "MM_WEBHOOK_URL=$SENTINEL")
+  check "exit 0" test "$LAST_RC" = 0
+  check "one post" test "$(message_count)" = 1
+  check "claude environment carries neither URL" test -z "$(grep -F -e "$SENTINEL" -e "$TOKEN" "$HOME_DIR/calls/claude-env.txt" || true)"
+  check "curl environment carries neither URL" test -z "$(grep -F -e "$SENTINEL" -e "$TOKEN" "$HOME_DIR/calls/curl-env.txt" || true)"
+  check "curl config carries the file URL" grep -qx match "$HOME_DIR/calls/curl-config.txt"
+}
+
+case_ok_send_fail() {
+  setup_home all-ok
+  printf '22\n' >"$HOME_DIR/fixture/curl.exit"
+  printf '500\n' >"$HOME_DIR/fixture/curl.http"
+  stub "$HOME_DIR/.local/bin/sleep" sleep <<'EOF'
+exit 0
+EOF
+  LAST_RC=$(run_launcher)
+  check "exit 1" test "$LAST_RC" = 1
+  check "the failed OK send is logged" grep -rFq 'report ok send failed' "$(state_dir)/runs"
+  check "two failed attempts are logged" test "$(cat "$(state_dir)"/runs/*/run.log | grep -cF 'mattermost failed exit=22 http=500' || true)" = 2
+  check "run.log ends with finish failures=1" test "$(tail -n 1 "$(current_run_log)" | grep -c ' finish failures=1$')" = 1
+}
+
+case_mm_send_fail_4xx() {
+  setup_home regex-fix
+  printf '22\n' >"$HOME_DIR/fixture/curl.exit"
+  printf '404\n' >"$HOME_DIR/fixture/curl.http"
+  stub "$HOME_DIR/.local/bin/sleep" sleep <<'EOF'
+exit 0
+EOF
+  LAST_RC=$(run_launcher)
+  check "exit 1" test "$LAST_RC" = 1
+  check "one curl attempt, a 4xx answer is not retried" test "$(grep -c '' "$HOME_DIR/calls/curl.txt")" = 1
+  check "the failed attempt is logged once with its HTTP status" test "$(cat "$(state_dir)"/runs/*/run.log | grep -cF 'mattermost failed exit=22 http=404' || true)" = 1
+  check "no sleep before a 4xx retry decision" test ! -e "$HOME_DIR/calls/sleep.txt"
+}
+
+case_mm_send_fail() {
+  setup_home regex-fix
+  printf '22\n' >"$HOME_DIR/fixture/curl.exit"
+  printf '500\n' >"$HOME_DIR/fixture/curl.http"
+  stub "$HOME_DIR/.local/bin/sleep" sleep <<'EOF'
+exit 0
+EOF
+  LAST_RC=$(run_launcher)
+  check "exit 1" test "$LAST_RC" = 1
+  check "two curl attempts" test "$(grep -c '' "$HOME_DIR/calls/curl.txt")" = 2
+  check "both failed attempts are logged with exit and HTTP status" test "$(cat "$(state_dir)"/runs/*/run.log | grep -cF 'mattermost failed exit=22 http=500' || true)" = 2
+  check "one report send failure is logged" test "$(cat "$(state_dir)"/runs/*/run.log | grep -cF 'report send failed' || true)" = 1
+}
+
+# txt_unit ARGS: the launcher's txt helper in a subshell. It needs no GNU date, so it runs without UNIT_HOME.
+txt_unit() {
+  (
+    # shellcheck source=/dev/null
+    source "$SCRIPT"
+    txt "$@"
+  )
 }
 
 # unit_call FUNC ARGS...: runs a launcher function in a subshell with the unit HOME, which holds a GNU date link.
@@ -753,24 +1004,17 @@ epoch_case() {
   check "$label" test "$got" = "$want"
 }
 
-# unit_txt_checks: txt measures and clips in UTF-16 code units, so a character outside
-# the Basic Multilingual Plane counts twice.
+# unit_txt_checks: txt measures and clips in Unicode code points, so an emoji counts as one
+# and a clipped text keeps the ellipsis inside the limit.
 unit_txt_checks() {
   CASE="unit"
-  local emoji ellipsis
+  local emoji ellipsis sharp_s
   emoji=$(printf '\360\237\230\200')
   ellipsis=$(printf '\342\200\246')
-  check "an emoji counts as two units" test "$(printf '%sa' "$emoji" | txt_unit len)" = 3
-  check "head never splits the budget across an emoji" test "$(printf '%s%s' "$emoji" "$emoji" | txt_unit head 3)" = "$emoji$ellipsis"
-}
-
-# txt_unit ARGS: the launcher's txt helper, sourced in a subshell.
-txt_unit() {
-  (
-    # shellcheck source=/dev/null
-    source "$SCRIPT"
-    txt "$@"
-  )
+  sharp_s=$(printf '\303\237')
+  check "an emoji plus a letter measures two code points" test "$(printf '%sa' "$emoji" | txt_unit len)" = 2
+  check "head 2 of three letters keeps one letter and the ellipsis" test "$(printf '%s%s%s' "$sharp_s" "$sharp_s" "$sharp_s" | txt_unit head 2)" = "$sharp_s$ellipsis"
+  check "head keeps an emoji whole" test "$(printf '%s%s%s' "$emoji" "$emoji" "$emoji" | txt_unit head 2)" = "$emoji$ellipsis"
 }
 
 # unit_limit_checks: fixed-clock checks of the usage-limit parsers.
@@ -806,6 +1050,8 @@ run_case() {
     die "unknown case $name"
   fi
   "$fn"
+  check "no curl call without --disable" test ! -s "$HOME_DIR/calls/curl-violations.txt"
+  assert_no_secret
 }
 
 ALL_CASES=(
@@ -814,7 +1060,10 @@ ALL_CASES=(
   openrouter-fail invalid-verdict infra-audit3 go-fail audit-exit1-no-miss
   limit-with-alertable budget-56 audit-100k control-chars lock-held lock-error runs-pruned
   drift skip-future skip-garbage skip-expired gnudate-missing clone-missing no-rev
-  claude-timeout untrusted-marker unknown-status budget-overflow
+  claude-timeout untrusted-marker unknown-status budget-overflow markdown-inert
+  mm-env-missing mm-env-malformed mm-env-quote mm-env-space mm-env-inherited mm-send-fail
+  ok-send-fail model-fix-silent
+  mm-env-backslash mm-env-bom mm-env-crlf mm-send-fail-4xx
 )
 
 main() {

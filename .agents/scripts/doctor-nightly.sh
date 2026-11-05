@@ -1,26 +1,35 @@
 #!/usr/bin/env bash
 #
 # doctor-nightly.sh audits the effective extraction rules of the active rate
-# sources every night and sends one Telegram message when something needs
-# attention.
+# sources every night and posts one Mattermost message when something needs
+# attention. A silent night posts a one-line OK message, so a missing morning
+# post shows that the job did not run.
 #
 # The launcher runs on hive-warden-01 as a copy in the state directory, started
 # from the crontab of the buddy account. It refreshes a dedicated clone of the
 # repository, builds doctor and migrator, migrates a throwaway SQLite database,
 # audits its effective rules, classifies every non-OK source deterministically,
 # asks Claude Code (haiku, read-only file access only) for a verdict on the
-# audit output unless a usage-limit pause is active, and reports through tbot-cli.
+# audit output unless a usage-limit pause is active, and posts through the
+# incoming webhook named in ~/.config/beacon-doctor/mattermost.env.
 #
 # Linux only: needs GNU coreutils under the gnu-prefixed names gnudate,
-# gnutimeout and gnusha256sum, util-linux flock, python3 and bash 4.4 or newer.
+# gnutimeout and gnusha256sum, util-linux flock, curl, python3 and bash 4.4 or
+# newer.
 #
 # Usage: doctor-nightly.sh [--max-delay SECONDS]
 #
-# Exit status: 0 when the run finished or stayed silent; 1 when a Telegram
-# message could not be delivered or the run could not start; 2 on a usage
-# error. An unexpected abort sends one message and keeps its exit status.
+# Exit status: 0 when the run finished and its post was delivered, or another run
+# held the lock; 1 when a Mattermost message could not be delivered, the webhook
+# file is missing or malformed, or the run could not start; 2 on a usage error. An
+# unexpected abort sends one message and keeps its exit status.
 
 set -euo pipefail
+
+# The webhook URL must never arrive from the environment: unsetting it first
+# keeps a later assignment from being exported to child processes.
+unset MM_WEBHOOK_URL
+MM_WEBHOOK_URL=""
 
 STATE="$HOME/.local/state/beacon-doctor"
 REPO="$STATE/repo"
@@ -32,9 +41,16 @@ LOCK_FILE="$STATE/lock"
 NOTIFIED_FILE="$STATE/launcher-notified"
 CRON_LOG="$STATE/cron.log"
 REPO_SCRIPT="$REPO/.agents/scripts/doctor-nightly.sh"
-TBOT_CLI="$HOME/.claude/skills/cli-telegram/tbot-cli"
+MM_ENV="$HOME/.config/beacon-doctor/mattermost.env"
 JEV_CLI="$HOME/.claude/skills/cli-jev/jev-cli"
 SELF="${BASH_SOURCE[0]}"
+
+# Message budgets in Unicode code points, the unit Mattermost's post limit counts.
+MSG_BUDGET=16000
+LISTS_BUDGET=15000
+MODEL_CAP=1500
+LIST_CAP=60
+FENCE='```'
 
 VERDICT_SCHEMA='{"type":"object","properties":{"verdict":{"type":"string","enum":["ok","fix"]},"message":{"type":"string","maxLength":1200}},"required":["verdict","message"],"additionalProperties":false}'
 
@@ -69,32 +85,24 @@ REPEATED=()
 FIRST=()
 TRANSIENT_NAMES=()
 
-# txt FILTER [N]: filters stdin to stdout by UTF-16 code units, the unit Telegram's
-# 4096 message limit is measured in, not bytes.
+# txt MODE [N]: filters stdin to stdout, measuring in Unicode code points, the unit
+# Mattermost's post limit counts, not bytes.
 # Modes: len, clean (drops control and format characters except newline), head N, tail N.
 txt() {
   python3 -I -c '
 import sys, unicodedata
-def units(s):
-    return len(s.encode("utf-16-le")) // 2
 mode = sys.argv[1]
 text = sys.stdin.buffer.read().decode("utf-8", "replace")
 if mode == "len":
-    out = str(units(text))
+    out = str(len(text))
 elif mode == "clean":
     out = "".join(c for c in text if c == "\n" or unicodedata.category(c) not in ("Cc", "Cf", "Co", "Cs"))
 elif mode == "head":
     limit = int(sys.argv[2])
-    if units(text) <= limit:
+    if len(text) <= limit:
         out = text
     elif limit > 0:
-        kept, used = [], 0
-        for c in text:
-            if used + units(c) > limit - 1:
-                break
-            kept.append(c)
-            used += units(c)
-        out = "".join(kept) + "…"
+        out = text[: limit - 1] + "…"
     else:
         out = ""
 elif mode == "tail":
@@ -170,7 +178,7 @@ setup_path() {
 fail_run() {
   FINISHED=1
   printf '%s\n' "$1" >&2
-  timed 60 "$TBOT_CLI" "#BEACON doctor nightly: $1" >/dev/null 2>&1 || true
+  send_message "#BEACON doctor nightly: $1" || true
   exit 1
 }
 
@@ -180,8 +188,64 @@ on_exit() {
   if (( FINISHED == 0 )); then
     local host
     host=$(hostname -s 2>/dev/null || echo unknown)
-    timed 60 "$TBOT_CLI" "#BEACON doctor nightly: launcher aborted (exit $status); see $CRON_LOG on $host" >/dev/null 2>&1 || true
+    send_message "#BEACON doctor nightly: launcher aborted (exit $status); see $CRON_LOG on $host" || true
   fi
+}
+
+# load_webhook: sets MM_WEBHOOK_URL from the line MM_WEBHOOK_URL= in MM_ENV. The file is
+# parsed, never sourced. Returns 1 with a path-only message when it is missing or malformed.
+load_webhook() {
+  local line value="" re='^https://[^[:space:]"\\]+/hooks/[A-Za-z0-9]+$'
+  if [[ -r "$MM_ENV" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line%$'\r'}"
+      if [[ "$line" == MM_WEBHOOK_URL=* ]]; then
+        value="${line#MM_WEBHOOK_URL=}"
+        break
+      fi
+    done <"$MM_ENV"
+  fi
+  if [[ "$value" =~ $re ]]; then
+    MM_WEBHOOK_URL="$value"
+    return 0
+  fi
+  printf 'mattermost webhook not configured: %s missing or malformed; no run started\n' "$MM_ENV" >&2
+  return 1
+}
+
+# mm_payload: stdin text to stdout as the JSON body of an incoming webhook post.
+# ensure_ascii keeps the payload ASCII whatever the locale.
+mm_payload() {
+  python3 -I -c 'import json,sys; sys.stdout.write(json.dumps({"text": sys.stdin.buffer.read().decode("utf-8","replace")}, ensure_ascii=True))'
+}
+
+# send_message TEXT: one Mattermost post through the incoming webhook, one retry after 30 s.
+# The URL reaches curl only as a config file on a process-substitution descriptor, so it is
+# never in an argv, an environment, or a file on disk.
+send_message() {
+  local payload attempt rc code
+  [[ -n "$MM_WEBHOOK_URL" ]] || return 1
+  payload=$(printf '%s' "$1" | mm_payload) || return 1
+  for (( attempt = 1; attempt <= 2; attempt++ )); do
+    rc=0
+    code=$(printf '%s' "$payload" | timed 60 curl --disable \
+      --config <(printf 'url = "%s"\n' "$MM_WEBHOOK_URL") \
+      --silent --fail --noproxy '*' --connect-timeout 10 --max-time 30 \
+      -H 'Content-Type: application/json' --data-binary @- \
+      --output /dev/null --write-out '%{http_code}' 2>/dev/null) || rc=$?
+    if (( rc == 0 )) && [[ "$code" == 200 ]]; then
+      return 0
+    fi
+    [[ "$code" =~ ^[0-9]{3}$ ]] || code=invalid
+    step_log mattermost "failed exit=$rc http=$code"
+    if [[ "$code" == 4?? && "$code" != 429 ]]; then
+      return 1
+    fi
+    if (( attempt == 1 )); then
+      sleep 30
+    fi
+  done
+  return 1
 }
 
 # rotate_cron_log: keeps the last 256 KiB once cron.log exceeds 1 MiB.
@@ -723,33 +787,41 @@ render_list() {
 # render_lists FIRST_MODE REPEATED_MODE IMMEDIATE_CAP: the three deterministic lists.
 render_lists() {
   render_list "immediate" list "$3" "${IMMEDIATE[@]}"
-  render_list "repeated" "$2" 15 "${REPEATED[@]}"
-  render_list "first-time transients (not alertable)" "$1" 15 "${FIRST[@]}"
+  render_list "repeated" "$2" "$LIST_CAP" "${REPEATED[@]}"
+  render_list "first-time transients (not alertable)" "$1" "$LIST_CAP" "${FIRST[@]}"
 }
 
-# assemble HEADER INFRA_LINE LISTS MODEL LOG_LINE: joins the non-empty parts with newlines.
+# assemble PART...: joins the non-empty parts with newlines.
 assemble() {
-  local text="$1"
-  if [[ -n "$2" ]]; then
-    text+=$'\n'"$2"
-  fi
-  if [[ -n "$3" ]]; then
-    text+=$'\n'"$3"
-  fi
-  if [[ -n "$4" ]]; then
-    text+=$'\n'"$4"
-  fi
-  text+=$'\n'"$5"
-  printf '%s' "$text"
+  local out="" part first=1
+  for part in "$@"; do
+    if [[ -z "$part" ]]; then
+      continue
+    fi
+    if (( first )); then
+      out="$part"
+      first=0
+    else
+      out+=$'\n'"$part"
+    fi
+  done
+  printf '%s' "$out"
 }
 
-# compose_message HEADER MODEL_BLOCK: the Telegram text, at most 4096 characters.
-# Lists keep 15 entries each; when the lists exceed 3000 characters, first-time
-# transients fall to a count, then repeated, then immediate entries are cut.
-# The model block gets the room left, clamped to 1500 characters.
+# fence_text HEADER BODY: the header line, then BODY inside one code fence. Mattermost does
+# not raise mentions, links or images inside a fence. Every backtick in BODY becomes ' first,
+# so no text can close the fence; the replacement is 1:1, so measured length is unchanged.
+fence_text() {
+  printf '%s\n%s\n%s\n%s' "$1" "$FENCE" "${2//\`/"'"}" "$FENCE"
+}
+
+# compose_message HEADER MODEL_BLOCK: the Mattermost text, at most MSG_BUDGET code points,
+# with the body inside one code fence. Lists keep LIST_CAP entries each. When the lists exceed
+# LISTS_BUDGET, first-time transients fall to a count, then repeated, then the immediate cap
+# shrinks from LIST_CAP. The model block gets the room left, clamped to MODEL_CAP.
 compose_message() {
   local header="#BEACON doctor audit $D: $1" model="$2" infra_line="" log_line="" host=""
-  local first_mode=list rep_mode=list imm_cap=15 lists="" base="" blen=0 room=0 mblock=""
+  local first_mode=list rep_mode=list imm_cap=$LIST_CAP lists="" body="" blen=0 room=0 mblock=""
   host=$(hostname -s 2>/dev/null || echo unknown)
   log_line="log: $host:$RUN"
   if (( INFRA )); then
@@ -757,7 +829,7 @@ compose_message() {
   fi
   while :; do
     lists=$(render_lists "$first_mode" "$rep_mode" "$imm_cap")
-    if (( $(printf '%s' "$lists" | txt len) <= 3000 )); then
+    if (( $(printf '%s' "$lists" | txt len) <= LISTS_BUDGET )); then
       break
     fi
     if [[ "$first_mode" == list ]]; then
@@ -770,16 +842,17 @@ compose_message() {
       break
     fi
   done
-  base=$(assemble "$header" "$infra_line" "$lists" "" "$log_line")
-  blen=$(printf '%s' "$base" | txt len)
-  room=$(( 4096 - blen - 1 ))
-  if (( room > 1500 )); then
-    room=1500
+  body=$(assemble "$infra_line" "$lists" "$log_line")
+  blen=$(fence_text "$header" "$body" | txt len)
+  room=$(( MSG_BUDGET - blen - 1 ))
+  if (( room > MODEL_CAP )); then
+    room=$MODEL_CAP
   fi
   if (( room >= 1 )) && [[ -n "$model" ]]; then
     mblock=$(printf '%s' "$model" | txt head "$room")
   fi
-  assemble "$header" "$infra_line" "$lists" "$mblock" "$log_line"
+  body=$(assemble "$infra_line" "$lists" "$mblock" "$log_line")
+  fence_text "$header" "$body"
 }
 
 # model_block: the model part of the message, or the reason the model did not answer.
@@ -806,24 +879,8 @@ model_block() {
   esac
 }
 
-# send_message TEXT: one Telegram message through tbot-cli, one retry after 30 seconds.
-send_message() {
-  local attempt rc
-  for (( attempt = 1; attempt <= 2; attempt++ )); do
-    rc=0
-    timed 60 "$TBOT_CLI" "$1" >>"$RUN/tbot.log" 2>&1 || rc=$?
-    if (( rc == 0 )); then
-      return 0
-    fi
-    if (( attempt == 1 )); then
-      step_log telegram "failed exit=$rc; retrying in 30s"
-      sleep 30
-    fi
-  done
-  return 1
-}
-
-# decide_report: sends one message when something needs attention, otherwise logs and stays silent.
+# decide_report: posts one report when something needs attention. A silent run posts the OK
+# message instead, so the morning post is the sign that the job ran.
 decide_report() {
   local alertable=$(( ${#IMMEDIATE[@]} + ${#REPEATED[@]} )) header="" message=""
   if (( INFRA )); then
@@ -838,11 +895,7 @@ decide_report() {
     fi
   fi
   if [[ -z "$header" ]]; then
-    if [[ "$MODEL_STATUS" == fix ]]; then
-      step_log report "not sent: model fix without alertable sources"
-    else
-      step_log report silent
-    fi
+    send_ok
     return 0
   fi
   message=$(compose_message "$header" "$(model_block)")
@@ -850,6 +903,20 @@ decide_report() {
     step_log report "sent $header"
   else
     step_log report "send failed"
+    FINAL_FAILURE=1
+  fi
+}
+
+# send_ok: the OK post of a silent run. Its one body line carries the number of sources the
+# audit checked and the run id.
+send_ok() {
+  local checked="" text=""
+  checked=$(sed -n 's/^\(OK: \)\{0,1\}audited \([0-9][0-9]*\) sources.*/\2/p' "$RUN/audit.out" 2>/dev/null | head -n 1 || true)
+  text=$(fence_text "#BEACON doctor nightly: OK" "${checked:-unknown} sources checked, run ${RUN##*/}")
+  if send_message "$text"; then
+    step_log report ok-sent
+  else
+    step_log report "ok send failed"
     FINAL_FAILURE=1
   fi
 }
@@ -902,6 +969,7 @@ main() {
 
   umask 077
   setup_path
+  load_webhook || { FINISHED=1; log "no run started: webhook not configured"; exit 1; }
   mkdir -p "$STATE" "$BIN" "$RUNS" "$TRANSIENT"
   chmod 700 "$STATE"
   rotate_cron_log
@@ -913,8 +981,9 @@ main() {
     exit 0
   fi
 
-  D=$(gnudate -u +%F)
   RUN="$RUNS/$(gnudate -u +%Y-%m-%dT%H%M%SZ)"
+  D="${RUN##*/}"
+  D="${D:0:10}"
   mkdir -p "$RUN/logs"
   prune_runs
   step_log start "run $RUN"

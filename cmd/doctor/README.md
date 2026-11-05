@@ -223,8 +223,20 @@ make audit ARGS="--all -v"
 The `buddy` account on `hive-warden-01` runs the audit nightly from cron at
 22:00 UTC (`0 22 * * *`, or 03:00 GMT+5). The launcher refreshes a dedicated
 `dev` clone, builds `doctor` and `migrator`, migrates a throwaway database, and
-audits its effective source rows. Only actionable source failures or
-infrastructure/model failures produce a Telegram message.
+audits its effective source rows. Reports go to the Mattermost channel `~beacon`
+(team `prorochestvo-dev`, server `https://mhub.seilbekskindirov.dev`) through an
+incoming webhook. Only actionable source failures or infrastructure/model failures
+post a report. A night with nothing to report posts a one-line OK message instead.
+
+The webhook is read from `~/.config/beacon-doctor/mattermost.env`: a file of mode
+600 with one line, `MM_WEBHOOK_URL=...`, managed by the owner. The launcher refuses
+to start without it and exits 1 before the start delay, so `cron.log` shows the
+refusal. Rotating the hook means replacing that line; no reinstall is needed.
+
+Every silent run posts `#BEACON doctor nightly: OK` with the number of sources checked
+and the run id. The run starts between 22:00 and 22:30 UTC (03:00-03:30 GMT+5); the OK
+post arrives when the run finishes. A missing morning post means the job did not run or
+could not post; `cron.log` says which.
 
 State is stored under `~/.local/state/beacon-doctor/`:
 
@@ -246,12 +258,13 @@ gnudate -u -d '+30 days' +%Y-%m-%dT%H:%M:%SZ > ~/.local/state/beacon-doctor/skip
 `gnudate` is GNU `date` on warden; the plain `date` there is the uutils build.
 
 To remove the job and its state, remove the `beacon-doctor` line from `buddy`'s
-crontab, then remove `~/.local/state/beacon-doctor/`.
+crontab, then remove `~/.local/state/beacon-doctor/`. The webhook file is
+owner-managed and is removed by the owner.
 
 The cron job runs the launcher copy in the state directory, not the one in
 `repo/`. After a change to `.agents/scripts/doctor-nightly.sh` reaches `dev`, the
-copy must be reinstalled by hand. The launcher sends one Telegram message when
-its copy differs from the repository; the reinstall command is:
+copy must be reinstalled by hand. The launcher posts one message when its copy
+differs from the repository; the reinstall command is:
 
 ```bash
 install -m 700 ~/.local/state/beacon-doctor/repo/.agents/scripts/doctor-nightly.sh ~/.local/state/beacon-doctor/doctor-nightly.sh
