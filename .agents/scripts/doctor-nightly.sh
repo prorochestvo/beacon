@@ -178,7 +178,7 @@ setup_path() {
 fail_run() {
   FINISHED=1
   printf '%s\n' "$1" >&2
-  send_message "#BEACON doctor nightly: $1" || true
+  send_message "#DOCTOR nightly: $1" || true
   exit 1
 }
 
@@ -188,7 +188,7 @@ on_exit() {
   if (( FINISHED == 0 )); then
     local host
     host=$(hostname -s 2>/dev/null || echo unknown)
-    send_message "#BEACON doctor nightly: launcher aborted (exit $status); see $CRON_LOG on $host" || true
+    send_message "#DOCTOR nightly: launcher aborted (exit $status); see $CRON_LOG on $host" || true
   fi
 }
 
@@ -820,7 +820,7 @@ fence_text() {
 # LISTS_BUDGET, first-time transients fall to a count, then repeated, then the immediate cap
 # shrinks from LIST_CAP. The model block gets the room left, clamped to MODEL_CAP.
 compose_message() {
-  local header="#BEACON doctor audit $D: $1" model="$2" infra_line="" log_line="" host=""
+  local header="#DOCTOR audit $D: $1" model="$2" infra_line="" log_line="" host=""
   local first_mode=list rep_mode=list imm_cap=$LIST_CAP lists="" body="" blen=0 room=0 mblock=""
   host=$(hostname -s 2>/dev/null || echo unknown)
   log_line="log: $host:$RUN"
@@ -912,7 +912,7 @@ decide_report() {
 send_ok() {
   local checked="" text=""
   checked=$(sed -n 's/^\(OK: \)\{0,1\}audited \([0-9][0-9]*\) sources.*/\2/p' "$RUN/audit.out" 2>/dev/null | head -n 1 || true)
-  text=$(fence_text "#BEACON doctor nightly: OK" "${checked:-unknown} sources checked, run ${RUN##*/}")
+  text=$(fence_text "#DOCTOR nightly: OK" "${checked:-unknown} sources checked, run ${RUN##*/}")
   if send_message "$text"; then
     step_log report ok-sent
   else
@@ -936,7 +936,7 @@ check_launcher_drift() {
   if [[ "$repo" == "$notified" ]]; then
     return 0
   fi
-  if send_message "#BEACON doctor nightly: launcher copy is out of date; reinstall it (see cmd/doctor/README.md, Nightly audit on warden)"; then
+  if send_message "#DOCTOR nightly: launcher copy is out of date; reinstall it (see cmd/doctor/README.md, Nightly audit on warden)"; then
     printf '%s\n' "$repo" >"$NOTIFIED_FILE"
     step_log drift "notified"
   else

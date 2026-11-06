@@ -233,7 +233,7 @@ The webhook is read from `~/.config/beacon-doctor/mattermost.env`: a file of mod
 to start without it and exits 1 before the start delay, so `cron.log` shows the
 refusal. Rotating the hook means replacing that line; no reinstall is needed.
 
-Every silent run posts `#BEACON doctor nightly: OK` with the number of sources checked
+Every silent run posts `#DOCTOR nightly: OK` with the number of sources checked
 and the run id. The run starts between 22:00 and 22:30 UTC (03:00-03:30 GMT+5); the OK
 post arrives when the run finishes. A missing morning post means the job did not run or
 could not post; `cron.log` says which.

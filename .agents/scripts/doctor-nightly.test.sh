@@ -428,7 +428,7 @@ case_all_ok() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "exactly one post, the OK message" test "$(message_count)" = 1
-  check "the OK message has the OK header" grep -Fq '#BEACON doctor nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "the OK message has the OK header" grep -Fq '#DOCTOR nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
   check "the OK message counts the audited sources and names the run" grep -Fq "3 sources checked, run $(current_run_id)" "$HOME_DIR/calls/mattermost-messages.txt"
   check "run.log ends with the OK report then finish failures=0" test "$(tail -n 2 "$(current_run_log)" | head -n 1 | grep -c 'report ok-sent$')" = 1
   check "the last run.log line is finish failures=0" test "$(tail -n 1 "$(current_run_log)" | grep -c ' finish failures=0$')" = 1
@@ -480,7 +480,7 @@ case_fetch_first() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "a silent run posts the OK message" test "$(message_count)" = 1
-  check "the silent run posts the OK header" grep -Fq '#BEACON doctor nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "the silent run posts the OK header" grep -Fq '#DOCTOR nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
   check "the OK message counts the audited sources and names the run" grep -Fq "2 sources checked, run $(current_run_id)" "$HOME_DIR/calls/mattermost-messages.txt"
   check "source recorded as transient today" grep -Fqx KZ_A_USD_KZT "$(today_transient)"
 }
@@ -498,7 +498,7 @@ case_fetch_gap() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "a silent run posts the OK message" test "$(message_count)" = 1
-  check "the silent run posts the OK header" grep -Fq '#BEACON doctor nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "the silent run posts the OK header" grep -Fq '#DOCTOR nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
   check "source recorded as transient today" grep -Fqx KZ_A_USD_KZT "$(today_transient)"
 }
 
@@ -527,7 +527,7 @@ case_limit_regex() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "a silent run posts the OK message" test "$(message_count)" = 1
-  check "the silent run posts the OK header" grep -Fq '#BEACON doctor nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "the silent run posts the OK header" grep -Fq '#DOCTOR nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
   check "skip-until written with a UTC timestamp" grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "$(state_dir)/skip-until"
   check "jev is not called" test ! -s "$HOME_DIR/calls/jev.txt"
   check "openrouter is not called" test ! -s "$HOME_DIR/calls/openrouter.txt"
@@ -547,7 +547,7 @@ case_limit_jev_openrouter() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "a silent run posts the OK message" test "$(message_count)" = 1
-  check "the silent run posts the OK header" grep -Fq '#BEACON doctor nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "the silent run posts the OK header" grep -Fq '#DOCTOR nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
   check "skip-until is the OpenRouter answer" grep -qx "${reset_day}T09:00:00Z" "$(state_dir)/skip-until"
   check "jev is called once" test "$(grep -c '' "$HOME_DIR/calls/jev.txt")" = 1
   check "openrouter is called once" test "$(grep -c '' "$HOME_DIR/calls/openrouter.txt")" = 1
@@ -558,7 +558,7 @@ case_limit_none() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "a silent run posts the OK message" test "$(message_count)" = 1
-  check "the silent run posts the OK header" grep -Fq '#BEACON doctor nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "the silent run posts the OK header" grep -Fq '#DOCTOR nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
   check "no skip-until written" test ! -e "$(state_dir)/skip-until"
   check "reset time logged as not determined" grep -rq 'reset-time not determined' "$(state_dir)/runs"
 }
@@ -822,7 +822,7 @@ case_model_fix_silent() {
   LAST_RC=$(run_launcher)
   check "exit 0" test "$LAST_RC" = 0
   check "exactly one post, the OK message" test "$(message_count)" = 1
-  check "the post has the OK header" grep -Fq '#BEACON doctor nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
+  check "the post has the OK header" grep -Fq '#DOCTOR nightly: OK' "$HOME_DIR/calls/mattermost-messages.txt"
   check "run.log records the model fix verdict" grep -rFq 'model status=fix' "$(state_dir)/runs"
 }
 
