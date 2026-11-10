@@ -5,7 +5,7 @@
 # attention. A silent night posts a one-line OK message, so a missing morning
 # post shows that the job did not run.
 #
-# The launcher runs on hive-warden-01 as a copy in the state directory, started
+# The launcher runs on tomiris-pi as a copy in the state directory, started
 # from the crontab of the buddy account. It refreshes a dedicated clone of the
 # repository, builds doctor and migrator, migrates a throwaway SQLite database,
 # audits its effective rules, classifies every non-OK source deterministically,
@@ -941,7 +941,7 @@ check_launcher_drift() {
   if [[ "$repo" == "$notified" ]]; then
     return 0
   fi
-  if send_message "#DOCTOR nightly: launcher copy is out of date; reinstall it (see cmd/doctor/README.md, Nightly audit on warden)"; then
+  if send_message "#DOCTOR nightly: launcher copy is out of date; reinstall it (see cmd/doctor/README.md, Nightly audit on tomiris-pi)"; then
     printf '%s\n' "$repo" >"$NOTIFIED_FILE"
     step_log drift "notified"
   else
