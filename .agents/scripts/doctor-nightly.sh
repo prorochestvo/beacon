@@ -708,7 +708,9 @@ try_limit_then_fail() {
   zone_name=$(gnudate +%Z)
   zone_offset=$(gnudate +%:z)
   rc=0
-  timed 120 openrouter-cli -t luna -T 0 -n 40 -s "$OR_SYSTEM" "Now: $now_iso. Host time zone: $zone_name ($zone_offset). Return the reset time." <"$RUN/claude.tail" >"$RUN/openrouter.out" 2>>"$RUN/openrouter.err" || rc=$?
+  # The luna endpoint refuses requests with reasoning disabled, and reasoning tokens count
+  # against -n, so the budget covers them as well as the one-line answer.
+  timed 120 openrouter-cli -t luna --think low -T 0 -n 1000 -s "$OR_SYSTEM" "Now: $now_iso. Host time zone: $zone_name ($zone_offset). Return the reset time." <"$RUN/claude.tail" >"$RUN/openrouter.out" 2>>"$RUN/openrouter.err" || rc=$?
   step_log openrouter "exit=$rc"
   if (( rc != 0 )); then
     MODEL_REASON="openrouter failed"

@@ -62,6 +62,8 @@ log "tooling on $PI_HOST"
 pi_buddy -- "$GO_VERSION" <<'EOF'
 set -euo pipefail
 go_version="$1"
+# sudo keeps the caller's working directory, which buddy cannot read.
+cd "$HOME"
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 mkdir -p "$HOME/.local/bin"
 
@@ -119,6 +121,8 @@ copy_secret ".config/cli-openrouter/.env"
 log "state, test run and cron on $PI_HOST"
 pi_buddy <<'EOF'
 set -euo pipefail
+# sudo keeps the caller's working directory, which buddy cannot read.
+cd "$HOME"
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 state="$HOME/.local/state/beacon-doctor"
 launcher="$state/doctor-nightly.sh"
