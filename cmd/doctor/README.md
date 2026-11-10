@@ -27,7 +27,7 @@ Suggested cadences (host-side `crontab`, times in UTC):
 |--------|---------|---------|
 | `collector` | hourly | `0 * * * *` |
 | `notifier` | every 30 minutes | `*/30 * * * *` |
-| Nightly doctor audit on warden | nightly, 22:00 UTC (03:00 GMT+5) | `0 22 * * *` |
+| Nightly doctor audit on tomiris-pi | nightly, 22:00 UTC (03:00 GMT+5) | `0 3 * * *` in the Pi's local time |
 
 Tighten `collector` to match your shortest source interval if needed —
 pick whichever is more frequent. `notifier` cadence sets dispatch latency
@@ -153,7 +153,7 @@ immediately without making any LLM call.
 
 - Before deploying a new source to confirm the extraction rule is correct.
 - As a scheduled health check to detect rule breakage caused by page changes.
-- Nightly on `hive-warden-01`, against the effective rows in a freshly migrated
+- Nightly on `tomiris-pi`, against the effective rows in a freshly migrated
   throwaway database (details below).
 
 ### Usage
@@ -218,10 +218,11 @@ make audit ARGS="--all -v"
 ./build/doctor audit --dsn 'sqlite://_:_@_:_/./build/beacon.db' --all -v
 ```
 
-### Nightly audit on warden
+### Nightly audit on tomiris-pi
 
-The `buddy` account on `hive-warden-01` runs the audit nightly from cron at
-22:00 UTC (`0 22 * * *`, or 03:00 GMT+5). The launcher refreshes a dedicated
+The `buddy` account on `tomiris-pi` runs the audit nightly from cron at
+22:00 UTC (03:00 GMT+5). The Pi's clock runs on `Asia/Almaty` and its cron has no
+`CRON_TZ`, so the crontab line is written in local time: `0 3 * * *`. The launcher refreshes a dedicated
 `dev` clone, builds `doctor` and `migrator`, migrates a throwaway database, and
 audits its effective source rows. Reports go to the Mattermost channel `~beacon`
 (team `prorochestvo-dev`, server `https://mhub.seilbekskindirov.dev`) through an
@@ -256,7 +257,7 @@ skipped. For example:
 gnudate -u -d '+30 days' +%Y-%m-%dT%H:%M:%SZ > ~/.local/state/beacon-doctor/skip-until
 ```
 
-`gnudate` is GNU `date` on warden; the plain `date` there is the uutils build.
+`gnudate` is GNU `date` on the Pi; the plain `date` there is the uutils build.
 
 To remove the job and its state, remove the `beacon-doctor` line from `buddy`'s
 crontab, then remove `~/.local/state/beacon-doctor/`. The webhook file is
@@ -270,6 +271,12 @@ differs from the repository; the reinstall command is:
 ```bash
 install -m 700 ~/.local/state/beacon-doctor/repo/.agents/scripts/doctor-nightly.sh ~/.local/state/beacon-doctor/doctor-nightly.sh
 ```
+
+`.agents/scripts/doctor-nightly-install.sh`, run from `mac-m1`, sets the job up from
+scratch: Go and `openrouter-cli` for `buddy`, the webhook and OpenRouter key files
+copied from `hive-warden-01`, the clone and launcher copy, one test run, and the cron
+line computed from the Pi's own time zone. It then removes the job from
+`hive-warden-01`. It is safe to rerun.
 
 ## Headless / chromedp sources
 
