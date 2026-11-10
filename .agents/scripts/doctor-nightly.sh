@@ -45,6 +45,10 @@ MM_ENV="$HOME/.config/beacon-doctor/mattermost.env"
 JEV_CLI="$HOME/.claude/skills/cli-jev/jev-cli"
 SELF="${BASH_SOURCE[0]}"
 
+# The owner's time zone. A run starts after midnight there, so the message header carries
+# that calendar day rather than the UTC one that names the run directory.
+REPORT_TZ="Asia/Almaty"
+
 # Message budgets in Unicode code points, the unit Mattermost's post limit counts.
 MSG_BUDGET=16000
 LISTS_BUDGET=15000
@@ -65,6 +69,7 @@ OR_SYSTEM='You extract one timestamp. Output exactly one line: the moment the us
 # Run state, set by main and the step functions.
 RUN=""
 D=""
+REPORT_DATE=""
 FINISHED=0
 SKIP_UNTIL=""
 INFRA=0
@@ -820,7 +825,7 @@ fence_text() {
 # LISTS_BUDGET, first-time transients fall to a count, then repeated, then the immediate cap
 # shrinks from LIST_CAP. The model block gets the room left, clamped to MODEL_CAP.
 compose_message() {
-  local header="#DOCTOR audit $D: $1" model="$2" infra_line="" log_line="" host=""
+  local header="#DOCTOR audit $REPORT_DATE: $1" model="$2" infra_line="" log_line="" host=""
   local first_mode=list rep_mode=list imm_cap=$LIST_CAP lists="" body="" blen=0 room=0 mblock=""
   host=$(hostname -s 2>/dev/null || echo unknown)
   log_line="log: $host:$RUN"
@@ -946,7 +951,7 @@ check_launcher_drift() {
 }
 
 main() {
-  local max_delay=1800 skip_at=""
+  local max_delay=1800 skip_at="" started=""
   trap on_exit EXIT
   while (( $# > 0 )); do
     case "$1" in
@@ -981,9 +986,11 @@ main() {
     exit 0
   fi
 
-  RUN="$RUNS/$(gnudate -u +%Y-%m-%dT%H%M%SZ)"
+  started=$(gnudate -u +%s)
+  RUN="$RUNS/$(gnudate -u -d "@$started" +%Y-%m-%dT%H%M%SZ)"
   D="${RUN##*/}"
   D="${D:0:10}"
+  REPORT_DATE=$(TZ="$REPORT_TZ" gnudate -d "@$started" +%F)
   mkdir -p "$RUN/logs"
   prune_runs
   step_log start "run $RUN"

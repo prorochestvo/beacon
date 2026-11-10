@@ -455,6 +455,10 @@ case_regex_fix() {
   check "exit 0" test "$LAST_RC" = 0
   check "one message" test "$(message_count)" = 1
   check "header is FIX" grep -Fq ': FIX' "$HOME_DIR/calls/mattermost-messages.txt"
+  local run="" report_date=""
+  run=$(basename "$(state_dir)/runs/"*)
+  report_date=$(TZ=Asia/Almaty "$GNU_DATE" -d "${run:0:10} ${run:11:2}:${run:13:2}:${run:15:2} UTC" +%F)
+  check "header carries the GMT+5 date of the run" grep -Fq "#DOCTOR audit $report_date: FIX" "$HOME_DIR/calls/mattermost-messages.txt"
   check "names the source" grep -Fq 'KZ_X_USD_KZT REGEX_NO_MATCH' "$HOME_DIR/calls/mattermost-messages.txt"
   check "carries the model next step" grep -Fq 'doctor rulegen KZ_X_USD_KZT' "$HOME_DIR/calls/mattermost-messages.txt"
   check "model text is marked unverified" grep -Fq 'model (unverified): KZ_X_USD_KZT' "$HOME_DIR/calls/mattermost-messages.txt"

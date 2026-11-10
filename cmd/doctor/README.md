@@ -236,7 +236,8 @@ refusal. Rotating the hook means replacing that line; no reinstall is needed.
 Every silent run posts `#DOCTOR nightly: OK` with the number of sources checked
 and the run id. The run starts between 22:00 and 22:30 UTC (03:00-03:30 GMT+5); the OK
 post arrives when the run finishes. A missing morning post means the job did not run or
-could not post; `cron.log` says which.
+could not post; `cron.log` says which. A report header (`#DOCTOR audit <date>: ...`) carries
+the GMT+5 calendar day the run started on; run directories keep their UTC names.
 
 State is stored under `~/.local/state/beacon-doctor/`:
 
