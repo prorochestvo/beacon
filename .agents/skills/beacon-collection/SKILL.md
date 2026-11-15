@@ -308,8 +308,8 @@ Usage, exit codes, the AI DSN formats and the chromedp/Chromium setup live in
 source removed by a DELETE is still audited in its seeded form. `audit --dsn` audits the
 effective rows of a migrated database and opens it read-write: point it at a throwaway
 copy, never a live service database. `.agents/scripts/doctor-nightly.sh` runs that mode
-nightly on hive-warden-01 against a database migrated from `origin/dev`; pause, reinstall
-and removal steps are in `cmd/doctor/README.md` ("Nightly audit on warden").
+nightly on tomiris-pi against a database migrated from `origin/dev`; pause, reinstall
+and removal steps are in `cmd/doctor/README.md` ("Nightly audit on tomiris-pi").
 
 One cross-cutting consequence: `rulegen` persists through `RetainRateSource`, which rewrites
 source rows **wholesale**. Anything runtime-valued that has been added to `rate_sources` is
